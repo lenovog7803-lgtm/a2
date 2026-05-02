@@ -1,0 +1,150 @@
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { Plus, Phone, Mail } from 'lucide-react-native';
+import { theme } from '../../src/theme';
+import { api } from '../../src/api';
+
+export default function Clients() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const [clients, setClients] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const c = await api.clients.list();
+      setClients(c);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.bg, paddingTop: insets.top + 16 }}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.kicker}>БАЗА</Text>
+          <Text style={styles.title}>Клиенты</Text>
+        </View>
+        <TouchableOpacity testID="add-client-btn" onPress={() => router.push('/client/new')} style={styles.fab} activeOpacity={0.8}>
+          <Plus size={20} color="#000" strokeWidth={2.2} />
+        </TouchableOpacity>
+      </View>
+
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.colors.accent} />
+        </View>
+      ) : (
+        <FlatList
+          testID="clients-list"
+          data={clients}
+          keyExtractor={(i) => i.id}
+          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
+          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          renderItem={({ item, index }) => <ClientCard client={item} onPress={() => router.push(`/client/${item.id}`)} testID={`client-card-${index}`} />}
+          ListEmptyComponent={<Text style={styles.empty}>Нет клиентов</Text>}
+        />
+      )}
+    </View>
+  );
+}
+
+function ClientCard({ client, onPress, testID }: any) {
+  const initials = client.name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase();
+
+  return (
+    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.7} style={styles.card}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.name} numberOfLines={1}>{client.name}</Text>
+          {!!client.contact_person && <Text style={styles.contact}>{client.contact_person}</Text>}
+        </View>
+      </View>
+
+      {(!!client.inn || !!client.payment_terms) && (
+        <View style={styles.meta}>
+          {!!client.inn && (
+            <View style={styles.metaItem}>
+              <Text style={styles.metaLabel}>ИНН</Text>
+              <Text style={styles.metaValue}>{client.inn}</Text>
+            </View>
+          )}
+          {!!client.payment_terms && (
+            <View style={styles.metaItem}>
+              <Text style={styles.metaLabel}>ОТСРОЧКА</Text>
+              <Text style={styles.metaValue}>{client.payment_terms}</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      <View style={styles.actions}>
+        {!!client.phone && (
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={(e: any) => { e.stopPropagation?.(); Linking.openURL(`tel:${client.phone}`); }}
+            activeOpacity={0.7}
+          >
+            <Phone size={14} color={theme.colors.accent} strokeWidth={1.6} />
+            <Text style={styles.actionText}>{client.phone}</Text>
+          </TouchableOpacity>
+        )}
+        {!!client.email && (
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={(e: any) => { e.stopPropagation?.(); Linking.openURL(`mailto:${client.email}`); }}
+            activeOpacity={0.7}
+          >
+            <Mail size={14} color={theme.colors.accent} strokeWidth={1.6} />
+            <Text style={styles.actionText} numberOfLines={1}>{client.email}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+const styles = StyleSheet.create({
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 16 },
+  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 4 },
+  title: { fontSize: 32, fontWeight: '300', letterSpacing: -1, color: theme.colors.textPrimary },
+  fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
+
+  card: {
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16,
+  },
+  avatar: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: theme.colors.accent + '20',
+    borderWidth: 1, borderColor: theme.colors.accent + '40',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  avatarText: { color: theme.colors.accent, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
+  name: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
+  contact: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 },
+
+  meta: { flexDirection: 'row', gap: 16, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  metaItem: { flex: 1 },
+  metaLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.2, color: theme.colors.textTertiary, marginBottom: 2 },
+  metaValue: { fontSize: 13, color: theme.colors.textPrimary, fontWeight: '500' },
+
+  actions: { flexDirection: 'row', gap: 8, marginTop: 12, flexWrap: 'wrap' },
+  actionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 6,
+    backgroundColor: theme.colors.surfaceElevated, borderRadius: 8,
+    borderWidth: 1, borderColor: theme.colors.border,
+  },
+  actionText: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '500' },
+  empty: { color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 },
+});

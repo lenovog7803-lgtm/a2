@@ -1,0 +1,182 @@
+{
+  "project_name": "Premium Logistics CRM",
+  "domain": "Logistics & Freight Forwarding",
+  "theme": "DARK",
+  "archetype": "Archetype 5: Jewel & Luxury / Archetype 2: Performance Pro Hybrid",
+  "design_philosophy": {
+    "emotion": "Absolute control, elite precision, and untouchable high-status. It should feel like stepping into a Mercedes S-Class or opening a Swiss private banking app.",
+    "rules": [
+      "No rounded, friendly 'bubble' UI. Use sharp md (8px) to lg (12px) radii max.",
+      "No pure black or pure grey. Always tint backgrounds with deep obsidian/indigo for warmth.",
+      "Data is the decoration. Use typography scale and high-contrast numbers instead of unnecessary icons.",
+      "Use 'Bento' or 'Control Room' grid rules. Maximize space but leave elegant breathing room via generous padding within cards."
+    ]
+  },
+  "colors": {
+    "background": {
+      "app": "#0A0A0C",
+      "surface": "#121215",
+      "surface_elevated": "#1C1C20"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "tertiary": "#71717A",
+      "inverse": "#000000",
+      "accent": "#C0A062"
+    },
+    "accents": {
+      "primary": "#C0A062",
+      "primary_hover": "#D4AF37",
+      "profit": "#00E676",
+      "loss": "#FF3B30",
+      "warning": "#F59E0B",
+      "border": "rgba(255, 255, 255, 0.08)",
+      "border_focus": "rgba(192, 160, 98, 0.5)"
+    }
+  },
+  "typography": {
+    "pairing_strategy": "Editorial Future (Luxury Tech)",
+    "fonts": {
+      "heading": "Outfit",
+      "body": "Manrope",
+      "mono": "Space Mono"
+    },
+    "scale": {
+      "h1": {
+        "size": "text-4xl",
+        "weight": "font-light",
+        "spacing": "tracking-tighter"
+      },
+      "h2": {
+        "size": "text-2xl",
+        "weight": "font-medium",
+        "spacing": "tracking-tight"
+      },
+      "h3": {
+        "size": "text-xl",
+        "weight": "font-medium",
+        "spacing": "tracking-normal"
+      },
+      "body": {
+        "size": "text-base",
+        "weight": "font-normal",
+        "spacing": "tracking-normal",
+        "line_height": "leading-relaxed"
+      },
+      "label": {
+        "size": "text-xs",
+        "weight": "font-bold",
+        "spacing": "tracking-[0.2em]",
+        "transform": "uppercase"
+      },
+      "metric": {
+        "size": "text-3xl",
+        "weight": "font-bold",
+        "spacing": "tracking-tighter",
+        "family": "font-mono"
+      }
+    }
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "Tailwind standard. Prefer p-4 to p-6 inside cards. Gap-4 between lists.",
+    "container_paddings": "px-4 py-6 for main screen containers.",
+    "grid_system": "Bento style for Dashboard. Vertical dense lists for CRM records."
+  },
+  "surfaces_and_materials": {
+    "cards": {
+      "background": "#121215",
+      "border": "1px solid rgba(255, 255, 255, 0.08)",
+      "radius": "rounded-xl",
+      "shadow": "none (rely on border for separation)"
+    },
+    "bottom_tabs": {
+      "material": "Glassmorphism (Expo BlurView)",
+      "tint": "dark",
+      "intensity": 80,
+      "border_top": "1px solid rgba(255, 255, 255, 0.05)",
+      "active_color": "#C0A062",
+      "inactive_color": "#71717A"
+    },
+    "inputs": {
+      "background": "#1C1C20",
+      "border": "1px solid rgba(255, 255, 255, 0.1)",
+      "radius": "rounded-lg",
+      "focus": "border-[#C0A062]"
+    }
+  },
+  "screens": {
+    "dashboard": {
+      "title": "Дашборд",
+      "layout": "Control Room Grid",
+      "components": [
+        "Hero Metrics: Massive type (metric scale) for Total Revenue and Margin. Margin in #00E676.",
+        "Bento Cards: Side-by-side squares for 'Unpaid by Clients' and 'Owed to Carriers'.",
+        "Chart: Minimalist spline/bar chart (react-native-chart-kit/victory-native). No gridlines, just data curve."
+      ]
+    },
+    "orders": {
+      "title": "Заявки",
+      "layout": "Dense Vertical Feed",
+      "components": [
+        "Order Ticket: High-contrast route (e.g., 'Москва → СПб').",
+        "Status Badges: Tiny, uppercase tracking-wide pills. (e.g., 'ОПЛАЧЕНО', 'В РАБОТЕ').",
+        "Margin Indicator: Right-aligned, monospace font, bright green if positive."
+      ]
+    },
+    "clients": {
+      "title": "Клиенты",
+      "layout": "List View",
+      "components": [
+        "Avatar: 2-letter monogram inside a circle with subtle #C0A062 tint background.",
+        "Data Row: Name in h3, INN (Tax ID) and Total Revenue in mono font below."
+      ]
+    },
+    "carriers": {
+      "title": "Перевозчики",
+      "layout": "List View",
+      "components": [
+        "Vehicle Tag: Small, sharp pill detailing vehicle type and capacity (e.g., 'Тент 20т 90м3').",
+        "Rating: Star icon (Phosphor/Lucide) with number, gold colored."
+      ]
+    },
+    "call_base": {
+      "title": "База для обзвона",
+      "layout": "Pipeline/List",
+      "components": [
+        "Action Priority: Red/Orange indicators for overdue calls.",
+        "Swipe Actions: Right-swipe to mark as 'Called', left-swipe to 'Snooze/Schedule'."
+      ]
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#C0A062] text-black rounded-lg py-4 px-6 items-center justify-center font-medium",
+      "secondary": "bg-transparent border border-white/20 text-white rounded-lg py-4 px-6 items-center justify-center font-medium",
+      "ghost": "bg-transparent text-[#C0A062] px-4 py-2"
+    },
+    "badges": {
+      "success": "bg-[#00E676]/10 text-[#00E676] px-2 py-1 rounded text-xs uppercase tracking-wider font-bold",
+      "pending": "bg-[#F59E0B]/10 text-[#F59E0B] px-2 py-1 rounded text-xs uppercase tracking-wider font-bold",
+      "danger": "bg-[#FF3B30]/10 text-[#FF3B30] px-2 py-1 rounded text-xs uppercase tracking-wider font-bold"
+    }
+  },
+  "motion_and_interaction": {
+    "lists": "Staggered fade-in on mount.",
+    "buttons": "Scale down to 0.98 on press (React Native Pressable/TouchableOpacity).",
+    "modals": "Bottom sheet pattern (Gorhom Bottom Sheet) for creating/editing records to keep context."
+  },
+  "icons": {
+    "library": "lucide-react-native",
+    "stroke_width": 1.5,
+    "instructions_to_main_agent": "Ensure lucide-react-native is installed. Use consistent stroke width of 1.5 for a delicate, premium look."
+  },
+  "media": {
+    "images_urls": [],
+    "instructions_to_main_agent": "No placeholder images needed. UI should rely purely on typography, layout, and lucide-react-native icons to maintain the abstract, high-end private banking feel."
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure text-to-background contrast ratio meets or exceeds WCAG AA standards. Softened whites (#A1A1AA) on deep blacks (#121215) hit the sweet spot for legibility without blooming.",
+    "testing_attributes": "All interactive elements MUST use testID (e.g., testID='create-order-button', testID='client-list-item-0'). This is critical for automated React Native testing."
+  }
+}
