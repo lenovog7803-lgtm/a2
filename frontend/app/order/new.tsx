@@ -47,12 +47,10 @@ export default function NewOrder() {
   const selectClient = (it: any) => update({ client_id: it.id, client_name: it.label });
   const selectCarrier = (it: any) => {
     const c = carriers.find(x => x.id === it.id);
+    const parts = [c?.vehicle_type, c?.plate, c?.driver_name, c?.phone].filter(Boolean);
     update({
       carrier_id: it.id, carrier_name: it.label,
-      driver_name: c?.driver_name || data.driver_name,
-      driver_phone: c?.phone || data.driver_phone,
-      vehicle_type: c?.vehicle_type || data.vehicle_type,
-      vehicle_plate: c?.plate || data.vehicle_plate,
+      driver_name: parts.length ? parts.join('\n') : data.driver_name,
     });
   };
 
@@ -99,12 +97,7 @@ export default function NewOrder() {
         </View>
 
         <Text style={styles.groupLabel}>ДАННЫЕ ПО ВОДИТЕЛЮ И ТС</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <View style={{ flex: 1.2 }}><Field label="Тип ТС" value={data.vehicle_type} onChangeText={(v: string) => update({ vehicle_type: v })} placeholder="Тент / Реф" /></View>
-          <View style={{ flex: 1 }}><Field label="Гос. номер" autoCapitalize="characters" value={data.vehicle_plate} onChangeText={(v: string) => update({ vehicle_plate: v })} /></View>
-          <View style={{ flex: 1.5 }}><Field label="Водитель" value={data.driver_name} onChangeText={(v: string) => update({ driver_name: v })} placeholder="ФИО" /></View>
-        </View>
-        <Field label="Телефон водителя" keyboardType="phone-pad" value={data.driver_phone} onChangeText={(v: string) => update({ driver_phone: v })} />
+        <Field label="Данные на ТС" multiline value={data.driver_name} onChangeText={(v: string) => update({ driver_name: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
 
         <Text style={styles.groupLabel}>ГРУЗ И СТАВКИ</Text>
         <View style={{ flexDirection: 'row', gap: 10 }}>
