@@ -281,74 +281,7 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* Google авторизация (для генерации документов) */}
-        <Text style={styles.sectionLabel}>GOOGLE АККАУНТ</Text>
-        <View style={[styles.syncCard, authStatus.connected && { borderColor: theme.colors.profit + '40' }]}>
-          <View style={styles.syncTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.syncTitle}>{authStatus.connected ? 'Подключён' : 'Не подключён'}</Text>
-              <Text style={styles.syncSub}>
-                {authStatus.connected
-                  ? 'Документы создаются от вашего имени, в вашем Google Drive'
-                  : 'Подключите Google аккаунт, чтобы генерировать документы (АКТ, заявки) в ваш Drive'}
-              </Text>
-            </View>
-            {authStatus.connected
-              ? <CheckCircle2 size={18} color={theme.colors.profit} strokeWidth={1.6} />
-              : <Link2 size={18} color={theme.colors.warning} strokeWidth={1.6} />}
-          </View>
-          <TouchableOpacity
-            testID="google-auth-btn"
-            onPress={authStatus.connected ? disconnectGoogle : connectGoogle}
-            style={[styles.syncBtn, { backgroundColor: authStatus.connected ? theme.colors.surfaceElevated : theme.colors.accent, borderWidth: authStatus.connected ? 1 : 0, borderColor: theme.colors.border }]}
-            activeOpacity={0.8}
-          >
-            {authStatus.connected
-              ? <LogOut size={16} color={theme.colors.textSecondary} strokeWidth={2} />
-              : <LogIn size={16} color={theme.colors.bg} strokeWidth={2} />}
-            <Text style={[styles.syncBtnText, authStatus.connected && { color: theme.colors.textSecondary }]}>
-              {authStatus.connected ? 'Отключить' : 'Подключить Google'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Google Sheets — импорт */}
-        <Text style={styles.sectionLabel}>GOOGLE ТАБЛИЦА</Text>
-        <View style={styles.syncCard}>
-          <View style={styles.syncTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.syncTitle}>Загрузить данные из таблицы</Text>
-              <Text style={styles.syncSub}>
-                Подтянет все ваши клиенты, перевозчики и заказы из Google Таблицы в приложение. В таблице ничего не изменится.
-              </Text>
-            </View>
-            {importStatus?.ok ? (
-              <CheckCircle2 size={18} color={theme.colors.profit} strokeWidth={1.6} />
-            ) : importStatus?.message && importStatus.message !== 'Импорт ещё не запускался' ? (
-              <AlertTriangle size={18} color={theme.colors.warning} strokeWidth={1.6} />
-            ) : null}
-          </View>
-
-          {!!importStatus?.imported?.orders && (
-            <Text style={styles.syncMeta}>
-              Загружено: {importStatus.imported.clients} клиентов · {importStatus.imported.carriers} перевозчиков · {importStatus.imported.orders} заказов
-            </Text>
-          )}
-          {importStatus && !importStatus.ok && !!importStatus.message && importStatus.message !== 'Импорт ещё не запускался' && (
-            <Text style={styles.syncError} numberOfLines={3}>{importStatus.message}</Text>
-          )}
-
-          <TouchableOpacity
-            testID="import-sheets-btn"
-            onPress={handleSync}
-            disabled={syncing}
-            style={[styles.syncBtn, syncing && { opacity: 0.6 }]}
-            activeOpacity={0.8}
-          >
-            {syncing ? <ActivityIndicator color={theme.colors.bg} /> : <RefreshCw size={16} color={theme.colors.bg} strokeWidth={2} />}
-            <Text style={styles.syncBtnText}>{syncing ? 'Загружаем…' : 'Загрузить из таблицы'}</Text>
-          </TouchableOpacity>
-        </View>
+        
       </View>
     </ScrollView>
   );
