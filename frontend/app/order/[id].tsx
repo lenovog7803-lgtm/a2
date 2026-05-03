@@ -264,7 +264,19 @@ export default function OrderDetail() {
 }
 
 function DocGenButton({ label, url }: any) {
-  if (!url) return null;
+  if (!url) {
+    return (
+      <View style={[styles.docBtn, styles.docBtnPending]}>
+        <View style={[styles.docBtnIcon, styles.docBtnIconPending]}>
+          <FileText size={16} color={theme.colors.textTertiary} strokeWidth={2} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.docBtnLabel}>{label}</Text>
+          <Text style={[styles.docBtnSub, { color: theme.colors.textTertiary }]}>Генерируется автоматически</Text>
+        </View>
+      </View>
+    );
+  }
   return (
     <TouchableOpacity onPress={() => Linking.openURL(url)} style={[styles.docBtn, styles.docBtnReady]} activeOpacity={0.8}>
       <View style={[styles.docBtnIcon, { backgroundColor: theme.colors.profit + "20", borderColor: theme.colors.profit + "60" }]}>
@@ -330,6 +342,8 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.colors.border, marginBottom: 8,
   },
   docBtnReady: { borderColor: theme.colors.profit + '50', backgroundColor: theme.colors.profit + '08' },
+  docBtnPending: { borderColor: theme.colors.border, backgroundColor: theme.colors.surface, opacity: 0.7 },
+  docBtnIconPending: { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border },
   docBtnIcon: {
     width: 36, height: 36, borderRadius: 8,
     backgroundColor: theme.colors.accent + '15', borderWidth: 1, borderColor: theme.colors.accent + '40',
