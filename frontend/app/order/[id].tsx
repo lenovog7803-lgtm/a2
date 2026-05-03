@@ -103,13 +103,14 @@ export default function OrderDetail() {
   const update = (patch: any) => setOrder({ ...order, ...patch });
 
   const selectClient = (c: any) => update({ client_id: c.id, client_name: c.name });
-  const selectCarrier = (c: any) => update({
-    carrier_id: c.id, carrier_name: c.company_name,
-    driver_name: c.driver_name || order.driver_name,
-    driver_phone: c.phone || order.driver_phone,
-    vehicle_type: c.vehicle_type || order.vehicle_type,
-    vehicle_plate: c.plate || order.vehicle_plate,
-  });
+  const selectCarrier = (c: any) => {
+    const parts = [c.vehicle_type, c.plate, c.driver_name, c.phone].filter(Boolean);
+    update({
+      carrier_id: c.id,
+      carrier_name: c.company_name,
+      driver_name: parts.length ? parts.join('\n') : order.driver_name,
+    });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -186,12 +187,7 @@ export default function OrderDetail() {
         </View>
 
         <Text style={styles.groupLabel}>ДАННЫЕ ПО ВОДИТЕЛЮ И ТС</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <View style={{ flex: 1.2 }}><Field label="Тип ТС" value={order.vehicle_type} onChangeText={(v: string) => update({ vehicle_type: v })} placeholder="Тент / Реф" /></View>
-          <View style={{ flex: 1 }}><Field label="Гос. номер" autoCapitalize="characters" value={order.vehicle_plate} onChangeText={(v: string) => update({ vehicle_plate: v })} /></View>
-          <View style={{ flex: 1.5 }}><Field label="Водитель" value={order.driver_name} onChangeText={(v: string) => update({ driver_name: v })} placeholder="ФИО" /></View>
-        </View>
-        <Field label="Телефон водителя" keyboardType="phone-pad" value={order.driver_phone} onChangeText={(v: string) => update({ driver_phone: v })} />
+        <Field label="Данные на ТС" multiline value={order.driver_name || ''} onChangeText={(v: string) => update({ driver_name: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
 
         <Text style={styles.groupLabel}>ГРУЗ И СТАВКИ</Text>
         <View style={{ flexDirection: 'row', gap: 10 }}>
