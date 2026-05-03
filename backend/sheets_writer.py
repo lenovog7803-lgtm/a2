@@ -89,6 +89,7 @@ def _month_label(unload: str, load: str) -> str:
 # Маппинг: индекс колонки (1-based) -> значение
 def order_cells(o: Dict[str, Any]) -> Dict[int, Any]:
     return {
+        1:  o.get('order_number', ''),
         2:  _date_dot((o.get('created_at') or '')[:10]),
         3:  o.get('client_name', ''),
         4:  o.get('carrier_name', ''),
