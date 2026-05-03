@@ -257,6 +257,9 @@ def parse_order(row: List[str], client_idx: Dict[str, str], carrier_idx: Dict[st
         "cargo": _s(row[47]) if len(row) > 47 else "",
         "weight_tons": 0,
         "notes": _s(row[50]) if len(row) > 50 else "",
+        "doc_url_client": _s(row[34]) if len(row) > 34 else "",
+        "doc_url_carrier": _s(row[35]) if len(row) > 35 else "",
+        "doc_url_act": _s(row[36]) if len(row) > 36 else "",
         "created_at": _date(row[1]) + "T00:00:00+00:00" if (len(row) > 1 and _date(row[1])) else _now_iso(),
     }
 
