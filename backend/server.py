@@ -117,6 +117,18 @@ async def _bg_push_carrier(carrier_obj: dict):
         logging.getLogger(__name__).error(f"push_carrier bg failed: {e}")
 
 
+async def _bg_trigger_apps_script(order_number: str):
+    url = os.environ.get("GOOGLE_APPS_SCRIPT_URL")
+    if not url:
+        return
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.post(url, json={"orderNumber": order_number})
+    except Exception as e:
+        logging.getLogger(__name__).error(f"apps_script trigger failed: {e}")
+
+
 async def _bg_delete_order_row(order_number: str):
     if _sw_delete_order is None or not order_number:
         return
@@ -439,6 +451,7 @@ async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks)
     obj = Order(**payload.dict())
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())
+    background_tasks.add_task(_bg_trigger_apps_script, obj.order_number)
     return obj
 
 
