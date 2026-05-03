@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, ArrowRight, MapPin, Calendar, AlertTriangle, Filter as FilterIcon } from 'lucide-react-native';
+import { Plus, ArrowRight, MapPin, Calendar, AlertTriangle, Filter as FilterIcon, RefreshCw } from 'lucide-react-native';
 import { theme, formatMoney, statusLabels, statusColors } from '../../src/theme';
 import { api } from '../../src/api';
 import { Badge } from '../../src/components/Badge';
@@ -44,6 +44,7 @@ export default function Orders() {
   const [payFilter, setPayFilter] = useState<string>('any');
   const [docFilter, setDocFilter] = useState<string>('any');
   const [showFilters, setShowFilters] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +56,16 @@ export default function Orders() {
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const syncAndReload = useCallback(async () => {
+    setSyncing(true);
+    try {
+      await api.sync.importFromSheets();
+      await load();
+    } finally {
+      setSyncing(false);
+    }
+  }, [load]);
 
   const applyFilters = (list: any[]) => {
     let result = list;
@@ -93,6 +104,9 @@ export default function Orders() {
             <Text style={styles.title}>Заявки</Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity testID="sync-btn" onPress={syncAndReload} disabled={syncing} style={styles.iconBtn} activeOpacity={0.7}>
+              {syncing ? <ActivityIndicator size="small" color={theme.colors.accent} /> : <RefreshCw size={18} color={theme.colors.textSecondary} strokeWidth={1.6} />}
+            </TouchableOpacity>
             <TouchableOpacity testID="toggle-filters" onPress={() => setShowFilters(!showFilters)} style={[styles.iconBtn, showFilters && { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent }]} activeOpacity={0.7}>
               <FilterIcon size={18} color={showFilters ? theme.colors.accent : theme.colors.textSecondary} strokeWidth={1.6} />
               {activeFilters > 0 && <View style={styles.dot}><Text style={styles.dotText}>{activeFilters}</Text></View>}

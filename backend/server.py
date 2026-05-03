@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -138,7 +139,25 @@ async def _bg_delete_order_row(order_number: str):
         logging.getLogger(__name__).error(f"delete_order bg failed: {e}")
 
 
-app = FastAPI()
+async def _auto_sync_loop():
+    while True:
+        await asyncio.sleep(600)  # каждые 10 минут
+        if _sheets_run_import is None:
+            continue
+        try:
+            await _sheets_run_import(db)
+        except Exception as e:
+            logging.getLogger(__name__).error(f"auto sync failed: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(_auto_sync_loop())
+    yield
+    client.close()
+
+
+app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 
 TAX_RATE = 0.20  # 20% — для расчёта прибыли (маржа − налог)
@@ -919,12 +938,3 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-@app.on_event("startup")
-async def auto_seed():
-    # Авто-сид ОТКЛЮЧЁН: данные импортируются из Google Таблицы (POST /api/sync/import_from_sheets).
-    return
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
