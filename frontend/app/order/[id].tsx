@@ -118,11 +118,12 @@ export default function OrderDetail() {
     finally { setSaving(false); }
   };
 
-  const remove = () => {
-    Alert.alert('Удалить заявку?', order.order_number, [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: async () => { await api.orders.delete(order.id); router.back(); } },
-    ]);
+  const remove = async () => {
+    if (typeof window !== 'undefined') {
+      if (!window.confirm(`Удалить заявку ${order.order_number}?`)) return;
+      await api.orders.delete(order.id);
+      router.back();
+    }
   };
 
   if (loading || !order) {
