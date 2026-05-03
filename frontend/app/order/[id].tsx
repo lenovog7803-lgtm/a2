@@ -251,27 +251,9 @@ export default function OrderDetail() {
         <Field label="Заметки" multiline value={order.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top', marginTop: 16 }} />
 
         <Text style={styles.groupLabel}>ДОКУМЕНТЫ GOOGLE DOCS</Text>
-        <DocGenButton
-          label="Заявка клиенту"
-          url={order.doc_url_client}
-          loading={genKind === 'client'}
-          onOpen={() => openOrGenerate('client')}
-          onRegen={() => regenerateDoc('client')}
-        />
-        <DocGenButton
-          label="Договор-заявка перевозчику"
-          url={order.doc_url_carrier}
-          loading={genKind === 'carrier'}
-          onOpen={() => openOrGenerate('carrier')}
-          onRegen={() => regenerateDoc('carrier')}
-        />
-        <DocGenButton
-          label="Счёт-Акт"
-          url={order.doc_url_act}
-          loading={genKind === 'act'}
-          onOpen={() => openOrGenerate('act')}
-          onRegen={() => regenerateDoc('act')}
-        />
+        <DocGenButton label="Заявка клиенту" url={order.doc_url_client} />
+        <DocGenButton label="Договор-заявка перевозчику" url={order.doc_url_carrier} />
+        <DocGenButton label="Счёт-Акт" url={order.doc_url_act} />
 
         <TouchableOpacity testID="save-btn" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8}>
           {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveText}>Сохранить</Text>}
@@ -281,30 +263,17 @@ export default function OrderDetail() {
   );
 }
 
-function DocGenButton({ label, url, loading, onOpen, onRegen }: any) {
-  const generated = !!url;
+function DocGenButton({ label, url }: any) {
+  if (!url) return null;
   return (
-    <TouchableOpacity onPress={onOpen} disabled={loading} style={[styles.docBtn, generated && styles.docBtnReady]} activeOpacity={0.8}>
-      <View style={[styles.docBtnIcon, generated && { backgroundColor: theme.colors.profit + '20', borderColor: theme.colors.profit + '60' }]}>
-        {loading ? (
-          <ActivityIndicator color={theme.colors.accent} size="small" />
-        ) : generated ? (
-          <ExternalLink size={16} color={theme.colors.profit} strokeWidth={2} />
-        ) : (
-          <FileText size={16} color={theme.colors.accent} strokeWidth={1.6} />
-        )}
+    <TouchableOpacity onPress={() => Linking.openURL(url)} style={[styles.docBtn, styles.docBtnReady]} activeOpacity={0.8}>
+      <View style={[styles.docBtnIcon, { backgroundColor: theme.colors.profit + "20", borderColor: theme.colors.profit + "60" }]}>
+        <ExternalLink size={16} color={theme.colors.profit} strokeWidth={2} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.docBtnLabel}>{label}</Text>
-        <Text style={[styles.docBtnSub, { color: generated ? theme.colors.profit : theme.colors.textTertiary }]}>
-          {loading ? 'Создаём документ…' : generated ? 'Готов · нажмите чтобы открыть' : 'Нажмите чтобы создать'}
-        </Text>
+        <Text style={[styles.docBtnSub, { color: theme.colors.profit }]}>Готов · нажмите чтобы открыть</Text>
       </View>
-      {generated && !loading && (
-        <TouchableOpacity onPress={onRegen} style={styles.docBtnRegen} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <RefreshCw size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
-        </TouchableOpacity>
-      )}
     </TouchableOpacity>
   );
 }
