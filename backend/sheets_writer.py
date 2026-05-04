@@ -33,6 +33,7 @@ SCOPES = [
 ORDERS_DATA_START_ROW = 5
 CLIENTS_DATA_START_ROW = 3
 CARRIERS_DATA_START_ROW = 2
+LEADS_DATA_START_ROW = 2
 
 
 def _date_dot(s: str) -> str:
@@ -148,6 +149,29 @@ def carrier_cells(cr: Dict[str, Any]) -> Dict[int, Any]:
     }
 
 
+def _lead_status_label(s: str) -> str:
+    return {
+        'new': 'Новый',
+        'in_progress': 'В работе',
+        'won': 'Клиент',
+        'lost': 'Потерян',
+        'callback': 'Перезвонить',
+    }.get(s or '', s or '')
+
+
+def lead_cells(l: Dict[str, Any]) -> Dict[int, Any]:
+    return {
+        1: l.get('name', ''),
+        2: l.get('company', ''),
+        3: l.get('phone', ''),
+        4: l.get('city', ''),
+        5: _lead_status_label(l.get('status', '')),
+        6: l.get('next_call', ''),
+        7: l.get('notes', ''),
+        8: l.get('directions', ''),
+    }
+
+
 class SheetsWriter:
     def __init__(self):
         self.sheet_id = os.environ.get("GOOGLE_SHEET_ID")
@@ -213,6 +237,18 @@ class SheetsWriter:
     def upsert_carrier(self, carrier: Dict[str, Any]) -> str:
         return self._upsert('Перевозчики', carrier.get('company_name', ''), carrier_cells(carrier), CARRIERS_DATA_START_ROW)
 
+    def upsert_lead(self, lead: Dict[str, Any]) -> str:
+        return self._upsert('Обзвон для срм', lead.get('name', ''), lead_cells(lead), LEADS_DATA_START_ROW)
+
+    def delete_lead_row(self, name: str) -> bool:
+        ss = self._connect()
+        ws = ss.worksheet('Обзвон для срм')
+        row = self._find_row_by_key(ws, name, 1, LEADS_DATA_START_ROW)
+        if row is None:
+            return False
+        ws.delete_rows(row)
+        return True
+
     def delete_order_row(self, order_number: str) -> bool:
         """Удалить строку из 'Заказы' по номеру заявки. Возвращает True если строка найдена и удалена."""
         ss = self._connect()
@@ -264,4 +300,20 @@ async def delete_order(order_number: str) -> bool:
         return await asyncio.to_thread(get_writer().delete_order_row, order_number)
     except Exception as e:
         logger.error(f"[sheets delete order] {e}", exc_info=True)
+        return False
+
+
+async def push_lead(lead: Dict[str, Any]) -> str:
+    try:
+        return await asyncio.to_thread(get_writer().upsert_lead, lead)
+    except Exception as e:
+        logger.error(f"[sheets push lead] {e}", exc_info=True)
+        return f"error: {e}"
+
+
+async def delete_lead(name: str) -> bool:
+    try:
+        return await asyncio.to_thread(get_writer().delete_lead_row, name)
+    except Exception as e:
+        logger.error(f"[sheets delete lead] {e}", exc_info=True)
         return False

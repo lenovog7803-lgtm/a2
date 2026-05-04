@@ -7,7 +7,7 @@ import { theme, leadStatusLabels } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
 
-const STATUSES = ['new', 'in_progress', 'won', 'lost'];
+const STATUSES = ['new', 'in_progress', 'callback', 'won', 'lost'];
 
 export default function NewLead() {
   const insets = useSafeAreaInsets();
@@ -15,7 +15,7 @@ export default function NewLead() {
   const [saving, setSaving] = useState(false);
   const [data, setData] = useState<any>({
     name: '', company: '', phone: '', city: '', status: 'new',
-    last_contact: '', next_call: '', notes: '',
+    last_contact: '', next_call: '', notes: '', directions: '',
   });
 
   const update = (patch: any) => setData({ ...data, ...patch });
@@ -57,6 +57,7 @@ export default function NewLead() {
           ))}
         </View>
 
+        <Field label="Направления" placeholder="МСК-СПб, МСК-НСК" value={data.directions} onChangeText={(v: string) => update({ directions: v })} />
         <Field label="Заметки" multiline value={data.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
 
         <TouchableOpacity testID="create-lead-submit" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8}>

@@ -111,6 +111,7 @@ export const leadStatusLabels: Record<string, string> = {
   in_progress: 'В работе',
   won: 'Клиент',
   lost: 'Потерян',
+  callback: 'Перезвонить',
 };
 
 export const leadStatusColors: Record<string, string> = {
@@ -118,4 +119,5 @@ export const leadStatusColors: Record<string, string> = {
   in_progress: '#F59E0B',
   won: '#00E676',
   lost: '#71717A',
+  callback: '#8B5CF6',
 };

@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, Alert, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, Phone, Calendar, Check, Search } from 'lucide-react-native';
+import { Plus, Phone, Calendar, Check, Search, RefreshCw } from 'lucide-react-native';
 import { theme, leadStatusLabels, leadStatusColors } from '../../src/theme';
 import { api } from '../../src/api';
 import { Badge } from '../../src/components/Badge';
@@ -14,6 +14,7 @@ export default function Leads() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [syncing, setSyncing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -25,6 +26,16 @@ export default function Leads() {
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const syncAndReload = useCallback(async () => {
+    setSyncing(true);
+    try {
+      await api.sync.importFromSheets();
+      await load();
+    } finally {
+      setSyncing(false);
+    }
+  }, [load]);
 
   const q = searchQuery.trim().toLowerCase();
   const filtered = (filter === 'all' ? leads : leads.filter(l => l.status === filter))
@@ -39,6 +50,7 @@ export default function Leads() {
     { id: 'all', label: 'Все', count: leads.length },
     { id: 'new', label: 'Новые', count: leads.filter(l => l.status === 'new').length },
     { id: 'in_progress', label: 'В работе', count: leads.filter(l => l.status === 'in_progress').length },
+    { id: 'callback', label: 'Перезвонить', count: leads.filter(l => l.status === 'callback').length },
     { id: 'won', label: 'Клиенты', count: leads.filter(l => l.status === 'won').length },
   ];
 
@@ -60,9 +72,16 @@ export default function Leads() {
             <Text style={styles.kicker}>ПРОДАЖИ</Text>
             <Text style={styles.title}>Обзвон</Text>
           </View>
-          <TouchableOpacity testID="add-lead-btn" onPress={() => router.push('/lead/new')} style={styles.fab} activeOpacity={0.8}>
-            <Plus size={20} color="#000" strokeWidth={2.2} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity onPress={syncAndReload} disabled={syncing} style={styles.syncBtn} activeOpacity={0.7}>
+              {syncing
+                ? <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                : <RefreshCw size={16} color={theme.colors.textSecondary} strokeWidth={1.8} />}
+            </TouchableOpacity>
+            <TouchableOpacity testID="add-lead-btn" onPress={() => router.push('/lead/new')} style={styles.fab} activeOpacity={0.8}>
+              <Plus size={20} color="#000" strokeWidth={2.2} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.searchBox}>
@@ -111,7 +130,12 @@ export default function Leads() {
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           renderItem={({ item, index }) => (
-            <LeadCard lead={item} onAction={(s: string) => setStatus(item.id, s)} testID={`lead-card-${index}`} />
+            <LeadCard
+              lead={item}
+              onPress={() => router.push(`/lead/${item.id}`)}
+              onAction={(s: string) => setStatus(item.id, s)}
+              testID={`lead-card-${index}`}
+            />
           )}
           ListEmptyComponent={<Text style={styles.empty}>Нет контактов для обзвона</Text>}
         />
@@ -120,13 +144,13 @@ export default function Leads() {
   );
 }
 
-function LeadCard({ lead, onAction, testID }: any) {
+function LeadCard({ lead, onPress, onAction, testID }: any) {
   return (
-    <View testID={testID} style={styles.card}>
+    <TouchableOpacity testID={testID} style={styles.card} onPress={onPress} activeOpacity={0.8}>
       <View style={styles.cardHead}>
         <View style={{ flex: 1 }}>
           <Text style={styles.name} numberOfLines={1}>{lead.name}</Text>
-          {!!lead.company && <Text style={styles.company} numberOfLines={1}>{lead.company} · {lead.city}</Text>}
+          {!!lead.company && <Text style={styles.company} numberOfLines={1}>{lead.company}{lead.city ? ` · ${lead.city}` : ''}</Text>}
         </View>
         <Badge label={leadStatusLabels[lead.status] || lead.status} color={leadStatusColors[lead.status] || theme.colors.textTertiary} />
       </View>
@@ -151,7 +175,7 @@ function LeadCard({ lead, onAction, testID }: any) {
       <View style={styles.actions}>
         <TouchableOpacity
           style={styles.callBtn}
-          onPress={() => Linking.openURL(`tel:${lead.phone}`)}
+          onPress={(e) => { e.stopPropagation?.(); Linking.openURL(`tel:${lead.phone}`); }}
           activeOpacity={0.7}
         >
           <Phone size={14} color="#000" strokeWidth={2} />
@@ -160,7 +184,7 @@ function LeadCard({ lead, onAction, testID }: any) {
         {lead.status !== 'won' && (
           <TouchableOpacity
             style={styles.secondaryBtn}
-            onPress={() => onAction('won')}
+            onPress={(e) => { e.stopPropagation?.(); onAction('won'); }}
             activeOpacity={0.7}
           >
             <Text style={styles.secondaryText}>Стал клиентом</Text>
@@ -169,14 +193,14 @@ function LeadCard({ lead, onAction, testID }: any) {
         {lead.status === 'new' && (
           <TouchableOpacity
             style={styles.secondaryBtn}
-            onPress={() => onAction('in_progress')}
+            onPress={(e) => { e.stopPropagation?.(); onAction('in_progress'); }}
             activeOpacity={0.7}
           >
             <Text style={styles.secondaryText}>В работу</Text>
           </TouchableOpacity>
         )}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -186,6 +210,7 @@ const styles = StyleSheet.create({
   kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 4 },
   title: { fontSize: 32, fontWeight: '300', letterSpacing: -1, color: theme.colors.textPrimary },
   fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
+  syncBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' },
 
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 8,

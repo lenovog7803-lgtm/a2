@@ -126,10 +126,27 @@ _STATUS_MAP = {
     "отмен": "cancelled",
 }
 
+_LEAD_STATUS_MAP = {
+    "перезвонить": "callback",
+    "клиент": "won",
+    "потерян": "lost",
+    "в работе": "in_progress",
+    "новый": "new",
+    "новая": "new",
+}
+
 
 def _status(v) -> str:
     s = _s(v).lower()
     for k, val in _STATUS_MAP.items():
+        if k in s:
+            return val
+    return "new"
+
+
+def _lead_status(v) -> str:
+    s = _s(v).lower()
+    for k, val in _LEAD_STATUS_MAP.items():
         if k in s:
             return val
     return "new"
@@ -264,6 +281,27 @@ def parse_order(row: List[str], client_idx: Dict[str, str], carrier_idx: Dict[st
     }
 
 
+def parse_lead(row: List[str]) -> Optional[Dict[str, Any]]:
+    name = _s(row[0]) if len(row) > 0 else ""
+    if not name or len(name) < 2:
+        return None
+    if name.lower() in ("имя", "контакт", "лид", "обзвон", "фио"):
+        return None
+    return {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "company": _s(row[1]) if len(row) > 1 else "",
+        "phone": _s(row[2]) if len(row) > 2 else "",
+        "city": _s(row[3]) if len(row) > 3 else "",
+        "status": _lead_status(row[4]) if len(row) > 4 else "new",
+        "next_call": _s(row[5]) if len(row) > 5 else "",
+        "notes": _s(row[6]) if len(row) > 6 else "",
+        "directions": _s(row[7]) if len(row) > 7 else "",
+        "last_contact": "",
+        "created_at": _now_iso(),
+    }
+
+
 # ===== main importer =====
 class SheetsImporter:
     def __init__(self):
@@ -330,6 +368,22 @@ class SheetsImporter:
             out.append(obj)
         return out
 
+    def import_leads(self) -> List[Dict[str, Any]]:
+        rows = self._read_tab("Обзвон для срм")
+        out = []
+        seen = set()
+        # row0 — заголовки, данные с row1
+        for r in rows[1:]:
+            obj = parse_lead(r)
+            if not obj:
+                continue
+            key = obj["name"].lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(obj)
+        return out
+
 
 async def run_import(db) -> Dict[str, Any]:
     """Полный импорт: читаем 3 листа -> заменяем коллекции в Mongo.
@@ -341,10 +395,11 @@ async def run_import(db) -> Dict[str, Any]:
         clients = importer.import_clients()
         carriers = importer.import_carriers()
         orders = importer.import_orders(clients, carriers)
-        return clients, carriers, orders
+        leads = importer.import_leads()
+        return clients, carriers, orders, leads
 
     try:
-        clients, carriers, orders = await asyncio.to_thread(_fetch)
+        clients, carriers, orders, leads = await asyncio.to_thread(_fetch)
     except Exception as e:
         # Понятное сообщение об ошибке
         err_msg = str(e) or repr(e) or e.__class__.__name__
@@ -369,6 +424,10 @@ async def run_import(db) -> Dict[str, Any]:
     if orders:
         await db.orders.insert_many(orders)
 
+    await db.leads.delete_many({})
+    if leads:
+        await db.leads.insert_many(leads)
+
     # Кэшируем последний статус
     last = {
         "ok": True,
@@ -377,6 +436,7 @@ async def run_import(db) -> Dict[str, Any]:
             "clients": len(clients),
             "carriers": len(carriers),
             "orders": len(orders),
+            "leads": len(leads),
         },
         "at": _now_iso(),
     }

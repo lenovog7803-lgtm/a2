@@ -41,6 +41,7 @@ export const api = {
   },
   leads: {
     list: () => req('/leads'),
+    get: (id: string) => req(`/leads/${id}`),
     create: (data: any) => req('/leads', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => req(`/leads/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/leads/${id}`, { method: 'DELETE' }),
