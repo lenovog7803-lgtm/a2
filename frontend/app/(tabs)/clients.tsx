@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, Phone, Mail } from 'lucide-react-native';
+import { Plus, Phone, Mail, Search } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 
@@ -11,6 +11,7 @@ export default function Clients() {
   const router = useRouter();
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -22,6 +23,15 @@ export default function Clients() {
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = q
+    ? clients.filter(c =>
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.contact_person || '').toLowerCase().includes(q) ||
+        (c.phone || '').toLowerCase().includes(q)
+      )
+    : clients;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg, paddingTop: insets.top + 16 }}>
@@ -35,6 +45,18 @@ export default function Clients() {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.searchBox}>
+        <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Поиск по названию, контакту, телефону"
+          placeholderTextColor={theme.colors.textTertiary}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          clearButtonMode="while-editing"
+        />
+      </View>
+
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={theme.colors.accent} />
@@ -42,7 +64,7 @@ export default function Clients() {
       ) : (
         <FlatList
           testID="clients-list"
-          data={clients}
+          data={filtered}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
@@ -147,4 +169,7 @@ const styles = StyleSheet.create({
   },
   actionText: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '500' },
   empty: { color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 },
+
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginHorizontal: 20, marginBottom: 12 },
+  searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
 });

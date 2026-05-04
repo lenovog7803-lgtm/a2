@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, ArrowRight, MapPin, Calendar, AlertTriangle, Filter as FilterIcon, RefreshCw } from 'lucide-react-native';
+import { Plus, ArrowRight, MapPin, Calendar, AlertTriangle, Filter as FilterIcon, RefreshCw, Search } from 'lucide-react-native';
 import { theme, formatMoney, statusLabels, statusColors } from '../../src/theme';
 import { api } from '../../src/api';
 import { Badge } from '../../src/components/Badge';
@@ -45,6 +45,7 @@ export default function Orders() {
   const [docFilter, setDocFilter] = useState<string>('any');
   const [showFilters, setShowFilters] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -69,6 +70,14 @@ export default function Orders() {
 
   const applyFilters = (list: any[]) => {
     let result = list;
+    const q = searchQuery.trim().toLowerCase();
+    if (q) result = result.filter(o =>
+      (o.order_number || '').toLowerCase().includes(q) ||
+      (o.client_name || '').toLowerCase().includes(q) ||
+      (o.carrier_name || '').toLowerCase().includes(q) ||
+      (o.route_from || '').toLowerCase().includes(q) ||
+      (o.route_to || '').toLowerCase().includes(q)
+    );
     if (statusFilter !== 'all') result = result.filter(o => o.status === statusFilter);
     if (payFilter === 'unpaid_client') result = result.filter(o => !o.client_paid);
     else if (payFilter === 'unpaid_carrier') result = result.filter(o => !o.carrier_paid);
@@ -115,6 +124,18 @@ export default function Orders() {
               <Plus size={20} color="#000" strokeWidth={2.2} />
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.searchBox}>
+          <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Поиск по номеру, клиенту, перевозчику, маршруту"
+            placeholderTextColor={theme.colors.textTertiary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            clearButtonMode="while-editing"
+          />
         </View>
 
         <FlatList
@@ -266,4 +287,7 @@ const styles = StyleSheet.create({
   payDot: { width: 6, height: 6, borderRadius: 3 },
   payText: { fontSize: 11, fontWeight: '600' },
   empty: { color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 },
+
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginTop: 12 },
+  searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
 });

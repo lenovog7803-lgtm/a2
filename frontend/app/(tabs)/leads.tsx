@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, Alert, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, Phone, Calendar, Check } from 'lucide-react-native';
+import { Plus, Phone, Calendar, Check, Search } from 'lucide-react-native';
 import { theme, leadStatusLabels, leadStatusColors } from '../../src/theme';
 import { api } from '../../src/api';
 import { Badge } from '../../src/components/Badge';
@@ -13,6 +13,7 @@ export default function Leads() {
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -25,7 +26,14 @@ export default function Leads() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const filtered = filter === 'all' ? leads : leads.filter(l => l.status === filter);
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = (filter === 'all' ? leads : leads.filter(l => l.status === filter))
+    .filter(l => !q ||
+      (l.name || '').toLowerCase().includes(q) ||
+      (l.company || '').toLowerCase().includes(q) ||
+      (l.phone || '').toLowerCase().includes(q) ||
+      (l.city || '').toLowerCase().includes(q)
+    );
 
   const filters = [
     { id: 'all', label: 'Все', count: leads.length },
@@ -55,6 +63,18 @@ export default function Leads() {
           <TouchableOpacity testID="add-lead-btn" onPress={() => router.push('/lead/new')} style={styles.fab} activeOpacity={0.8}>
             <Plus size={20} color="#000" strokeWidth={2.2} />
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.searchBox}>
+          <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Поиск по имени, компании, телефону, городу"
+            placeholderTextColor={theme.colors.textTertiary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            clearButtonMode="while-editing"
+          />
         </View>
 
         <FlatList
@@ -208,4 +228,7 @@ const styles = StyleSheet.create({
   secondaryText: { color: theme.colors.textPrimary, fontSize: 12, fontWeight: '600' },
 
   empty: { color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 },
+
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginTop: 12 },
+  searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
 });
