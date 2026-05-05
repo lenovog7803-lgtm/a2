@@ -139,6 +139,7 @@ export default function Leads() {
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          ListHeaderComponent={<LeadsStats leads={leads} />}
           renderItem={({ item, index }) => (
             <LeadCard
               lead={item}
@@ -161,6 +162,143 @@ export default function Leads() {
     </View>
   );
 }
+
+// ─── Stats block ────────────────────────────────────────────────────────────
+
+function LeadsStats({ leads }: { leads: any[] }) {
+  const total = leads.length;
+  if (total === 0) return null;
+
+  const cnt = (status: string) => leads.filter(l => l.status === status).length;
+  const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
+
+  const funnel = [
+    { label: 'Новые',       status: 'new',         color: leadStatusColors['new'] },
+    { label: 'В работе',    status: 'in_progress',  color: leadStatusColors['in_progress'] },
+    { label: 'Перезвонить', status: 'callback',     color: leadStatusColors['callback'] },
+    { label: 'Клиенты',    status: 'won',           color: leadStatusColors['won'] },
+    { label: 'Потеряны',   status: 'lost',          color: leadStatusColors['lost'] },
+  ].map(f => ({ ...f, count: cnt(f.status), pct: pct(cnt(f.status)) }));
+
+  const wonCount = cnt('won');
+  const processed = leads.filter(l => l.status !== 'new').length;
+  const convRate = pct(wonCount);
+
+  // Last 7 days activity by last_contact
+  const today = new Date();
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - 6 + i);
+    return d.toISOString().slice(0, 10);
+  });
+  const activity = last7.map(date => ({
+    date,
+    count: leads.filter(l => l.last_contact === date).length,
+    day: parseInt(date.slice(8, 10), 10),
+  }));
+  const maxAct = Math.max(...activity.map(a => a.count), 1);
+
+  return (
+    <View style={sStyles.block}>
+      {/* Funnel */}
+      <Text style={sStyles.sectionLabel}>ВОРОНКА КОНВЕРСИИ</Text>
+      <View style={sStyles.funnelCard}>
+        {funnel.map((f, i) => (
+          <React.Fragment key={f.status}>
+            <View style={sStyles.funnelStep}>
+              <Text style={[sStyles.funnelCount, { color: f.color || theme.colors.textTertiary }]}>{f.count}</Text>
+              <Text style={sStyles.funnelLabel} numberOfLines={1}>{f.label}</Text>
+              <Text style={sStyles.funnelPct}>{f.pct}%</Text>
+            </View>
+            {i < funnel.length - 1 && (
+              <Text style={sStyles.funnelArrow}>›</Text>
+            )}
+          </React.Fragment>
+        ))}
+      </View>
+
+      {/* Mini-cards */}
+      <View style={sStyles.cardsRow}>
+        <View style={sStyles.miniCard}>
+          <Text style={sStyles.miniLabel}>КОНВЕРСИЯ</Text>
+          <Text style={[sStyles.miniValue, { color: theme.colors.profit }]}>{convRate}%</Text>
+          <Text style={sStyles.miniSub}>в клиенты</Text>
+        </View>
+        <View style={sStyles.miniCard}>
+          <Text style={sStyles.miniLabel}>ОБРАБОТАНО</Text>
+          <Text style={[sStyles.miniValue, { color: theme.colors.accent }]}>{processed}</Text>
+          <Text style={sStyles.miniSub}>контактов</Text>
+        </View>
+      </View>
+
+      {/* Activity chart */}
+      <Text style={sStyles.sectionLabel}>АКТИВНОСТЬ — 7 ДНЕЙ</Text>
+      <View style={sStyles.actCard}>
+        {activity.map(({ date, count, day }) => {
+          const h = Math.max(count > 0 ? 4 : 2, (count / maxAct) * 48);
+          return (
+            <View key={date} style={sStyles.actCol}>
+              <View style={{ height: 48, justifyContent: 'flex-end' }}>
+                <View style={[sStyles.actBar, {
+                  height: h,
+                  backgroundColor: count > 0 ? theme.colors.accent : theme.colors.surfaceElevated,
+                }]} />
+              </View>
+              <Text style={sStyles.actDay}>{day}</Text>
+              {count > 0 && <Text style={sStyles.actCount}>{count}</Text>}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+const sStyles = StyleSheet.create({
+  block: { paddingBottom: 16 },
+  sectionLabel: {
+    fontSize: 10, fontWeight: '700', letterSpacing: 1.8,
+    color: theme.colors.textTertiary, marginBottom: 8,
+  },
+
+  // Funnel
+  funnelCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: 14, paddingVertical: 14, paddingHorizontal: 8,
+    marginBottom: 10,
+  },
+  funnelStep: { flex: 1, alignItems: 'center' },
+  funnelCount: { fontSize: 18, fontWeight: '700', letterSpacing: -0.5 },
+  funnelLabel: { fontSize: 9, color: theme.colors.textSecondary, fontWeight: '500', marginTop: 2, textAlign: 'center' },
+  funnelPct: { fontSize: 9, color: theme.colors.textTertiary, marginTop: 1 },
+  funnelArrow: { color: theme.colors.textTertiary, fontSize: 16, paddingHorizontal: 2, marginBottom: 12 },
+
+  // Mini-cards
+  cardsRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  miniCard: {
+    flex: 1, backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 12,
+  },
+  miniLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary },
+  miniValue: { fontSize: 26, fontWeight: '700', letterSpacing: -0.5, marginTop: 4 },
+  miniSub: { fontSize: 10, color: theme.colors.textTertiary, marginTop: 1 },
+
+  // Activity chart
+  actCard: {
+    flexDirection: 'row', alignItems: 'flex-end', gap: 4,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: 14, padding: 14, marginBottom: 16,
+  },
+  actCol: { flex: 1, alignItems: 'center' },
+  actBar: { width: '80%', borderRadius: 3 },
+  actDay: { fontSize: 9, color: theme.colors.textTertiary, marginTop: 4 },
+  actCount: { fontSize: 8, color: theme.colors.accent, fontWeight: '700', marginTop: 1 },
+});
+
+// ─── Lead card ───────────────────────────────────────────────────────────────
 
 function LeadCard({ lead, onPress, onAction, testID }: any) {
   return (
