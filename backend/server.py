@@ -56,9 +56,15 @@ except Exception as _e:  # pragma: no cover
     logging.getLogger(__name__).warning(f"google_tasks import failed: {_e}")
 
 try:
-    from oauth_google import build_flow as _oauth_build_flow, get_redirect_uri as _oauth_get_redirect, SCOPES as _OAUTH_SCOPES
+    from oauth_google import (
+        build_auth_url as _oauth_build_auth_url,
+        fetch_token as _oauth_fetch_token,
+        get_redirect_uri as _oauth_get_redirect,
+        SCOPES as _OAUTH_SCOPES,
+    )
 except Exception as _e:  # pragma: no cover
-    _oauth_build_flow = None
+    _oauth_build_auth_url = None
+    _oauth_fetch_token = None
     _oauth_get_redirect = None
     _OAUTH_SCOPES = []
     logging.getLogger(__name__).warning(f"oauth_google import failed: {_e}")
@@ -672,16 +678,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 @api_router.get("/auth/google/start")
 async def auth_google_start(request: Request = None):  # type: ignore  # noqa
     """Возвращает auth_url для перехода пользователя на consent screen Google."""
-    if _oauth_build_flow is None:
+    if _oauth_build_auth_url is None:
         raise HTTPException(500, "OAuth не настроен")
     try:
-        flow = _oauth_build_flow()
-        auth_url, state = flow.authorization_url(
-            access_type='offline',
-            include_granted_scopes='true',
-            prompt='consent',  # обязательно — без этого может не вернуться refresh_token
-        )
-        return {"auth_url": auth_url, "state": state, "redirect_uri": flow.redirect_uri}
+        auth_url, state = _oauth_build_auth_url()
+        redirect_uri = _oauth_get_redirect()
+        return {"auth_url": auth_url, "state": state, "redirect_uri": redirect_uri}
     except Exception as e:
         raise HTTPException(500, f"OAuth start failed: {e}")
 
@@ -693,19 +695,17 @@ async def auth_google_callback(code: str = "", state: str = "", error: str = "")
         return HTMLResponse(_callback_html("Ошибка авторизации: " + error, success=False))
     if not code:
         return HTMLResponse(_callback_html("Не получен код авторизации", success=False))
-    if _oauth_build_flow is None:
+    if _oauth_fetch_token is None:
         return HTMLResponse(_callback_html("OAuth не настроен на сервере", success=False))
 
     try:
-        flow = _oauth_build_flow()
-        flow.fetch_token(code=code)
-        creds = flow.credentials
+        token = _oauth_fetch_token(code=code, state=state)
         token_doc = {
             "_id": "google",
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token,
-            "expiry": creds.expiry.isoformat() if creds.expiry else None,
-            "scopes": list(creds.scopes or []),
+            "access_token": token.get("access_token"),
+            "refresh_token": token.get("refresh_token"),
+            "expiry": token.get("expires_at"),
+            "scopes": _OAUTH_SCOPES,
             "saved_at": now_iso(),
         }
         # сохраняем (upsert)

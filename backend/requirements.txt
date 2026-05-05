@@ -6,6 +6,7 @@ pydantic
 gspread
 google-auth
 google-auth-oauthlib
+requests_oauthlib
 google-api-python-client
 python-multipart
 httpx
