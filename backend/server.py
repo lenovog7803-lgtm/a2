@@ -162,6 +162,13 @@ async def _bg_delete_order_row(order_number: str):
 async def _auto_sync_loop():
     while True:
         await asyncio.sleep(600)  # каждые 10 минут
+        # keep-alive ping
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                await client.get("https://logistics-crm-backend.onrender.com/api/ping", timeout=10)
+        except Exception:
+            pass
         if _sheets_run_import is None:
             continue
         try:
@@ -969,3 +976,21 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
+
+
+# Keep-alive endpoint
+@api_router.get("/ping")
+async def ping():
+    return {"ok": True}
+
+
+# Keep-alive endpoint
+@api_router.get("/ping")
+async def ping():
+    return {"ok": True}
+
+
+# Keep-alive endpoint
+@api_router.get("/ping")
+async def ping():
+    return {"ok": True}
