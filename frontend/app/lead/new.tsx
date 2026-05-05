@@ -6,6 +6,7 @@ import { X } from 'lucide-react-native';
 import { theme, leadStatusLabels } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
+import { DateField } from '../../src/components/DateField';
 
 const STATUSES = ['new', 'in_progress', 'callback', 'won', 'lost'];
 
@@ -46,7 +47,7 @@ export default function NewLead() {
         <Field label="Компания" value={data.company} onChangeText={(v: string) => update({ company: v })} />
         <Field label="Телефон" keyboardType="phone-pad" value={data.phone} onChangeText={(v: string) => update({ phone: v })} testID="new-lead-phone" />
         <Field label="Город" value={data.city} onChangeText={(v: string) => update({ city: v })} />
-        <Field label="Дата следующего звонка" placeholder="2026-02-15" value={data.next_call} onChangeText={(v: string) => update({ next_call: v })} />
+        <DateField label="Дата следующего звонка" value={data.next_call} onChange={(v: string) => update({ next_call: v })} />
 
         <Text style={styles.label}>СТАТУС</Text>
         <View style={styles.row}>

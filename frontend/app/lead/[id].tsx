@@ -10,6 +10,7 @@ import { X, Trash2, Phone } from 'lucide-react-native';
 import { theme, leadStatusLabels } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
+import { DateField } from '../../src/components/DateField';
 
 const STATUSES = ['new', 'in_progress', 'callback', 'won', 'lost'];
 
