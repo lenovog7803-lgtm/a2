@@ -146,6 +146,10 @@ function ClientModal({ visible, lead, onClose, onSuccess }: any) {
         bank_name: '',
         bank_account: '',
         bank_bik: '',
+        postal_address: '',
+        cargo_types: '',
+        director: '',
+        basis: 'Устав',
       });
     }
   }, [visible, lead]);
@@ -185,14 +189,18 @@ function ClientModal({ visible, lead, onClose, onSuccess }: any) {
             <Text style={styles.clientHintText}>Компания: <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>{lead?.company || '—'}</Text></Text>
           </View>
 
+          <Field label="Сфера" value={data.cargo_types} onChangeText={(v: string) => upd({ cargo_types: v })} />
           <Field label="Контактное лицо" value={data.contact_person} onChangeText={(v: string) => upd({ contact_person: v })} />
           <Field label="Телефон" keyboardType="phone-pad" value={data.phone} onChangeText={(v: string) => upd({ phone: v })} />
           <Field label="Email" keyboardType="email-address" value={data.email} onChangeText={(v: string) => upd({ email: v })} />
+          <Field label="Почтовый адрес" value={data.postal_address} onChangeText={(v: string) => upd({ postal_address: v })} />
           <Field label="Юридический адрес" value={data.legal_address} onChangeText={(v: string) => upd({ legal_address: v })} />
           <Field label="ИНН / УНП" value={data.inn} onChangeText={(v: string) => upd({ inn: v })} />
           <Field label="Банк" value={data.bank_name} onChangeText={(v: string) => upd({ bank_name: v })} />
           <Field label="Расчётный счёт" value={data.bank_account} onChangeText={(v: string) => upd({ bank_account: v })} />
           <Field label="БИК" value={data.bank_bik} onChangeText={(v: string) => upd({ bank_bik: v })} />
+          <Field label="Директор" value={data.director} onChangeText={(v: string) => upd({ director: v })} />
+          <Field label="Основание" value={data.basis} onChangeText={(v: string) => upd({ basis: v })} />
 
           <TouchableOpacity onPress={confirm} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8}>
             {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveText}>Создать клиента</Text>}
