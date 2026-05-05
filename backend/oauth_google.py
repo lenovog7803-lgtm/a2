@@ -44,13 +44,17 @@ def get_client_config() -> Optional[Dict[str, Any]]:
     }
 
 
+PRODUCTION_REDIRECT_URI = "https://logistics-crm-backend.onrender.com/api/auth/google/callback"
+
+
 def get_redirect_uri() -> str:
-    # Backend публичный URL берём из env (выставляет main agent), либо из EXPO_PUBLIC_BACKEND_URL.
-    base = os.environ.get("PUBLIC_BACKEND_URL") or os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip('/')
-    if not base:
-        # Fallback: собрать из request — будет переопределён в endpoint
-        return ""
-    return f"{base}/api/auth/google/callback"
+    base = (
+        os.environ.get("PUBLIC_BACKEND_URL")
+        or os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
+    )
+    if base:
+        return f"{base}/api/auth/google/callback"
+    return PRODUCTION_REDIRECT_URI
 
 
 def build_flow(redirect_uri: Optional[str] = None) -> Flow:
