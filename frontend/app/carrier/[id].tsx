@@ -18,12 +18,14 @@ export default function CarrierDetail() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [orders, setOrders] = useState<any[]>([]);
 
   useEffect(() => {
     (async () => {
       try {
-        const c = await api.carriers.get(id!);
+        const [c, allOrders] = await Promise.all([api.carriers.get(id!), api.orders.list()]);
         setCarrier(c);
+        setOrders(allOrders.filter((o: any) => o.carrier_name === c.company_name));
       } catch (e: any) {
         Alert.alert('Ошибка', e.message);
         router.back();
@@ -130,6 +132,13 @@ export default function CarrierDetail() {
                 <Row label="Заметки" value={carrier.notes} multiline />
               </Section>
             )}
+
+            {/* История заявок */}
+            <OrdersHistory
+              orders={orders}
+              rateKey="carrier_rate"
+              onPress={(oid: string) => router.push('/order/' + oid)}
+            />
           </>
         ) : (
           <>
@@ -179,6 +188,57 @@ export default function CarrierDetail() {
         )}
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  new: 'Новая', in_progress: 'В пути', done: 'Завершена', cancelled: 'Отменена',
+};
+function statusColor(s: string) {
+  if (s === 'done') return theme.colors.profit;
+  if (s === 'cancelled') return theme.colors.loss;
+  if (s === 'in_progress') return theme.colors.accent;
+  return theme.colors.textTertiary;
+}
+
+function OrdersHistory({ orders, rateKey, onPress }: { orders: any[]; rateKey: string; onPress: (id: string) => void }) {
+  const total = orders.reduce((s: number, o: any) => s + (o[rateKey] || 0), 0);
+  const count = orders.length;
+  const word = count === 1 ? 'заявка' : count < 5 ? 'заявки' : 'заявок';
+  return (
+    <View style={{ marginBottom: 12 }}>
+      <Text style={styles.sectionTitle}>ИСТОРИЯ ЗАЯВОК</Text>
+      <View style={styles.section}>
+        {count === 0 ? (
+          <Text style={styles.emptyOrders}>Нет заявок</Text>
+        ) : (
+          orders.map((o, i) => (
+            <TouchableOpacity
+              key={o.id}
+              onPress={() => onPress(o.id)}
+              style={[styles.orderRow, i === count - 1 && { borderBottomWidth: 0 }]}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.orderNum}>№{o.order_number}</Text>
+                <Text style={styles.orderRoute} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
+                {!!o.load_date && <Text style={styles.orderDate}>{o.load_date}</Text>}
+              </View>
+              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                <Text style={styles.orderRate}>{o[rateKey] ? `${Number(o[rateKey]).toLocaleString()} ₽` : '—'}</Text>
+                <Text style={[styles.orderStatus, { color: statusColor(o.status) }]}>{STATUS_LABELS[o.status] || o.status}</Text>
+              </View>
+            </TouchableOpacity>
+          ))
+        )}
+        {count > 0 && (
+          <View style={styles.orderTotals}>
+            <Text style={styles.orderTotalsLabel}>Итого {count} {word}</Text>
+            <Text style={styles.orderTotalsValue}>{Number(total).toLocaleString()} ₽</Text>
+          </View>
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -242,4 +302,15 @@ const styles = StyleSheet.create({
   saveText: { color: '#000', fontSize: 14, fontWeight: '700' },
   cancelBtn: { flex: 1, backgroundColor: theme.colors.surfaceElevated, paddingVertical: 14, borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border },
   cancelText: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '600' },
+
+  emptyOrders: { color: theme.colors.textTertiary, fontSize: 13, paddingVertical: 16, textAlign: 'center' },
+  orderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  orderNum: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '700' },
+  orderRoute: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 },
+  orderDate: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
+  orderRate: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '600' },
+  orderStatus: { fontSize: 11, fontWeight: '600' },
+  orderTotals: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
+  orderTotalsLabel: { color: theme.colors.textTertiary, fontSize: 12, fontWeight: '600' },
+  orderTotalsValue: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '700' },
 });
