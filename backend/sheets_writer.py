@@ -249,6 +249,15 @@ class SheetsWriter:
         ws.delete_rows(row)
         return True
 
+    def delete_client_row(self, name: str) -> bool:
+        ss = self._connect()
+        ws = ss.worksheet('Клиенты')
+        row = self._find_row_by_key(ws, name, 1, CLIENTS_DATA_START_ROW)
+        if row is None:
+            return False
+        ws.delete_rows(row)
+        return True
+
     def delete_order_row(self, order_number: str) -> bool:
         """Удалить строку из 'Заказы' по номеру заявки. Возвращает True если строка найдена и удалена."""
         ss = self._connect()
@@ -316,4 +325,11 @@ async def delete_lead(name: str) -> bool:
         return await asyncio.to_thread(get_writer().delete_lead_row, name)
     except Exception as e:
         logger.error(f"[sheets delete lead] {e}", exc_info=True)
+        return False
+
+async def delete_client(name: str) -> bool:
+    try:
+        return await asyncio.to_thread(get_writer().delete_client_row, name)
+    except Exception as e:
+        logger.error(f"[sheets delete client] {e}", exc_info=True)
         return False

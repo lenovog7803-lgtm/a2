@@ -34,9 +34,9 @@ except Exception as _e:  # pragma: no cover
 try:
     from sheets_writer import (push_order as _sw_push_order, push_client as _sw_push_client,
                                 push_carrier as _sw_push_carrier, delete_order as _sw_delete_order,
-                                push_lead as _sw_push_lead, delete_lead as _sw_delete_lead)
+                                push_lead as _sw_push_lead, delete_lead as _sw_delete_lead, delete_client as _sw_delete_client)
 except Exception as _e:  # pragma: no cover
-    _sw_push_order = _sw_push_client = _sw_push_carrier = _sw_delete_order = _sw_push_lead = _sw_delete_lead = None
+    _sw_push_order = _sw_push_client = _sw_push_carrier = _sw_delete_order = _sw_push_lead = _sw_delete_lead = _sw_delete_client = None
     logging.getLogger(__name__).warning(f"sheets_writer import failed: {_e}")
 
 try:
@@ -136,6 +136,22 @@ async def _bg_delete_lead(name: str):
         await _sw_delete_lead(name)
     except Exception as e:
         logging.getLogger(__name__).error(f"delete_lead bg failed: {e}", exc_info=True)
+
+async def _bg_delete_client(name: str):
+    if not name or _sw_delete_client is None:
+        return
+    try:
+        await _sw_delete_client(name)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"delete_client bg failed: {e}", exc_info=True)
+
+async def _bg_delete_client(name: str):
+    if not name or _sw_delete_client is None:
+        return
+    try:
+        await _sw_delete_client(name)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"delete_client bg failed: {e}", exc_info=True)
 
 
 async def _bg_trigger_apps_script(order_number: str):
@@ -465,6 +481,10 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
             doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
             if doc:
                 background_tasks.add_task(_bg_delete_lead, doc.get("name", ""))
+        if sync_to_sheets and collection == "clients":
+            doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
+            if doc:
+                background_tasks.add_task(_bg_delete_client, doc.get("name", ""))
         await db[collection].delete_one({"id": item_id})
         return {"ok": True}
 
