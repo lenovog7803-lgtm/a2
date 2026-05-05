@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions } from 'react-native';
 import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
@@ -323,13 +323,19 @@ function StatusBar({ label, value, total, color }: any) {
 }
 
 // Chart layout constants
-const MAX_BAR_H = 120;
+const MAX_BAR_H = 164;
 const VALUE_H = 16;   // space at top for value labels
 const LABEL_H = 20;   // space at bottom for x-axis labels
-const COL_H = MAX_BAR_H + VALUE_H + LABEL_H;  // 156
-const BAR_BASE = VALUE_H + MAX_BAR_H;          // 136 — y of bar baseline from SVG top
+const COL_H = MAX_BAR_H + VALUE_H + LABEL_H;  // 200
+const BAR_BASE = VALUE_H + MAX_BAR_H;          // 180 — baseline Y from SVG top
+
+// Minimum slot widths per column (bar + gap)
+const MIN_SLOT_ALL = 40;   // single bar mode: ≥20px bar + 8px gap + rest
+const MIN_SLOT_DAY = 52;   // paired bar mode: 2×20px bars + 4px inner + 8px outer
 
 function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: string }) {
+  const { width: screenW } = useWindowDimensions();
+
   if (!chartOrders?.length) return null;
 
   const orders = chartOrders
@@ -348,15 +354,16 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
     if (!entries.length) return null;
     const maxVal = Math.max(...entries.map(([, v]) => v), 1);
 
-    const COL_W = 24, GAP = 4, BAR_W = 20;
     const n = entries.length;
-    const totalW = n * COL_W + Math.max(0, n - 1) * GAP;
+    const GAP = 8;
+    const totalW = Math.max(n * MIN_SLOT_ALL, screenW);
+    const slotW = totalW / n;
+    const barW = Math.max(20, slotW - GAP);
 
     const pts = entries.map(([, val], i) => {
       const barH = Math.max(2, (val / maxVal) * MAX_BAR_H);
-      return { x: i * (COL_W + GAP) + COL_W / 2, y: BAR_BASE - barH, val };
+      return { x: i * slotW + slotW / 2, y: BAR_BASE - barH, val };
     });
-    const polyPts = pts.map(p => `${p.x},${p.y}`).join(' ');
 
     return (
       <View style={cStyles.wrap}>
@@ -365,18 +372,18 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
           <View style={{ width: totalW, height: COL_H }}>
             {entries.map(([ym, val], i) => {
               const barH = Math.max(2, (val / maxVal) * MAX_BAR_H);
-              const colLeft = i * (COL_W + GAP);
+              const barLeft = i * slotW + (slotW - barW) / 2;
               const label = MONTHS[parseInt(ym.slice(5), 10) - 1] || ym.slice(5);
               return (
                 <React.Fragment key={ym}>
-                  <View style={{ position: 'absolute', left: colLeft + (COL_W - BAR_W) / 2, bottom: LABEL_H, width: BAR_W, height: barH, backgroundColor: theme.colors.accent, borderRadius: 3 }} />
-                  <Text style={{ position: 'absolute', left: colLeft, bottom: 0, width: COL_W, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{label}</Text>
+                  <View style={{ position: 'absolute', left: barLeft, bottom: LABEL_H, width: barW, height: barH, backgroundColor: theme.colors.accent, borderRadius: 4 }} />
+                  <Text style={{ position: 'absolute', left: i * slotW, bottom: 0, width: slotW, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{label}</Text>
                 </React.Fragment>
               );
             })}
             <Svg style={{ position: 'absolute', top: 0, left: 0 }} width={totalW} height={COL_H}>
               {pts.length >= 2 && (
-                <Polyline points={polyPts} stroke={theme.colors.accent} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+                <Polyline points={pts.map(p => `${p.x},${p.y}`).join(' ')} stroke={theme.colors.accent} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
               )}
               {pts.map((p, i) => (
                 <G key={i}>
@@ -414,19 +421,21 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
 
   const maxVal = Math.max(...Object.values(currByDay), ...Object.values(prevByDay), 1);
 
-  const PAIR_W = 22, GAP = 4, BAR_H_W = 8, INNER_GAP = 2;
-  // pairBars total = 8+2+8=18, left pad = (22-18)/2 = 2
-  const PAD_L = (PAIR_W - (2 * BAR_H_W + INNER_GAP)) / 2;
   const n = days.length;
-  const totalW = n * PAIR_W + Math.max(0, n - 1) * GAP;
+  const OUTER_GAP = 8, INNER_GAP = 4;
+  const totalW = Math.max(n * MIN_SLOT_DAY, screenW);
+  const slotW = totalW / n;
+  const barHalf = Math.max(20, (slotW - OUTER_GAP - INNER_GAP) / 2);
+  const pairW = barHalf * 2 + INNER_GAP;
+  const padL = Math.max(0, (slotW - OUTER_GAP - pairW) / 2);
 
   const currPts = days.map((day, i) => {
     const barH = Math.max(2, ((currByDay[day] || 0) / maxVal) * MAX_BAR_H);
-    return { x: i * (PAIR_W + GAP) + PAD_L + BAR_H_W / 2, y: BAR_BASE - barH, val: currByDay[day] || 0 };
+    return { x: i * slotW + padL + barHalf / 2, y: BAR_BASE - barH, val: currByDay[day] || 0 };
   });
   const prevPts = days.map((day, i) => {
     const barH = Math.max(2, ((prevByDay[day] || 0) / maxVal) * MAX_BAR_H);
-    return { x: i * (PAIR_W + GAP) + PAD_L + BAR_H_W + INNER_GAP + BAR_H_W / 2, y: BAR_BASE - barH, val: prevByDay[day] || 0 };
+    return { x: i * slotW + padL + barHalf + INNER_GAP + barHalf / 2, y: BAR_BASE - barH, val: prevByDay[day] || 0 };
   });
 
   return (
@@ -443,12 +452,11 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
           {days.map((day, i) => {
             const ch = Math.max(2, ((currByDay[day] || 0) / maxVal) * MAX_BAR_H);
             const ph = Math.max(2, ((prevByDay[day] || 0) / maxVal) * MAX_BAR_H);
-            const colLeft = i * (PAIR_W + GAP);
             return (
               <React.Fragment key={day}>
-                <View style={{ position: 'absolute', left: colLeft + PAD_L, bottom: LABEL_H, width: BAR_H_W, height: ch, backgroundColor: theme.colors.accent, borderRadius: 2 }} />
-                <View style={{ position: 'absolute', left: colLeft + PAD_L + BAR_H_W + INNER_GAP, bottom: LABEL_H, width: BAR_H_W, height: ph, backgroundColor: '#888', borderRadius: 2 }} />
-                <Text style={{ position: 'absolute', left: colLeft, bottom: 0, width: PAIR_W, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{day}</Text>
+                <View style={{ position: 'absolute', left: i * slotW + padL, bottom: LABEL_H, width: barHalf, height: ch, backgroundColor: theme.colors.accent, borderRadius: 3 }} />
+                <View style={{ position: 'absolute', left: i * slotW + padL + barHalf + INNER_GAP, bottom: LABEL_H, width: barHalf, height: ph, backgroundColor: '#888', borderRadius: 3 }} />
+                <Text style={{ position: 'absolute', left: i * slotW, bottom: 0, width: slotW - OUTER_GAP, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{day}</Text>
               </React.Fragment>
             );
           })}
@@ -461,16 +469,16 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
             )}
             {currPts.map((p, i) => (
               <G key={`c${i}`}>
-                <Circle cx={p.x} cy={p.y} r={2.5} fill={theme.colors.accent} />
-                <SvgText x={p.x} y={p.y - 4} textAnchor="middle" fontSize={7} fill={theme.colors.accent} fontWeight="600">
+                <Circle cx={p.x} cy={p.y} r={3} fill={theme.colors.accent} />
+                <SvgText x={p.x} y={p.y - 5} textAnchor="middle" fontSize={8} fill={theme.colors.accent} fontWeight="600">
                   {p.val > 0 ? formatShort(p.val) : ''}
                 </SvgText>
               </G>
             ))}
             {prevPts.map((p, i) => (
               <G key={`p${i}`}>
-                <Circle cx={p.x} cy={p.y} r={2.5} fill="#888" />
-                <SvgText x={p.x} y={p.y - 4} textAnchor="middle" fontSize={7} fill="#888" fontWeight="600">
+                <Circle cx={p.x} cy={p.y} r={3} fill="#888" />
+                <SvgText x={p.x} y={p.y - 5} textAnchor="middle" fontSize={8} fill="#888" fontWeight="600">
                   {p.val > 0 ? formatShort(p.val) : ''}
                 </SvgText>
               </G>
@@ -488,12 +496,16 @@ const cStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: 14,
-    padding: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
+    paddingHorizontal: 0,
+    marginHorizontal: -20,
     marginTop: 8,
     marginBottom: 16,
+    overflow: 'hidden',
   },
-  header: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 16 },
-  legend: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+  header: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 16, paddingHorizontal: 20 },
+  legend: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12, paddingHorizontal: 20 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   legendTxt: { fontSize: 10, color: theme.colors.textTertiary, marginRight: 8 },
 });

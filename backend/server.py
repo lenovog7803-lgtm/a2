@@ -462,7 +462,7 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
 
     @api_router.put(f"/{prefix}/{{item_id}}", response_model=ModelCls)
     async def update_item(item_id: str, payload: PayloadCls, background_tasks: BackgroundTasks):
-        await db[collection].update_one({"id": item_id}, {"$set": payload.dict()})
+        await db[collection].update_one({"id": item_id}, {"$set": payload.dict(exclude_none=True)})
         doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
         if not doc:
             raise HTTPException(404, "Not found")
