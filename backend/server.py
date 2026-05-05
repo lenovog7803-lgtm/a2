@@ -869,6 +869,11 @@ async def dashboard(period: str = "all"):
         "debtors": debtors,
         "creditors": creditors,
         "status_breakdown": status_breakdown,
+        "chart_orders": [
+            {"d": o.get("unload_date") or o.get("load_date"), "cr": o.get("client_rate", 0), "car": o.get("carrier_rate", 0)}
+            for o in all_orders
+            if o.get("unload_date") or o.get("load_date")
+        ],
     }
 
 

@@ -42,14 +42,12 @@ export default function ClientDetail() {
   };
 
   const remove = async () => {
-    if (typeof window !== 'undefined') {
-      if (!window.confirm(`Удалить клиента ${client?.name}?`)) return;
-      try {
-        await api.clients.delete(client.id);
-        router.back();
-      } catch (e: any) {
-        Alert.alert('Ошибка', e.message);
-      }
+    if (!window.confirm(`Удалить клиента ${client?.name}?`)) return;
+    try {
+      await api.clients.delete(client.id);
+      router.back();
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message);
     }
   };
 

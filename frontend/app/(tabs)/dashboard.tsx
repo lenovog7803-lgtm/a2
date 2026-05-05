@@ -281,7 +281,7 @@ export default function Dashboard() {
           </>
         )}
 
-        
+        <ProfitChart chartOrders={d.chart_orders || []} period={period} />
       </View>
     </ScrollView>
   );
@@ -320,6 +320,123 @@ function StatusBar({ label, value, total, color }: any) {
     </View>
   );
 }
+
+const MAX_BAR_H = 120;
+const COL_H = MAX_BAR_H + 24;
+
+function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: string }) {
+  if (!chartOrders?.length) return null;
+
+  const orders = chartOrders
+    .map(o => ({ date: o.d as string, profit: Math.max(0, (o.cr - o.car) * 0.8) }))
+    .filter(o => !!o.date);
+
+  if (!orders.length) return null;
+
+  if (period === 'all') {
+    const byMonth: Record<string, number> = {};
+    orders.forEach(({ date, profit }) => {
+      const ym = date.slice(0, 7);
+      byMonth[ym] = (byMonth[ym] || 0) + profit;
+    });
+    const entries = Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b));
+    if (!entries.length) return null;
+    const maxVal = Math.max(...entries.map(([, v]) => v), 1);
+
+    return (
+      <View style={cStyles.wrap}>
+        <Text style={cStyles.header}>ПРИБЫЛЬ ПО ПЕРИОДАМ</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={cStyles.row}>
+            {entries.map(([ym, val]) => {
+              const h = Math.max(2, (val / maxVal) * MAX_BAR_H);
+              const label = MONTHS[parseInt(ym.slice(5), 10) - 1] || ym.slice(5);
+              return (
+                <View key={ym} style={cStyles.col}>
+                  <View style={[cStyles.bar, { height: h, backgroundColor: theme.colors.accent }]} />
+                  <Text style={cStyles.label}>{label}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Specific month: paired bars (current vs previous)
+  const [y, m] = period.split('-').map(Number);
+  const prevY = m === 1 ? y - 1 : y;
+  const prevM = m === 1 ? 12 : m - 1;
+  const prevPeriod = `${prevY}-${String(prevM).padStart(2, '0')}`;
+
+  const currByDay: Record<number, number> = {};
+  const prevByDay: Record<number, number> = {};
+  orders.forEach(({ date, profit }) => {
+    const ym = date.slice(0, 7);
+    const day = parseInt(date.slice(8, 10), 10);
+    if (ym === period) currByDay[day] = (currByDay[day] || 0) + profit;
+    else if (ym === prevPeriod) prevByDay[day] = (prevByDay[day] || 0) + profit;
+  });
+
+  const days = Array.from(new Set([...Object.keys(currByDay), ...Object.keys(prevByDay)]))
+    .map(Number).sort((a, b) => a - b);
+  if (!days.length) return null;
+
+  const maxVal = Math.max(...Object.values(currByDay), ...Object.values(prevByDay), 1);
+
+  return (
+    <View style={cStyles.wrap}>
+      <Text style={cStyles.header}>ПРИБЫЛЬ ПО ПЕРИОДАМ</Text>
+      <View style={cStyles.legend}>
+        <View style={[cStyles.dot, { backgroundColor: theme.colors.accent }]} />
+        <Text style={cStyles.legendTxt}>Текущий</Text>
+        <View style={[cStyles.dot, { backgroundColor: '#888' }]} />
+        <Text style={cStyles.legendTxt}>Прошлый</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={cStyles.row}>
+          {days.map((day) => {
+            const ch = Math.max(0, ((currByDay[day] || 0) / maxVal) * MAX_BAR_H);
+            const ph = Math.max(0, ((prevByDay[day] || 0) / maxVal) * MAX_BAR_H);
+            return (
+              <View key={day} style={cStyles.colPair}>
+                <View style={cStyles.pairBars}>
+                  <View style={[cStyles.barHalf, { height: Math.max(2, ch), backgroundColor: theme.colors.accent }]} />
+                  <View style={[cStyles.barHalf, { height: Math.max(2, ph), backgroundColor: '#888' }]} />
+                </View>
+                <Text style={cStyles.label}>{day}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const cStyles = StyleSheet.create({
+  wrap: {
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  header: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 16 },
+  legend: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  legendTxt: { fontSize: 10, color: theme.colors.textTertiary, marginRight: 8 },
+  row: { flexDirection: 'row', gap: 4 },
+  col: { width: 24, height: COL_H, alignItems: 'center', justifyContent: 'flex-end' },
+  colPair: { width: 22, height: COL_H, alignItems: 'center', justifyContent: 'flex-end' },
+  pairBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
+  bar: { width: 20, borderRadius: 3 },
+  barHalf: { width: 8, borderRadius: 2 },
+  label: { fontSize: 9, color: theme.colors.textTertiary, textAlign: 'center', marginTop: 4 },
+});
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },

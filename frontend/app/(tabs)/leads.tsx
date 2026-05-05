@@ -63,11 +63,13 @@ export default function Leads() {
       setClientModalLead(lead);
       return;
     }
+    const today = new Date().toISOString().slice(0, 10);
+    const prevLeads = leads;
+    setLeads(prev => prev.map(l => l.id === id ? { ...l, status, last_contact: today } : l));
     try {
-      const today = new Date().toISOString().slice(0, 10);
       await api.leads.update(id, { status, last_contact: today });
-      load();
     } catch (e: any) {
+      setLeads(prevLeads);
       Alert.alert('Ошибка', e.message);
     }
   };
