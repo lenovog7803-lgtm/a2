@@ -1,23 +1,22 @@
 """
 Google Tasks API integration for CRM.
-Uses the user's OAuth credentials stored in the oauth_tokens collection.
-Requires scope: https://www.googleapis.com/auth/tasks
+token_doc is fetched by the async caller (server.py) and passed in directly —
+no async calls happen inside these sync functions.
 """
 import os
 import logging
-from typing import Optional, Callable
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 TASK_LIST_NAME = "CRM Tasks"
 
 
-def _build_service(creds_provider: Callable):
+def _build_service(token_doc: Dict[str, Any]):
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
     from googleapiclient.discovery import build
 
-    token_doc = creds_provider()
     if not token_doc:
         raise ValueError("No Google OAuth token stored — user must authorize first")
 
@@ -65,10 +64,10 @@ def _task_body(task: dict) -> dict:
     return body
 
 
-def create_google_task(task: dict, creds_provider: Callable) -> Optional[str]:
+def create_google_task(task: dict, token_doc: Dict[str, Any]) -> Optional[str]:
     """Create task in Google Tasks. Returns google_task_id or None."""
     try:
-        service = _build_service(creds_provider)
+        service = _build_service(token_doc)
         tasklist_id = _get_or_create_tasklist(service)
         result = service.tasks().insert(tasklist=tasklist_id, body=_task_body(task)).execute()
         return result.get("id")
@@ -77,9 +76,9 @@ def create_google_task(task: dict, creds_provider: Callable) -> Optional[str]:
         return None
 
 
-def update_google_task(google_task_id: str, task: dict, creds_provider: Callable):
+def update_google_task(google_task_id: str, task: dict, token_doc: Dict[str, Any]):
     try:
-        service = _build_service(creds_provider)
+        service = _build_service(token_doc)
         tasklist_id = _get_or_create_tasklist(service)
         body = _task_body(task)
         body["id"] = google_task_id
@@ -90,9 +89,9 @@ def update_google_task(google_task_id: str, task: dict, creds_provider: Callable
         logger.error(f"update_google_task failed: {e}")
 
 
-def delete_google_task(google_task_id: str, creds_provider: Callable):
+def delete_google_task(google_task_id: str, token_doc: Dict[str, Any]):
     try:
-        service = _build_service(creds_provider)
+        service = _build_service(token_doc)
         tasklist_id = _get_or_create_tasklist(service)
         service.tasks().delete(tasklist=tasklist_id, task=google_task_id).execute()
     except Exception as e:

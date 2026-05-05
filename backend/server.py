@@ -545,7 +545,10 @@ async def _bg_gt_create(task_obj: dict):
     if _gt_create is None:
         return
     try:
-        gid = await asyncio.to_thread(_gt_create, task_obj, _sync_user_creds_provider)
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            return
+        gid = await asyncio.to_thread(_gt_create, task_obj, token_doc)
         if gid:
             await db.tasks.update_one({"id": task_obj["id"]}, {"$set": {"google_task_id": gid}})
     except Exception as e:
@@ -556,7 +559,10 @@ async def _bg_gt_update(task_obj: dict):
     if _gt_update is None or not task_obj.get("google_task_id"):
         return
     try:
-        await asyncio.to_thread(_gt_update, task_obj["google_task_id"], task_obj, _sync_user_creds_provider)
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            return
+        await asyncio.to_thread(_gt_update, task_obj["google_task_id"], task_obj, token_doc)
     except Exception as e:
         logging.getLogger(__name__).error(f"_bg_gt_update failed: {e}")
 
@@ -565,7 +571,10 @@ async def _bg_gt_delete(google_task_id: str):
     if _gt_delete is None or not google_task_id:
         return
     try:
-        await asyncio.to_thread(_gt_delete, google_task_id, _sync_user_creds_provider)
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            return
+        await asyncio.to_thread(_gt_delete, google_task_id, token_doc)
     except Exception as e:
         logging.getLogger(__name__).error(f"_bg_gt_delete failed: {e}")
 
