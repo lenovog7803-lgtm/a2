@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, Modal, ScrollView, TouchableOpacity, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
-import { theme } from '../../src/theme';
-import { api } from '../../src/api';
-import { Field } from '../../src/components/Field';
+import { theme } from '../theme';
+import { api } from '../api';
+import { Field } from './Field';
 
 function ClientModal({ visible, lead, onClose, onSuccess }: any) {
   const insets = useSafeAreaInsets();
