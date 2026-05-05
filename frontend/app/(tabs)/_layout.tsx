@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { Platform, StyleSheet, View } from 'react-native';
-import { LayoutDashboard, Package, Users, Truck, CheckSquare, Phone } from 'lucide-react-native';
+import { LayoutDashboard, Package, Users, Truck, CheckSquare, Phone, DollarSign } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 
 export default function TabsLayout() {
@@ -27,6 +27,13 @@ export default function TabsLayout() {
         options={{
           title: 'Дашборд',
           tabBarIcon: ({ color }) => <LayoutDashboard size={20} color={color} strokeWidth={1.6} />,
+        }}
+      />
+      <Tabs.Screen
+        name="finance"
+        options={{
+          title: 'Финансы',
+          tabBarIcon: ({ color }) => <DollarSign size={20} color={color} strokeWidth={1.6} />,
         }}
       />
       <Tabs.Screen
