@@ -48,6 +48,14 @@ except Exception as _e:  # pragma: no cover
     logging.getLogger(__name__).warning(f"docs_gen import failed: {_e}")
 
 try:
+    from google_tasks import (create_google_task as _gt_create,
+                               update_google_task as _gt_update,
+                               delete_google_task as _gt_delete)
+except Exception as _e:  # pragma: no cover
+    _gt_create = _gt_update = _gt_delete = None
+    logging.getLogger(__name__).warning(f"google_tasks import failed: {_e}")
+
+try:
     from oauth_google import build_flow as _oauth_build_flow, get_redirect_uri as _oauth_get_redirect, SCOPES as _OAUTH_SCOPES
 except Exception as _e:  # pragma: no cover
     _oauth_build_flow = None
@@ -492,6 +500,102 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
 make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True)
 make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True)
 make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True)
+
+
+# ====== Task models ======
+class Task(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: Optional[str] = ""
+    task_type: str = "other"  # call / meeting / docs / order / other
+    due_date: Optional[str] = ""
+    due_time: Optional[str] = ""
+    status: str = "pending"  # pending / done
+    google_task_id: Optional[str] = None
+    created_at: str = Field(default_factory=now_iso)
+
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    task_type: str = "other"
+    due_date: Optional[str] = ""
+    due_time: Optional[str] = ""
+    status: str = "pending"
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    task_type: Optional[str] = None
+    due_date: Optional[str] = None
+    due_time: Optional[str] = None
+    status: Optional[str] = None
+    google_task_id: Optional[str] = None
+
+
+# ====== Google Tasks background helpers ======
+async def _bg_gt_create(task_obj: dict):
+    if _gt_create is None:
+        return
+    try:
+        gid = await asyncio.to_thread(_gt_create, task_obj, _sync_user_creds_provider)
+        if gid:
+            await db.tasks.update_one({"id": task_obj["id"]}, {"$set": {"google_task_id": gid}})
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_gt_create failed: {e}")
+
+
+async def _bg_gt_update(task_obj: dict):
+    if _gt_update is None or not task_obj.get("google_task_id"):
+        return
+    try:
+        await asyncio.to_thread(_gt_update, task_obj["google_task_id"], task_obj, _sync_user_creds_provider)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_gt_update failed: {e}")
+
+
+async def _bg_gt_delete(google_task_id: str):
+    if _gt_delete is None or not google_task_id:
+        return
+    try:
+        await asyncio.to_thread(_gt_delete, google_task_id, _sync_user_creds_provider)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_gt_delete failed: {e}")
+
+
+# ====== Task CRUD endpoints ======
+@api_router.get("/tasks", response_model=List[Task])
+async def list_tasks():
+    docs = await db.tasks.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return [Task(**d) for d in docs]
+
+
+@api_router.post("/tasks", response_model=Task)
+async def create_task(payload: TaskCreate, background_tasks: BackgroundTasks):
+    obj = Task(**payload.dict())
+    await db.tasks.insert_one(obj.dict())
+    background_tasks.add_task(_bg_gt_create, obj.dict())
+    return obj
+
+
+@api_router.put("/tasks/{task_id}", response_model=Task)
+async def update_task(task_id: str, payload: TaskUpdate, background_tasks: BackgroundTasks):
+    await db.tasks.update_one({"id": task_id}, {"$set": payload.dict(exclude_none=True)})
+    doc = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    background_tasks.add_task(_bg_gt_update, doc)
+    return Task(**doc)
+
+
+@api_router.delete("/tasks/{task_id}")
+async def delete_task(task_id: str, background_tasks: BackgroundTasks):
+    doc = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if doc and doc.get("google_task_id"):
+        background_tasks.add_task(_bg_gt_delete, doc["google_task_id"])
+    await db.tasks.delete_one({"id": task_id})
+    return {"ok": True}
 
 
 @api_router.get("/orders", response_model=List[Order])

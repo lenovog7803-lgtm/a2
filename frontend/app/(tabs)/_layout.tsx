@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { Platform, StyleSheet, View } from 'react-native';
-import { LayoutDashboard, Package, Users, Truck, Phone } from 'lucide-react-native';
+import { LayoutDashboard, Package, Users, Truck, CheckSquare, Phone } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 
 export default function TabsLayout() {
@@ -48,6 +48,13 @@ export default function TabsLayout() {
         options={{
           title: 'Перевозчики',
           tabBarIcon: ({ color }) => <Truck size={20} color={color} strokeWidth={1.6} />,
+        }}
+      />
+      <Tabs.Screen
+        name="tasks"
+        options={{
+          title: 'Задачи',
+          tabBarIcon: ({ color }) => <CheckSquare size={20} color={color} strokeWidth={1.6} />,
         }}
       />
       <Tabs.Screen

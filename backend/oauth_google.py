@@ -24,6 +24,7 @@ ROOT_DIR = Path(__file__).parent
 SCOPES = [
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/tasks",
 ]
 
 

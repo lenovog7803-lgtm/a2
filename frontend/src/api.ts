@@ -39,6 +39,12 @@ export const api = {
     update: (id: string, data: any) => req(`/carriers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/carriers/${id}`, { method: 'DELETE' }),
   },
+  tasks: {
+    list: () => req('/tasks'),
+    create: (data: any) => req('/tasks', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => req(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => req(`/tasks/${id}`, { method: 'DELETE' }),
+  },
   leads: {
     list: () => req('/leads'),
     get: (id: string) => req(`/leads/${id}`),
