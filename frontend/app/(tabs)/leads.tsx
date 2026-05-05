@@ -231,24 +231,20 @@ function LeadsStats({ leads }: { leads: any[] }) {
         </View>
       </View>
 
-      {/* Activity chart */}
+      {/* Activity */}
       <Text style={sStyles.sectionLabel}>АКТИВНОСТЬ — 7 ДНЕЙ</Text>
       <View style={sStyles.actCard}>
-        {activity.map(({ date, count, day }) => {
-          const h = Math.max(count > 0 ? 4 : 2, (count / maxAct) * 48);
-          return (
-            <View key={date} style={sStyles.actCol}>
-              <View style={{ height: 48, justifyContent: 'flex-end' }}>
-                <View style={[sStyles.actBar, {
-                  height: h,
-                  backgroundColor: count > 0 ? theme.colors.accent : theme.colors.surfaceElevated,
-                }]} />
-              </View>
-              <Text style={sStyles.actDay}>{day}</Text>
-              {count > 0 && <Text style={sStyles.actCount}>{count}</Text>}
-            </View>
-          );
-        })}
+        {activity.map(({ date, count, day }, i) => (
+          <View
+            key={date}
+            style={[sStyles.actCol, i < activity.length - 1 && sStyles.actColBorder]}
+          >
+            <Text style={[sStyles.actNum, { color: count > 0 ? theme.colors.accent : theme.colors.textTertiary }]}>
+              {count}
+            </Text>
+            <Text style={sStyles.actDate}>{day}</Text>
+          </View>
+        ))}
       </View>
     </View>
   );
@@ -285,17 +281,18 @@ const sStyles = StyleSheet.create({
   miniValue: { fontSize: 26, fontWeight: '700', letterSpacing: -0.5, marginTop: 4 },
   miniSub: { fontSize: 10, color: theme.colors.textTertiary, marginTop: 1 },
 
-  // Activity chart
+  // Activity
   actCard: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: 4,
+    flexDirection: 'row',
+    height: 80,
     backgroundColor: theme.colors.surface,
     borderWidth: 1, borderColor: theme.colors.border,
-    borderRadius: 14, padding: 14, marginBottom: 16,
+    borderRadius: 14, marginBottom: 16, overflow: 'hidden',
   },
-  actCol: { flex: 1, alignItems: 'center' },
-  actBar: { width: '80%', borderRadius: 3 },
-  actDay: { fontSize: 9, color: theme.colors.textTertiary, marginTop: 4 },
-  actCount: { fontSize: 8, color: theme.colors.accent, fontWeight: '700', marginTop: 1 },
+  actCol: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  actColBorder: { borderRightWidth: 1, borderRightColor: theme.colors.border },
+  actNum: { fontSize: 28, fontWeight: '800', letterSpacing: -1 },
+  actDate: { fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 },
 });
 
 // ─── Lead card ───────────────────────────────────────────────────────────────
