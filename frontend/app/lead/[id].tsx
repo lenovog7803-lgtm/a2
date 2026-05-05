@@ -24,7 +24,7 @@ export default function LeadDetail() {
   const [showClientModal, setShowClientModal] = useState(false);
 
   useEffect(() => {
-    api.leads.get(id!).then(setLead).finally(() => setLoading(false));
+    const fetchWithRetry = async (attempts = 3) => { try { const data = await api.leads.get(id!); if (data) { setLead(data); setLoading(false); } else if (attempts > 1) { setTimeout(() => fetchWithRetry(attempts - 1), 500); } else { setLoading(false); } } catch { if (attempts > 1) setTimeout(() => fetchWithRetry(attempts - 1), 500); else setLoading(false); } }; fetchWithRetry();
   }, [id]);
 
   const save = async () => {
