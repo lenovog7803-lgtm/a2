@@ -63,6 +63,9 @@ def build_flow(redirect_uri: Optional[str] = None) -> Flow:
         raise RuntimeError("GOOGLE_OAUTH_CLIENT_ID и GOOGLE_OAUTH_CLIENT_SECRET не заданы в .env")
     flow = Flow.from_client_config(cfg, scopes=SCOPES)
     flow.redirect_uri = redirect_uri or get_redirect_uri()
+    # Явно отключаем PKCE: code_verifier порождает code_challenge в authorization_url,
+    # но при token exchange в callback создаётся новый flow-объект без него → "Missing code verifier"
+    flow.code_verifier = None
     return flow
 
 
