@@ -206,13 +206,31 @@ function LeadCard({ lead, onPress, onAction, testID }: any) {
             <Text style={styles.secondaryText}>Стал клиентом</Text>
           </TouchableOpacity>
         )}
-        {lead.status === 'new' && (
+        {lead.status !== 'in_progress' && lead.status !== 'won' && (
           <TouchableOpacity
             style={styles.secondaryBtn}
             onPress={(e) => { e.stopPropagation?.(); onAction('in_progress'); }}
             activeOpacity={0.7}
           >
             <Text style={styles.secondaryText}>В работу</Text>
+          </TouchableOpacity>
+        )}
+        {lead.status !== 'callback' && lead.status !== 'won' && (
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            onPress={(e) => { e.stopPropagation?.(); onAction('callback'); }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.secondaryText}>Перезвонить</Text>
+          </TouchableOpacity>
+        )}
+        {lead.status !== 'lost' && lead.status !== 'won' && (
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            onPress={(e) => { e.stopPropagation?.(); onAction('lost'); }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.secondaryText}>Потерян</Text>
           </TouchableOpacity>
         )}
       </View>

@@ -41,11 +41,16 @@ export default function ClientDetail() {
     finally { setSaving(false); }
   };
 
-  const remove = () => {
-    Alert.alert('Удалить клиента?', client.name, [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: async () => { await api.clients.delete(client.id); router.back(); } },
-    ]);
+  const remove = async () => {
+    if (typeof window !== 'undefined') {
+      if (!window.confirm(`Удалить клиента ${client?.name}?`)) return;
+      try {
+        await api.clients.delete(client.id);
+        router.back();
+      } catch (e: any) {
+        Alert.alert('Ошибка', e.message);
+      }
+    }
   };
 
   const copyText = async (text: string, label: string) => {
