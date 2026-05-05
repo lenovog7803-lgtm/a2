@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch } from 'react-native';
+import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut } from 'lucide-react-native';
@@ -321,8 +322,12 @@ function StatusBar({ label, value, total, color }: any) {
   );
 }
 
+// Chart layout constants
 const MAX_BAR_H = 120;
-const COL_H = MAX_BAR_H + 24;
+const VALUE_H = 16;   // space at top for value labels
+const LABEL_H = 20;   // space at bottom for x-axis labels
+const COL_H = MAX_BAR_H + VALUE_H + LABEL_H;  // 156
+const BAR_BASE = VALUE_H + MAX_BAR_H;          // 136 — y of bar baseline from SVG top
 
 function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: string }) {
   if (!chartOrders?.length) return null;
@@ -343,28 +348,52 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
     if (!entries.length) return null;
     const maxVal = Math.max(...entries.map(([, v]) => v), 1);
 
+    const COL_W = 24, GAP = 4, BAR_W = 20;
+    const n = entries.length;
+    const totalW = n * COL_W + Math.max(0, n - 1) * GAP;
+
+    const pts = entries.map(([, val], i) => {
+      const barH = Math.max(2, (val / maxVal) * MAX_BAR_H);
+      return { x: i * (COL_W + GAP) + COL_W / 2, y: BAR_BASE - barH, val };
+    });
+    const polyPts = pts.map(p => `${p.x},${p.y}`).join(' ');
+
     return (
       <View style={cStyles.wrap}>
         <Text style={cStyles.header}>ПРИБЫЛЬ ПО ПЕРИОДАМ</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={cStyles.row}>
-            {entries.map(([ym, val]) => {
-              const h = Math.max(2, (val / maxVal) * MAX_BAR_H);
+          <View style={{ width: totalW, height: COL_H }}>
+            {entries.map(([ym, val], i) => {
+              const barH = Math.max(2, (val / maxVal) * MAX_BAR_H);
+              const colLeft = i * (COL_W + GAP);
               const label = MONTHS[parseInt(ym.slice(5), 10) - 1] || ym.slice(5);
               return (
-                <View key={ym} style={cStyles.col}>
-                  <View style={[cStyles.bar, { height: h, backgroundColor: theme.colors.accent }]} />
-                  <Text style={cStyles.label}>{label}</Text>
-                </View>
+                <React.Fragment key={ym}>
+                  <View style={{ position: 'absolute', left: colLeft + (COL_W - BAR_W) / 2, bottom: LABEL_H, width: BAR_W, height: barH, backgroundColor: theme.colors.accent, borderRadius: 3 }} />
+                  <Text style={{ position: 'absolute', left: colLeft, bottom: 0, width: COL_W, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{label}</Text>
+                </React.Fragment>
               );
             })}
+            <Svg style={{ position: 'absolute', top: 0, left: 0 }} width={totalW} height={COL_H}>
+              {pts.length >= 2 && (
+                <Polyline points={polyPts} stroke={theme.colors.accent} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+              )}
+              {pts.map((p, i) => (
+                <G key={i}>
+                  <Circle cx={p.x} cy={p.y} r={3} fill={theme.colors.accent} />
+                  <SvgText x={p.x} y={p.y - 5} textAnchor="middle" fontSize={8} fill={theme.colors.accent} fontWeight="600">
+                    {formatShort(p.val)}
+                  </SvgText>
+                </G>
+              ))}
+            </Svg>
           </View>
         </ScrollView>
       </View>
     );
   }
 
-  // Specific month: paired bars (current vs previous)
+  // Specific month: paired bars with two lines
   const [y, m] = period.split('-').map(Number);
   const prevY = m === 1 ? y - 1 : y;
   const prevM = m === 1 ? 12 : m - 1;
@@ -385,6 +414,21 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
 
   const maxVal = Math.max(...Object.values(currByDay), ...Object.values(prevByDay), 1);
 
+  const PAIR_W = 22, GAP = 4, BAR_H_W = 8, INNER_GAP = 2;
+  // pairBars total = 8+2+8=18, left pad = (22-18)/2 = 2
+  const PAD_L = (PAIR_W - (2 * BAR_H_W + INNER_GAP)) / 2;
+  const n = days.length;
+  const totalW = n * PAIR_W + Math.max(0, n - 1) * GAP;
+
+  const currPts = days.map((day, i) => {
+    const barH = Math.max(2, ((currByDay[day] || 0) / maxVal) * MAX_BAR_H);
+    return { x: i * (PAIR_W + GAP) + PAD_L + BAR_H_W / 2, y: BAR_BASE - barH, val: currByDay[day] || 0 };
+  });
+  const prevPts = days.map((day, i) => {
+    const barH = Math.max(2, ((prevByDay[day] || 0) / maxVal) * MAX_BAR_H);
+    return { x: i * (PAIR_W + GAP) + PAD_L + BAR_H_W + INNER_GAP + BAR_H_W / 2, y: BAR_BASE - barH, val: prevByDay[day] || 0 };
+  });
+
   return (
     <View style={cStyles.wrap}>
       <Text style={cStyles.header}>ПРИБЫЛЬ ПО ПЕРИОДАМ</Text>
@@ -395,20 +439,43 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
         <Text style={cStyles.legendTxt}>Прошлый</Text>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={cStyles.row}>
-          {days.map((day) => {
-            const ch = Math.max(0, ((currByDay[day] || 0) / maxVal) * MAX_BAR_H);
-            const ph = Math.max(0, ((prevByDay[day] || 0) / maxVal) * MAX_BAR_H);
+        <View style={{ width: totalW, height: COL_H }}>
+          {days.map((day, i) => {
+            const ch = Math.max(2, ((currByDay[day] || 0) / maxVal) * MAX_BAR_H);
+            const ph = Math.max(2, ((prevByDay[day] || 0) / maxVal) * MAX_BAR_H);
+            const colLeft = i * (PAIR_W + GAP);
             return (
-              <View key={day} style={cStyles.colPair}>
-                <View style={cStyles.pairBars}>
-                  <View style={[cStyles.barHalf, { height: Math.max(2, ch), backgroundColor: theme.colors.accent }]} />
-                  <View style={[cStyles.barHalf, { height: Math.max(2, ph), backgroundColor: '#888' }]} />
-                </View>
-                <Text style={cStyles.label}>{day}</Text>
-              </View>
+              <React.Fragment key={day}>
+                <View style={{ position: 'absolute', left: colLeft + PAD_L, bottom: LABEL_H, width: BAR_H_W, height: ch, backgroundColor: theme.colors.accent, borderRadius: 2 }} />
+                <View style={{ position: 'absolute', left: colLeft + PAD_L + BAR_H_W + INNER_GAP, bottom: LABEL_H, width: BAR_H_W, height: ph, backgroundColor: '#888', borderRadius: 2 }} />
+                <Text style={{ position: 'absolute', left: colLeft, bottom: 0, width: PAIR_W, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{day}</Text>
+              </React.Fragment>
             );
           })}
+          <Svg style={{ position: 'absolute', top: 0, left: 0 }} width={totalW} height={COL_H}>
+            {currPts.length >= 2 && (
+              <Polyline points={currPts.map(p => `${p.x},${p.y}`).join(' ')} stroke={theme.colors.accent} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+            )}
+            {prevPts.length >= 2 && (
+              <Polyline points={prevPts.map(p => `${p.x},${p.y}`).join(' ')} stroke="#888" strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+            )}
+            {currPts.map((p, i) => (
+              <G key={`c${i}`}>
+                <Circle cx={p.x} cy={p.y} r={2.5} fill={theme.colors.accent} />
+                <SvgText x={p.x} y={p.y - 4} textAnchor="middle" fontSize={7} fill={theme.colors.accent} fontWeight="600">
+                  {p.val > 0 ? formatShort(p.val) : ''}
+                </SvgText>
+              </G>
+            ))}
+            {prevPts.map((p, i) => (
+              <G key={`p${i}`}>
+                <Circle cx={p.x} cy={p.y} r={2.5} fill="#888" />
+                <SvgText x={p.x} y={p.y - 4} textAnchor="middle" fontSize={7} fill="#888" fontWeight="600">
+                  {p.val > 0 ? formatShort(p.val) : ''}
+                </SvgText>
+              </G>
+            ))}
+          </Svg>
         </View>
       </ScrollView>
     </View>
@@ -429,13 +496,6 @@ const cStyles = StyleSheet.create({
   legend: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   legendTxt: { fontSize: 10, color: theme.colors.textTertiary, marginRight: 8 },
-  row: { flexDirection: 'row', gap: 4 },
-  col: { width: 24, height: COL_H, alignItems: 'center', justifyContent: 'flex-end' },
-  colPair: { width: 22, height: COL_H, alignItems: 'center', justifyContent: 'flex-end' },
-  pairBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
-  bar: { width: 20, borderRadius: 3 },
-  barHalf: { width: 8, borderRadius: 2 },
-  label: { fontSize: 9, color: theme.colors.textTertiary, textAlign: 'center', marginTop: 4 },
 });
 
 const styles = StyleSheet.create({
