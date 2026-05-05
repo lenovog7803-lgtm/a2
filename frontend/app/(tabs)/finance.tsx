@@ -90,18 +90,28 @@ export default function Finance() {
     await AsyncStorage.setItem('withdrawals', JSON.stringify(updated));
   };
 
-  // Derive period items from orders' load_date
+  // Mirror of backend order_in_period: use unload_date, fallback to load_date, then created_at
+  const orderInPeriod = (o: any, p: string) => {
+    if (p === 'all') return true;
+    const ud = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
+    return ud.startsWith(p);
+  };
+
+  // Derive period items from orders (same fallback chain)
   const cm = currentMonth();
-  const monthsInOrders = Array.from(
-    new Set(orders.map(o => (o.load_date || '').slice(0, 7)).filter(Boolean))
-  ).sort().reverse();
+  const monthsInOrders = Array.from(new Set(
+    orders.map(o => {
+      const d = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
+      return (d || '').slice(0, 7);
+    }).filter(Boolean)
+  )).sort().reverse();
   const periodItems = [
     { id: cm, label: `Этот месяц · ${monthLabel(cm)}` },
     ...monthsInOrders.filter(m => m !== cm).map(m => ({ id: m, label: monthLabel(m) })),
   ];
 
   // Metrics for selected period
-  const mo = orders.filter(o => (o.load_date || '').startsWith(period));
+  const mo = orders.filter(o => orderInPeriod(o, period));
   const revenue  = mo.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate  || 0), 0);
   const expenses = mo.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
   const margin   = revenue - expenses;
