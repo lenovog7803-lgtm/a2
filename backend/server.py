@@ -32,9 +32,11 @@ except Exception as _e:  # pragma: no cover
     logging.getLogger(__name__).warning(f"sheets_import import failed: {_e}")
 
 try:
-    from sheets_writer import push_order as _sw_push_order, push_client as _sw_push_client, push_carrier as _sw_push_carrier, delete_order as _sw_delete_order
+    from sheets_writer import (push_order as _sw_push_order, push_client as _sw_push_client,
+                                push_carrier as _sw_push_carrier, delete_order as _sw_delete_order,
+                                push_lead as _sw_push_lead, delete_lead as _sw_delete_lead)
 except Exception as _e:  # pragma: no cover
-    _sw_push_order = _sw_push_client = _sw_push_carrier = _sw_delete_order = None
+    _sw_push_order = _sw_push_client = _sw_push_carrier = _sw_delete_order = _sw_push_lead = _sw_delete_lead = None
     logging.getLogger(__name__).warning(f"sheets_writer import failed: {_e}")
 
 try:
@@ -116,6 +118,24 @@ async def _bg_push_carrier(carrier_obj: dict):
         await _sw_push_carrier(carrier_obj)
     except Exception as e:
         logging.getLogger(__name__).error(f"push_carrier bg failed: {e}")
+
+
+async def _bg_push_lead(lead_obj: dict):
+    if _sw_push_lead is None:
+        return
+    try:
+        await _sw_push_lead(lead_obj)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"push_lead bg failed: {e}", exc_info=True)
+
+
+async def _bg_delete_lead(name: str):
+    if not name or _sw_delete_lead is None:
+        return
+    try:
+        await _sw_delete_lead(name)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"delete_lead bg failed: {e}", exc_info=True)
 
 
 async def _bg_trigger_apps_script(order_number: str):
@@ -362,6 +382,7 @@ class Lead(BaseModel):
     last_contact: Optional[str] = ""
     next_call: Optional[str] = ""
     notes: Optional[str] = ""
+    directions: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -374,6 +395,7 @@ class LeadPayload(BaseModel):
     last_contact: Optional[str] = ""
     next_call: Optional[str] = ""
     notes: Optional[str] = ""
+    directions: Optional[str] = ""
 
 
 class LeadUpdate(BaseModel):
@@ -385,6 +407,7 @@ class LeadUpdate(BaseModel):
     last_contact: Optional[str] = None
     next_call: Optional[str] = None
     notes: Optional[str] = None
+    directions: Optional[str] = None
 
 
 # ===== CRUD helper =====
@@ -403,6 +426,8 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
                 background_tasks.add_task(_bg_push_client, obj.dict())
             elif collection == "carriers":
                 background_tasks.add_task(_bg_push_carrier, obj.dict())
+            elif collection == "leads":
+                background_tasks.add_task(_bg_push_lead, obj.dict())
         return obj
 
     @api_router.get(f"/{prefix}/{{item_id}}", response_model=ModelCls)
@@ -423,17 +448,23 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
                 background_tasks.add_task(_bg_push_client, doc)
             elif collection == "carriers":
                 background_tasks.add_task(_bg_push_carrier, doc)
+            elif collection == "leads":
+                background_tasks.add_task(_bg_push_lead, doc)
         return ModelCls(**doc)
 
     @api_router.delete(f"/{prefix}/{{item_id}}")
     async def delete_item(item_id: str, background_tasks: BackgroundTasks):
+        if sync_to_sheets and collection == "leads":
+            doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
+            if doc:
+                background_tasks.add_task(_bg_delete_lead, doc.get("name", ""))
         await db[collection].delete_one({"id": item_id})
         return {"ok": True}
 
 
 make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True)
 make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True)
-make_crud("leads", "leads", Lead, LeadPayload, sync_to_sheets=False)
+make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True)
 
 
 @api_router.get("/orders", response_model=List[Order])
