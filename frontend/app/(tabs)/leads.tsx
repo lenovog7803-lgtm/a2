@@ -6,6 +6,7 @@ import { Plus, Phone, Calendar, Check, Search, RefreshCw } from 'lucide-react-na
 import { theme, leadStatusLabels, leadStatusColors } from '../../src/theme';
 import { api } from '../../src/api';
 import { Badge } from '../../src/components/Badge';
+import { ClientModal } from '../../src/components/ClientModal';
 
 export default function Leads() {
   const insets = useSafeAreaInsets();
@@ -54,7 +55,14 @@ export default function Leads() {
     { id: 'won', label: 'Клиенты', count: leads.filter(l => l.status === 'won').length },
   ];
 
+  const [clientModalLead, setClientModalLead] = useState<any>(null);
+
   const setStatus = async (id: string, status: string) => {
+    if (status === 'won') {
+      const lead = leads.find(l => l.id === id);
+      setClientModalLead(lead);
+      return;
+    }
     try {
       const today = new Date().toISOString().slice(0, 10);
       await api.leads.update(id, { status, last_contact: today });
@@ -138,6 +146,14 @@ export default function Leads() {
             />
           )}
           ListEmptyComponent={<Text style={styles.empty}>Нет контактов для обзвона</Text>}
+        />
+      )}
+      {clientModalLead && (
+        <ClientModal
+          visible={!!clientModalLead}
+          lead={clientModalLead}
+          onClose={() => setClientModalLead(null)}
+          onSuccess={() => { setClientModalLead(null); load(); }}
         />
       )}
     </View>
