@@ -200,7 +200,7 @@ def iter_companies(session: requests.Session, cat_id: int):
 # ─── Детали компании ──────────────────────────────────────────────────────────
 
 def get_company_details(session: requests.Session, company_id: int) -> Optional[dict]:
-    return get_json(session, f"{BASE_URL}/back/company/{company_id}")
+    return get_json(session, f"{BASE_URL}/back/company/get/{company_id}")
 
 
 _INDEX_RE = re.compile(r"^\d{6}\s*,?\s*")       # почтовый индекс в начале
