@@ -160,10 +160,15 @@ def find_category_ids(session: requests.Session) -> Dict[Tuple[str, str], int]:
 
 # ─── Список компаний ──────────────────────────────────────────────────────────
 
+MAX_PAGES = 100
+
+
 def iter_companies(session: requests.Session, cat_id: int):
     """Генератор: отдаёт dict каждой компании из листинга."""
-    page = 1
-    while True:
+    page     = 1
+    seen_ids: set = set()
+
+    while page <= MAX_PAGES:
         resp = get_json(
             session,
             f"{BASE_URL}/back/search/company",
@@ -174,31 +179,37 @@ def iter_companies(session: requests.Session, cat_id: int):
             break
 
         if isinstance(resp, list):
-            items = resp
-            # Нет meta — продолжаем пока список не пустой
-            if not items:
-                break
-            for item in items:
-                yield item
-            print(f"      стр.{page}: {len(items)} компаний")
-            page += 1
+            items     = resp
+            last_page = None
         else:
-            items = resp.get("data") or []
-            meta  = resp.get("meta") or resp.get("pagination") or {}
+            items     = resp.get("data") or []
+            meta      = resp.get("meta") or resp.get("pagination") or {}
             last_page = int(
                 meta.get("last_page")
                 or meta.get("total_pages")
                 or meta.get("pageCount")
                 or 1
             )
-            if not items:
-                break
-            for item in items:
-                yield item
-            print(f"      стр.{page}/{last_page}: {len(items)} компаний")
-            if page >= last_page:
-                break
-            page += 1
+
+        if not items:
+            break
+
+        # Проверяем, все ли id на этой странице уже видели — если да, цикл
+        page_ids = {item.get("id") for item in items if item.get("id")}
+        if page_ids and page_ids.issubset(seen_ids):
+            print(f"      стр.{page}: все id уже встречались, останавливаем пагинацию")
+            break
+        seen_ids.update(page_ids)
+
+        for item in items:
+            yield item
+
+        suffix = f"/{last_page}" if last_page else ""
+        print(f"      стр.{page}{suffix}: {len(items)} компаний")
+
+        if last_page is not None and page >= last_page:
+            break
+        page += 1
 
 
 # ─── Детали компании ──────────────────────────────────────────────────────────
