@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Парсер компаний с export.by (через JSON API) -> Google Sheets "Обзвон для срм"
+Парсер компаний с export.by (JSON API + форм-авторизация) -> Google Sheets "Обзвон для срм"
 
 Использование:
     python3 backend/parse_export_by.py
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 import requests
+from bs4 import BeautifulSoup
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -45,11 +46,16 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-API_BASE  = "https://export.by/back"
-DELAY     = 0.5   # секунд между запросами
-BATCH_SIZE = 30   # строк перед flush в Sheets
+BASE_URL  = "https://export.by"
+DELAY     = 0.5
+BATCH_SIZE = 50
 
-# Нужные подкатегории: раздел -> список названий
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Referer":    "https://export.by/",
+    "Accept":     "application/json",
+}
+
 SECTIONS: Dict[str, List[str]] = {
     "Бытовые товары": [
         "Автотовары", "Аксессуары и украшения", "Все для отпуска", "Дом и сад",
@@ -71,193 +77,278 @@ SECTIONS: Dict[str, List[str]] = {
     ],
 }
 
-# ─── HTTP-клиент ──────────────────────────────────────────────────────────────
+# ─── HTTP-сессия ──────────────────────────────────────────────────────────────
 
-class ApiClient:
-    def __init__(self) -> None:
-        self.session = requests.Session()
-        self.session.headers.update({
-            "Accept":       "application/json",
-            "Content-Type": "application/json",
-            "User-Agent":   "Mozilla/5.0 (compatible; export-by-parser/1.0)",
-        })
+def make_session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update(HEADERS)
+    return s
 
-    def _get(self, path: str, **params) -> Optional[dict]:
-        url = f"{API_BASE}{path}"
-        try:
-            time.sleep(DELAY)
-            r = self.session.get(url, params=params, timeout=20)
-            r.raise_for_status()
-            return r.json()
-        except Exception as exc:
-            print(f"    [WARN] GET {url} -> {exc}")
-            return None
 
-    def _post(self, path: str, payload: dict) -> Optional[dict]:
-        url = f"{API_BASE}{path}"
-        try:
-            time.sleep(DELAY)
-            r = self.session.post(url, json=payload, timeout=20)
-            r.raise_for_status()
-            return r.json()
-        except Exception as exc:
-            print(f"    [WARN] POST {url} -> {exc}")
-            return None
+def get_html(session: requests.Session, url: str) -> Optional[BeautifulSoup]:
+    try:
+        time.sleep(DELAY)
+        r = session.get(url, timeout=20)
+        r.raise_for_status()
+        return BeautifulSoup(r.text, "lxml")
+    except Exception as exc:
+        print(f"    [WARN] GET {url}: {exc}")
+        return None
 
-    # ── Auth ──────────────────────────────────────────────────────────────────
 
-    def login(self, email: str, password: str) -> bool:
-        data = self._post("/auth/login", {"email": email, "password": password})
-        if data is None:
-            return False
+def get_json(session: requests.Session, url: str, **params) -> Optional[dict]:
+    try:
+        time.sleep(DELAY)
+        r = session.get(url, params=params or None, timeout=20)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        print(f"    [WARN] GET {url}: {exc}")
+        return None
 
-        # Токен может быть в поле token / access_token / data.token
-        token = (
-            data.get("token")
-            or data.get("access_token")
-            or (data.get("data") or {}).get("token")
-            or (data.get("data") or {}).get("access_token")
+# ─── Авторизация ──────────────────────────────────────────────────────────────
+
+def _find_csrf(soup: BeautifulSoup) -> Optional[str]:
+    """Ищет CSRF-токен в скрытых полях формы и мета-тегах."""
+    # <meta name="csrf-token" content="...">
+    meta = soup.find("meta", attrs={"name": re.compile(r"csrf", re.I)})
+    if meta and meta.get("content"):
+        return meta["content"]
+
+    # <input type="hidden" name="_token"> или name="csrf_token" и т.п.
+    for inp in soup.find_all("input", type="hidden"):
+        name = (inp.get("name") or "").lower()
+        if "csrf" in name or name == "_token":
+            return inp.get("value")
+
+    return None
+
+
+def login(session: requests.Session, email: str, password: str) -> bool:
+    login_url = f"{BASE_URL}/login"
+
+    # 1. Загружаем страницу входа
+    soup = get_html(session, login_url)
+    if soup is None:
+        print("  Ошибка: не удалось загрузить страницу /login")
+        return False
+
+    csrf = _find_csrf(soup)
+
+    # 2. Формируем данные формы
+    form_data: Dict[str, str] = {"email": email, "password": password}
+    if csrf:
+        # Пробуем оба распространённых имени поля
+        form_data["_token"]     = csrf
+        form_data["csrf_token"] = csrf
+    else:
+        print("  Предупреждение: CSRF-токен не найден, отправляем без него.")
+
+    # Собираем все hidden-поля из формы (кроме уже добавленных)
+    form = soup.find("form")
+    if form:
+        for inp in form.find_all("input", type="hidden"):
+            n = inp.get("name")
+            v = inp.get("value", "")
+            if n and n not in form_data:
+                form_data[n] = v
+
+    # 3. POST
+    time.sleep(DELAY)
+    try:
+        resp = session.post(
+            login_url,
+            data=form_data,
+            allow_redirects=True,
+            timeout=20,
+            headers={**HEADERS, "Accept": "text/html,application/xhtml+xml,*/*",
+                     "Content-Type": "application/x-www-form-urlencoded"},
         )
-        if token:
-            self.session.headers["Authorization"] = f"Bearer {token}"
-            return True
+        resp.raise_for_status()
+    except Exception as exc:
+        print(f"  Ошибка при POST /login: {exc}")
+        return False
 
-        # Если нет токена, но ответ 200 — возможно куки достаточно
+    # 4. Проверяем через /back/user/profile
+    prof = get_json(session, f"{BASE_URL}/back/user/profile")
+    if prof and not prof.get("error") and (prof.get("id") or prof.get("data")):
         return True
 
-    # ── Категории ─────────────────────────────────────────────────────────────
-
-    def get_tree(self) -> Optional[list]:
-        data = self._get("/catalog/get-tree")
-        if data is None:
-            return None
-        # Ответ может быть списком или {data: [...]}
-        if isinstance(data, list):
-            return data
-        return data.get("data") or data.get("categories") or data.get("tree")
-
-    # ── Компании ──────────────────────────────────────────────────────────────
-
-    def get_companies_page(self, category_id: int, page: int) -> Optional[dict]:
-        return self._get(
-            "/search/company",
-            filter_category_id=category_id,
-            page=page,
-        )
-
-    def get_company(self, company_id: int) -> Optional[dict]:
-        return self._get(f"/company/{company_id}")
+    # Запасная проверка: нет слова "login" в URL после редиректа
+    return "login" not in resp.url.lower()
 
 
-# ─── Работа с деревом категорий ──────────────────────────────────────────────
+# ─── Дерево категорий ─────────────────────────────────────────────────────────
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().lower())
 
 
-def _walk_tree(nodes: list, lookup: Dict[str, Tuple[str, str]], found: Dict[Tuple[str, str], int]) -> None:
-    """Рекурсивно обходит дерево, ищет узлы по названию."""
+def _walk(nodes, lookup: Dict[str, Tuple[str, str]], found: Dict[Tuple[str, str], int]) -> None:
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        # Варианты поля с названием
-        name_raw = (
-            node.get("name")
+
+        # Поле с названием может называться text / name / title / label
+        text = str(
+            node.get("text")
+            or node.get("name")
             or node.get("title")
             or node.get("label")
             or ""
-        )
-        key = _norm(str(name_raw))
+        ).strip()
+
+        key = _norm(text)
         if key in lookup:
-            section_cat = lookup[key]
-            if section_cat not in found:
-                node_id = node.get("id") or node.get("category_id")
+            key_pair = lookup[key]
+            if key_pair not in found:
+                node_id = node.get("id") or node.get("category_id") or node.get("value")
                 if node_id is not None:
-                    found[section_cat] = int(node_id)
+                    found[key_pair] = int(node_id)
 
         # Дочерние узлы
         children = (
             node.get("children")
             or node.get("items")
-            or node.get("subcategories")
+            or node.get("nodes")
             or []
         )
         if children:
-            _walk_tree(children, lookup, found)
+            _walk(children, lookup, found)
 
 
-def find_category_ids(
-    tree: list,
-) -> Dict[Tuple[str, str], int]:
-    """Возвращает {(раздел, подкатегория): id}."""
+def find_category_ids(session: requests.Session) -> Dict[Tuple[str, str], int]:
+    data = get_json(session, f"{BASE_URL}/back/site/get-tree")
+    if data is None:
+        return {}
+
+    # Ответ может быть списком или {data: [...]} или {tree: [...]}
+    tree: list = []
+    if isinstance(data, list):
+        tree = data
+    elif isinstance(data, dict):
+        tree = (
+            data.get("data")
+            or data.get("tree")
+            or data.get("categories")
+            or data.get("items")
+            or []
+        )
+
     lookup: Dict[str, Tuple[str, str]] = {
         _norm(cat): (section, cat)
         for section, cats in SECTIONS.items()
         for cat in cats
     }
     found: Dict[Tuple[str, str], int] = {}
-    _walk_tree(tree, lookup, found)
+    _walk(tree, lookup, found)
     return found
 
 
-# ─── Извлечение данных компании ───────────────────────────────────────────────
+# ─── Список компаний ──────────────────────────────────────────────────────────
 
-_CITY_RE = re.compile(r"г\.?\s*([А-ЯЁа-яё][А-ЯЁа-яё\-\s]{2,30}?)(?:[,.]|$)")
+def iter_companies(session: requests.Session, cat_id: int):
+    """Генератор: отдаёт dict каждой компании из листинга."""
+    page = 1
+    while True:
+        resp = get_json(
+            session,
+            f"{BASE_URL}/back/search/company",
+            filter_category_id=cat_id,
+            page=page,
+        )
+        if resp is None:
+            break
+
+        items = (
+            resp.get("data")
+            or resp.get("items")
+            or resp.get("companies")
+            or (resp if isinstance(resp, list) else [])
+        )
+        if not items:
+            break
+
+        for item in items:
+            yield item
+
+        meta      = resp.get("meta") or resp.get("pagination") or {}
+        last_page = int(
+            meta.get("last_page")
+            or meta.get("total_pages")
+            or meta.get("pageCount")
+            or 1
+        )
+        print(f"      стр.{page}/{last_page}: {len(items)} компаний")
+        if page >= last_page:
+            break
+        page += 1
+
+
+# ─── Детали компании ──────────────────────────────────────────────────────────
+
+def get_company_details(session: requests.Session, company_id: int) -> Optional[dict]:
+    return get_json(session, f"{BASE_URL}/back/company/{company_id}")
+
+
+_INDEX_RE = re.compile(r"^\d{6}\s*,?\s*")       # почтовый индекс в начале
+_CITY_RE  = re.compile(r"г\.?\s*([А-ЯЁа-яё][А-ЯЁа-яё\-\s]{2,}?)(?:[,.]|$)")
 
 
 def _extract_city(address: str) -> str:
+    """Извлекает город из строки адреса (убирает индекс, ищет «г. Минск» и т.п.)."""
     if not address:
         return ""
-    m = _CITY_RE.search(address)
+    addr = _INDEX_RE.sub("", address).strip()
+
+    m = _CITY_RE.search(addr)
     if m:
         return m.group(1).strip()
-    parts = [p.strip() for p in address.split(",")]
+
+    # Первый токен до запятой как запасной вариант
+    parts = [p.strip() for p in addr.split(",")]
     return parts[0][:60] if parts else ""
 
 
-def _first_phone(data: dict) -> str:
-    # Поле phone может быть строкой или списком
-    phones = data.get("phones") or data.get("phone") or []
+def _first_phone(company: dict) -> str:
+    phones = company.get("phones") or company.get("phone") or []
     if isinstance(phones, str):
         return phones.strip()
     if isinstance(phones, list) and phones:
         p = phones[0]
-        return str(p.get("value", p) if isinstance(p, dict) else p).strip()
+        if isinstance(p, dict):
+            return str(p.get("value") or p.get("phone") or p.get("number") or "").strip()
+        return str(p).strip()
     return ""
 
 
-def build_lead(company: dict, section: str, cat_name: str) -> Optional[Dict[str, str]]:
-    # Название: короткое имя или полное
-    name = (
-        company.get("short_name")
-        or company.get("name")
-        or company.get("title")
-        or ""
+def build_lead(
+    listing: dict,
+    details: Optional[dict],
+    section: str,
+    cat_name: str,
+) -> Optional[Dict[str, str]]:
+    src = {**listing, **(details or {})}   # details перезаписывают листинг
+
+    name = str(
+        src.get("short_name") or src.get("name") or src.get("title") or ""
     ).strip()
     if not name:
         return None
 
-    full_name = (
-        company.get("name")
-        or company.get("full_name")
-        or name
+    full_name = str(
+        src.get("name") or src.get("full_name") or name
     ).strip()
 
-    phone = _first_phone(company)
+    phone = _first_phone(src)
 
-    address = (
-        company.get("address")
-        or company.get("legal_address")
-        or ""
-    )
-    city = _extract_city(str(address))
+    address = str(src.get("address") or src.get("legal_address") or "")
+    city    = _extract_city(address)
 
-    description = (
-        company.get("description")
-        or company.get("about")
-        or company.get("activity")
-        or ""
+    description = str(
+        src.get("description") or src.get("about") or src.get("activity") or ""
     ).strip()
+
     notes = f"{section}: {cat_name}"
     if description:
         notes += ". " + description[:200]
@@ -286,8 +377,7 @@ def get_worksheet() -> gspread.Worksheet:
 
 
 def load_existing_names(ws: gspread.Worksheet) -> Set[str]:
-    """Возвращает множество нормализованных названий компаний уже в таблице."""
-    col = ws.col_values(1)   # колонка name
+    col = ws.col_values(2)   # колонка company (col 2)
     return {_norm(v) for v in col if v.strip()}
 
 
@@ -302,7 +392,7 @@ def last_data_row(ws: gspread.Worksheet) -> int:
 def flush_batch(ws: gspread.Worksheet, rows: List[Tuple[int, Dict[str, str]]]) -> None:
     if not rows:
         return
-    # Структура: 1=name  2=company  3=phone  4=city  5=status  6=next_call  7=notes
+    # Структура листа: 1=name  2=company  3=phone  4=city  5=status  7=notes
     col_map = {1: "name", 2: "company", 3: "phone", 4: "city", 7: "notes"}
     updates = []
     for row_num, lead in rows:
@@ -320,135 +410,91 @@ def flush_batch(ws: gspread.Worksheet, rows: List[Tuple[int, Dict[str, str]]]) -
 
 def main() -> None:
     print("=" * 64)
-    print("   Парсер компаний  export.by API  ->  Google Sheets")
+    print("   Парсер компаний  export.by  ->  Google Sheets")
     print("=" * 64)
 
-    email    = input("\nEmail для входа на export.by: ").strip()
+    email    = input("\nEmail: ").strip()
     password = input("Пароль: ").strip()
     if not email or not password:
         print("Email и пароль обязательны.")
         sys.exit(1)
 
-    client = ApiClient()
+    session = make_session()
 
     # 1. Авторизация
-    print("\n[1/5] Авторизация...")
-    if client.login(email, password):
-        print("  OK")
-    else:
-        print("  Предупреждение: авторизация не подтверждена, продолжаем.")
+    print("\n[1/5] Авторизация на export.by...")
+    ok = login(session, email, password)
+    print("  Авторизован." if ok else "  Предупреждение: авторизация не подтверждена, продолжаем.")
 
     # 2. Дерево категорий
-    print("\n[2/5] Получение дерева категорий...")
-    tree = client.get_tree()
-    if not tree:
-        print("  Ошибка: не удалось получить дерево категорий.")
-        sys.exit(1)
-
-    cat_ids = find_category_ids(tree)
     total_need = sum(len(v) for v in SECTIONS.values())
-    print(f"  Найдено {len(cat_ids)} из {total_need} категорий")
+    print(f"\n[2/5] Получение дерева категорий (нужно {total_need})...")
+    cat_ids = find_category_ids(session)
+    print(f"  Найдено: {len(cat_ids)} категорий")
     if not cat_ids:
-        print("  Ни одна категория не найдена. Проверьте ответ API.")
+        print("  Не найдено ни одной категории. Проверьте /back/site/get-tree.")
         sys.exit(1)
     for (sec, cat), cid in sorted(cat_ids.items()):
-        print(f"    [{sec}] {cat}  ->  id={cid}")
+        print(f"    [{sec}] {cat}  id={cid}")
 
-    # 3. Google Sheets
+    # 3. Sheets
     print("\n[3/5] Подключение к Google Sheets...")
     ws = get_worksheet()
-    existing_names = load_existing_names(ws)
+    existing = load_existing_names(ws)
     next_row = last_data_row(ws) + 1
-    print(f"  Уже в таблице: {len(existing_names)} записей, новые — с строки {next_row}")
+    print(f"  В таблице: {len(existing)} записей, пишем с строки {next_row}")
 
-    # 4. Обход компаний
+    # 4. Парсинг
     print("\n[4/5] Парсинг компаний...\n")
-    total_added  = 0
-    total_skip   = 0
+    total_added = 0
+    total_skip  = 0
     batch: List[Tuple[int, Dict[str, str]]] = []
 
     for (section, cat_name), cat_id in cat_ids.items():
-        print(f"  ▸ [{section}] {cat_name}  (id={cat_id})")
-        page      = 1
+        print(f"  ▸ [{section}] {cat_name}  id={cat_id}")
         cat_added = 0
 
-        while True:
-            resp = client.get_companies_page(cat_id, page)
-            if resp is None:
-                break
+        for listing in iter_companies(session, cat_id):
+            company_id = listing.get("id") or listing.get("company_id")
 
-            # Нормализуем структуру ответа
-            items      = (
-                resp.get("data")
-                or resp.get("items")
-                or resp.get("companies")
-                or (resp if isinstance(resp, list) else [])
+            # Запрашиваем детали только если в листинге нет телефона/описания
+            details = None
+            if company_id and (not listing.get("phones") and not listing.get("phone")):
+                details = get_company_details(session, int(company_id))
+
+            lead = build_lead(listing, details, section, cat_name)
+            if not lead:
+                continue
+
+            if _norm(lead["company"]) in existing:
+                total_skip += 1
+                continue
+
+            existing.add(_norm(lead["company"]))
+            batch.append((next_row, lead))
+            next_row  += 1
+            cat_added += 1
+
+            print(
+                f"      + {lead['name'][:45]:<45} | "
+                f"{lead['city']:<15} | {lead['phone']}"
             )
-            meta       = resp.get("meta") or resp.get("pagination") or {}
-            last_page  = (
-                meta.get("last_page")
-                or meta.get("total_pages")
-                or meta.get("pageCount")
-                or 1
-            )
 
-            if not items:
-                break
+            if len(batch) >= BATCH_SIZE:
+                flush_batch(ws, batch)
+                total_added += len(batch)
+                batch = []
+                print(f"      → Записано в таблицу: {total_added}")
 
-            print(f"    стр.{page}/{last_page}: {len(items)} компаний")
+        print(f"    Добавлено: {cat_added}\n")
 
-            for item in items:
-                company_id = item.get("id") or item.get("company_id")
-
-                # Подробности (если в листинге нет полного набора полей)
-                if company_id and not item.get("description") and not item.get("phones"):
-                    details = client.get_company(int(company_id))
-                    if details:
-                        # Мержим: детали приоритетнее листинга
-                        company_data = {**item, **details}
-                    else:
-                        company_data = item
-                else:
-                    company_data = item
-
-                lead = build_lead(company_data, section, cat_name)
-                if not lead:
-                    continue
-
-                # Проверка дублей
-                if _norm(lead["name"]) in existing_names:
-                    total_skip += 1
-                    continue
-
-                existing_names.add(_norm(lead["name"]))
-                batch.append((next_row, lead))
-                next_row  += 1
-                cat_added += 1
-
-                print(
-                    f"      + {lead['name'][:45]:<45} | "
-                    f"{lead['city']:<15} | {lead['phone']}"
-                )
-
-                if len(batch) >= BATCH_SIZE:
-                    flush_batch(ws, batch)
-                    total_added += len(batch)
-                    batch = []
-                    print(f"      → Записано в таблицу: {total_added} итого")
-
-            if page >= int(last_page):
-                break
-            page += 1
-
-        print(f"    Добавлено в категории: {cat_added}\n")
-
-    # 5. Финальный flush
+    # 5. Остаток
     if batch:
         flush_batch(ws, batch)
         total_added += len(batch)
 
     print("=" * 64)
-    print(f"  Готово. Добавлено: {total_added}  |  Пропущено (дубли): {total_skip}")
+    print(f"  Готово.  Добавлено: {total_added}  |  Пропущено (дубли): {total_skip}")
     print("=" * 64)
 
 
