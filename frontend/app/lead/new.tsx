@@ -15,7 +15,7 @@ export default function NewLead() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [data, setData] = useState<any>({
-    name: '', company: '', phone: '', city: '', status: 'new',
+    name: '', company: '', phone: '', email: '', city: '', status: 'new',
     last_contact: '', next_call: '', notes: '', directions: '',
   });
 
@@ -46,6 +46,7 @@ export default function NewLead() {
         <Field label="Имя" value={data.name} onChangeText={(v: string) => update({ name: v })} testID="new-lead-name" />
         <Field label="Компания" value={data.company} onChangeText={(v: string) => update({ company: v })} />
         <Field label="Телефон" keyboardType="phone-pad" value={data.phone} onChangeText={(v: string) => update({ phone: v })} testID="new-lead-phone" />
+        <Field label="Email" keyboardType="email-address" value={data.email} onChangeText={(v: string) => update({ email: v })} />
         <Field label="Город" value={data.city} onChangeText={(v: string) => update({ city: v })} />
         <DateField label="Дата следующего звонка" value={data.next_call} onChange={(v: string) => update({ next_call: v })} />
 

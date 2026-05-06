@@ -415,6 +415,7 @@ class Lead(BaseModel):
     company: Optional[str] = ""
     phone: str
     city: Optional[str] = ""
+    email: Optional[str] = ""
     status: str = "new"
     last_contact: Optional[str] = ""
     next_call: Optional[str] = ""
@@ -428,6 +429,7 @@ class LeadPayload(BaseModel):
     company: Optional[str] = ""
     phone: str
     city: Optional[str] = ""
+    email: Optional[str] = ""
     status: str = "new"
     last_contact: Optional[str] = ""
     next_call: Optional[str] = ""
@@ -440,6 +442,7 @@ class LeadUpdate(BaseModel):
     company: Optional[str] = None
     phone: Optional[str] = None
     city: Optional[str] = None
+    email: Optional[str] = None
     status: Optional[str] = None
     last_contact: Optional[str] = None
     next_call: Optional[str] = None

@@ -83,6 +83,7 @@ export default function LeadDetail() {
           <Field label="Имя" value={lead.name} onChangeText={(v: string) => update({ name: v })} />
           <Field label="Компания" value={lead.company} onChangeText={(v: string) => update({ company: v })} />
           <Field label="Телефон" keyboardType="phone-pad" value={lead.phone} onChangeText={(v: string) => update({ phone: v })} />
+          <Field label="Email" keyboardType="email-address" value={lead.email || ''} onChangeText={(v: string) => update({ email: v })} />
           <Field label="Город" value={lead.city} onChangeText={(v: string) => update({ city: v })} />
           <Field label="Направления" placeholder="МСК-СПб, МСК-НСК" value={lead.directions || ''} onChangeText={(v: string) => update({ directions: v })} />
           <Field label="Дата следующего звонка" placeholder="2026-02-15" value={lead.next_call || ''} onChangeText={(v: string) => update({ next_call: v })} />

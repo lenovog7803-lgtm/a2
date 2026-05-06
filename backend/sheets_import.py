@@ -297,6 +297,7 @@ def parse_lead(row: List[str]) -> Optional[Dict[str, Any]]:
         "next_call": _s(row[5]) if len(row) > 5 else "",
         "notes": _s(row[6]) if len(row) > 6 else "",
         "directions": _s(row[7]) if len(row) > 7 else "",
+        "email": _s(row[8]) if len(row) > 8 else "",
         "last_contact": "",
         "created_at": _now_iso(),
     }
