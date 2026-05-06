@@ -115,7 +115,6 @@ def order_cells(o: Dict[str, Any]) -> Dict[int, Any]:
         48: o.get('cargo', ''),
         49: o.get('route_from_address', ''),
         50: o.get('route_to_address', ''),
-        51: o.get('notes', ''),
     }
 
 
