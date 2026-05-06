@@ -175,7 +175,13 @@ def iter_companies(session: requests.Session, cat_id: int):
 
         if isinstance(resp, list):
             items = resp
-            last_page = 1
+            # Нет meta — продолжаем пока список не пустой
+            if not items:
+                break
+            for item in items:
+                yield item
+            print(f"      стр.{page}: {len(items)} компаний")
+            page += 1
         else:
             items = resp.get("data") or []
             meta  = resp.get("meta") or resp.get("pagination") or {}
@@ -185,16 +191,14 @@ def iter_companies(session: requests.Session, cat_id: int):
                 or meta.get("pageCount")
                 or 1
             )
-
-        if not items:
-            break
-
-        for item in items:
-            yield item
-        print(f"      стр.{page}/{last_page}: {len(items)} компаний")
-        if page >= last_page:
-            break
-        page += 1
+            if not items:
+                break
+            for item in items:
+                yield item
+            print(f"      стр.{page}/{last_page}: {len(items)} компаний")
+            if page >= last_page:
+                break
+            page += 1
 
 
 # ─── Детали компании ──────────────────────────────────────────────────────────
