@@ -15,7 +15,7 @@ export default function NewLead() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [data, setData] = useState<any>({
-    name: '', company: '', phone: '', email: '', city: '', status: 'new',
+    name: '', company: '', phone: '', email: '', city: '', industry: '', status: 'new',
     last_contact: '', next_call: '', notes: '', directions: '',
   });
 
@@ -59,6 +59,7 @@ export default function NewLead() {
           ))}
         </View>
 
+        <Field label="Отрасль" value={data.industry} onChangeText={(v: string) => update({ industry: v })} />
         <Field label="Направления" placeholder="МСК-СПб, МСК-НСК" value={data.directions} onChangeText={(v: string) => update({ directions: v })} />
         <Field label="Заметки" multiline value={data.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
 

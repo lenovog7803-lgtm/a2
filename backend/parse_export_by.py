@@ -270,16 +270,18 @@ def build_lead(
         notes += ". " + description[:200]
     notes = notes[:255]
 
-    email = str(src.get("email") or src.get("e_mail") or "").strip()
+    email    = str(src.get("email") or src.get("e_mail") or "").strip()
+    industry = f"{section}: {cat_name}"
 
     return {
-        "name":    name,
-        "company": full_name,
-        "phone":   phone,
-        "city":    city,
-        "email":   email,
-        "notes":   notes,
-        "status":  "new",
+        "name":     name,
+        "company":  full_name,
+        "phone":    phone,
+        "city":     city,
+        "email":    email,
+        "industry": industry,
+        "notes":    notes,
+        "status":   "new",
     }
 
 
@@ -311,8 +313,8 @@ def last_data_row(ws: gspread.Worksheet) -> int:
 def flush_batch(ws: gspread.Worksheet, rows: List[Tuple[int, Dict[str, str]]]) -> None:
     if not rows:
         return
-    # Структура листа: 1=name  2=company  3=phone  4=city  5=status  7=notes  9=email
-    col_map = {1: "name", 2: "company", 3: "phone", 4: "city", 7: "notes", 9: "email"}
+    # Структура листа: 1=name  2=company  3=phone  4=city  5=status  7=notes  9=email  10=industry
+    col_map = {1: "name", 2: "company", 3: "phone", 4: "city", 7: "notes", 9: "email", 10: "industry"}
     updates = []
     for row_num, lead in rows:
         for col, field in col_map.items():

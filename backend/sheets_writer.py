@@ -169,6 +169,7 @@ def lead_cells(l: Dict[str, Any]) -> Dict[int, Any]:
         7: l.get('notes', ''),
         8: l.get('directions', ''),
         9: l.get('email', ''),
+        10: l.get('industry', ''),
     }
 
 
