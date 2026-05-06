@@ -173,25 +173,24 @@ def iter_companies(session: requests.Session, cat_id: int):
         if resp is None:
             break
 
-        items = (
-            resp.get("data")
-            or resp.get("items")
-            or resp.get("companies")
-            or (resp if isinstance(resp, list) else [])
-        )
+        if isinstance(resp, list):
+            items = resp
+            last_page = 1
+        else:
+            items = resp.get("data") or []
+            meta  = resp.get("meta") or resp.get("pagination") or {}
+            last_page = int(
+                meta.get("last_page")
+                or meta.get("total_pages")
+                or meta.get("pageCount")
+                or 1
+            )
+
         if not items:
             break
 
         for item in items:
             yield item
-
-        meta      = resp.get("meta") or resp.get("pagination") or {}
-        last_page = int(
-            meta.get("last_page")
-            or meta.get("total_pages")
-            or meta.get("pageCount")
-            or 1
-        )
         print(f"      стр.{page}/{last_page}: {len(items)} компаний")
         if page >= last_page:
             break
