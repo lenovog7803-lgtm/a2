@@ -98,7 +98,11 @@ def get_json(session: requests.Session, url: str, **params) -> Optional[dict]:
 
 def set_token(session: requests.Session, token: str) -> None:
     session.cookies.set("export_access_token", token, domain="export.by")
-    session.headers.update({"Authorization": f"Bearer {token}"})
+    session.headers.update({
+        "Access-Token":    token,
+        "Accept":          "application/json",
+        "Accept-Language": "ru",
+    })
 
 
 def check_auth(session: requests.Session) -> bool:
