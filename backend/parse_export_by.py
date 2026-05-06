@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Парсер компаний с export.by (JSON API + форм-авторизация) -> Google Sheets "Обзвон для срм"
+Парсер компаний с export.by (JSON API + токен-авторизация) -> Google Sheets "Обзвон для срм"
 
 Использование:
     python3 backend/parse_export_by.py
@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 import requests
-from bs4 import BeautifulSoup
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -85,17 +84,6 @@ def make_session() -> requests.Session:
     return s
 
 
-def get_html(session: requests.Session, url: str) -> Optional[BeautifulSoup]:
-    try:
-        time.sleep(DELAY)
-        r = session.get(url, timeout=20)
-        r.raise_for_status()
-        return BeautifulSoup(r.text, "lxml")
-    except Exception as exc:
-        print(f"    [WARN] GET {url}: {exc}")
-        return None
-
-
 def get_json(session: requests.Session, url: str, **params) -> Optional[dict]:
     try:
         time.sleep(DELAY)
@@ -108,74 +96,14 @@ def get_json(session: requests.Session, url: str, **params) -> Optional[dict]:
 
 # ─── Авторизация ──────────────────────────────────────────────────────────────
 
-def _find_csrf(soup: BeautifulSoup) -> Optional[str]:
-    """Ищет CSRF-токен в скрытых полях формы и мета-тегах."""
-    # <meta name="csrf-token" content="...">
-    meta = soup.find("meta", attrs={"name": re.compile(r"csrf", re.I)})
-    if meta and meta.get("content"):
-        return meta["content"]
-
-    # <input type="hidden" name="_token"> или name="csrf_token" и т.п.
-    for inp in soup.find_all("input", type="hidden"):
-        name = (inp.get("name") or "").lower()
-        if "csrf" in name or name == "_token":
-            return inp.get("value")
-
-    return None
+def set_token(session: requests.Session, token: str) -> None:
+    session.cookies.set("export_access_token", token, domain="export.by")
+    session.headers.update({"Authorization": f"Bearer {token}"})
 
 
-def login(session: requests.Session, email: str, password: str) -> bool:
-    login_url = f"{BASE_URL}/login"
-
-    # 1. Загружаем страницу входа
-    soup = get_html(session, login_url)
-    if soup is None:
-        print("  Ошибка: не удалось загрузить страницу /login")
-        return False
-
-    csrf = _find_csrf(soup)
-
-    # 2. Формируем данные формы
-    form_data: Dict[str, str] = {"email": email, "password": password}
-    if csrf:
-        # Пробуем оба распространённых имени поля
-        form_data["_token"]     = csrf
-        form_data["csrf_token"] = csrf
-    else:
-        print("  Предупреждение: CSRF-токен не найден, отправляем без него.")
-
-    # Собираем все hidden-поля из формы (кроме уже добавленных)
-    form = soup.find("form")
-    if form:
-        for inp in form.find_all("input", type="hidden"):
-            n = inp.get("name")
-            v = inp.get("value", "")
-            if n and n not in form_data:
-                form_data[n] = v
-
-    # 3. POST
-    time.sleep(DELAY)
-    try:
-        resp = session.post(
-            login_url,
-            data=form_data,
-            allow_redirects=True,
-            timeout=20,
-            headers={**HEADERS, "Accept": "text/html,application/xhtml+xml,*/*",
-                     "Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
-    except Exception as exc:
-        print(f"  Ошибка при POST /login: {exc}")
-        return False
-
-    # 4. Проверяем через /back/user/profile
+def check_auth(session: requests.Session) -> bool:
     prof = get_json(session, f"{BASE_URL}/back/user/profile")
-    if prof and not prof.get("error") and (prof.get("id") or prof.get("data")):
-        return True
-
-    # Запасная проверка: нет слова "login" в URL после редиректа
-    return "login" not in resp.url.lower()
+    return bool(prof and not prof.get("error") and (prof.get("id") or prof.get("data")))
 
 
 # ─── Дерево категорий ─────────────────────────────────────────────────────────
@@ -413,18 +341,21 @@ def main() -> None:
     print("   Парсер компаний  export.by  ->  Google Sheets")
     print("=" * 64)
 
-    email    = input("\nEmail: ").strip()
-    password = input("Пароль: ").strip()
-    if not email or not password:
-        print("Email и пароль обязательны.")
+    token = input("\nВставьте export_access_token из браузера: ").strip()
+    if not token:
+        print("Токен обязателен.")
         sys.exit(1)
 
     session = make_session()
 
     # 1. Авторизация
     print("\n[1/5] Авторизация на export.by...")
-    ok = login(session, email, password)
-    print("  Авторизован." if ok else "  Предупреждение: авторизация не подтверждена, продолжаем.")
+    set_token(session, token)
+    ok = check_auth(session)
+    if not ok:
+        print("  Ошибка: токен недействителен или истёк. Проверьте export_access_token.")
+        sys.exit(1)
+    print("  Авторизован.")
 
     # 2. Дерево категорий
     total_need = sum(len(v) for v in SECTIONS.values())
