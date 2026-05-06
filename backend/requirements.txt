@@ -10,3 +10,6 @@ requests_oauthlib
 google-api-python-client
 python-multipart
 httpx
+requests
+beautifulsoup4
+lxml
