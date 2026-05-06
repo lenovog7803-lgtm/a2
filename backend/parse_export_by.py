@@ -116,37 +116,24 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().lower())
 
 
-def _walk(nodes, lookup: Dict[str, Tuple[str, str]], found: Dict[Tuple[str, str], int]) -> None:
-    for node in nodes:
-        if not isinstance(node, dict):
+def _walk(node, lookup: Dict[str, Tuple[str, str]], found: Dict[Tuple[str, str], int]) -> None:
+    """Рекурсивно обходит дерево узлов. node — dict с полями id, text, nodes."""
+    if not isinstance(node, dict):
+        return
+
+    text = str(node.get("text") or "").strip().lower()
+    # Нечёткий поиск: проверяем совпадение с каждым ключом из lookup
+    for key, key_pair in lookup.items():
+        if key_pair in found:
             continue
+        if key in text or text in key:
+            node_id = node.get("id")
+            if node_id is not None:
+                found[key_pair] = int(node_id)
+                break
 
-        # Поле с названием может называться text / name / title / label
-        text = str(
-            node.get("text")
-            or node.get("name")
-            or node.get("title")
-            or node.get("label")
-            or ""
-        ).strip()
-
-        key = _norm(text)
-        if key in lookup:
-            key_pair = lookup[key]
-            if key_pair not in found:
-                node_id = node.get("id") or node.get("category_id") or node.get("value")
-                if node_id is not None:
-                    found[key_pair] = int(node_id)
-
-        # Дочерние узлы
-        children = (
-            node.get("children")
-            or node.get("items")
-            or node.get("nodes")
-            or []
-        )
-        if children:
-            _walk(children, lookup, found)
+    for child in node.get("nodes") or []:
+        _walk(child, lookup, found)
 
 
 def find_category_ids(session: requests.Session) -> Dict[Tuple[str, str], int]:
@@ -154,26 +141,20 @@ def find_category_ids(session: requests.Session) -> Dict[Tuple[str, str], int]:
     if data is None:
         return {}
 
-    # Ответ может быть списком или {data: [...]} или {tree: [...]}
-    tree: list = []
-    if isinstance(data, list):
-        tree = data
-    elif isinstance(data, dict):
-        tree = (
-            data.get("data")
-            or data.get("tree")
-            or data.get("categories")
-            or data.get("items")
-            or []
-        )
-
     lookup: Dict[str, Tuple[str, str]] = {
         _norm(cat): (section, cat)
         for section, cats in SECTIONS.items()
         for cat in cats
     }
     found: Dict[Tuple[str, str], int] = {}
-    _walk(tree, lookup, found)
+
+    # Ответ — один dict (корневой узел) или список узлов
+    if isinstance(data, list):
+        for node in data:
+            _walk(node, lookup, found)
+    else:
+        _walk(data, lookup, found)
+
     return found
 
 
