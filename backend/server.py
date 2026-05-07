@@ -457,7 +457,7 @@ class LeadUpdate(BaseModel):
 def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets: bool = False):
     @api_router.get(f"/{prefix}", response_model=List[ModelCls])
     async def list_items():
-        docs = await db[collection].find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+        docs = await db[collection].find({}, {"_id": 0}).sort("created_at", -1).to_list(50000)
         return [ModelCls(**d) for d in docs]
 
     @api_router.post(f"/{prefix}", response_model=ModelCls)
