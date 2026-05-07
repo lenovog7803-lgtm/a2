@@ -135,6 +135,12 @@ export default function OrderDetail() {
   const overdue = !order.client_paid && daysSince(order.load_date) >= 15;
   const days = daysSince(order.load_date);
 
+  const formatCreatedAt = (iso: string) => {
+    if (!iso) return '—';
+    const d = iso.slice(0, 10).split('-');
+    return `${d[2]}.${d[1]}.${d[0]}`;
+  };
+
   const clientItems = clients.map(c => ({ id: c.id, label: c.name, sublabel: c.contact_person || c.phone }));
   const carrierItems = carriers.map(c => ({ id: c.id, label: c.company_name, sublabel: `${c.driver_name || ''} · ${c.plate || ''}` }));
 
@@ -168,6 +174,13 @@ export default function OrderDetail() {
             <Text style={styles.sumValue}>{formatMoney(order.client_rate)}</Text>
           </View>
         </View>
+
+        {!!order.created_at && (
+          <View style={styles.createdAtRow}>
+            <Text style={styles.createdAtLabel}>Дата заявки</Text>
+            <Text style={styles.createdAtValue}>{formatCreatedAt(order.created_at)}</Text>
+          </View>
+        )}
 
         <Field label="Номер заявки" value={order.order_number} onChangeText={(v: string) => update({ order_number: v })} />
 
@@ -360,4 +373,13 @@ const styles = StyleSheet.create({
   docBtnRegen: { padding: 8 },
   entityLink: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 2, marginTop: -4, marginBottom: 8 },
   entityLinkText: { color: theme.colors.accent, fontSize: 12, fontWeight: '600' },
+  createdAtRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingVertical: 11,
+    backgroundColor: theme.colors.surfaceElevated,
+    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10,
+    marginBottom: 10,
+  },
+  createdAtLabel: { fontSize: 12, color: theme.colors.textTertiary, fontWeight: '500' },
+  createdAtValue: { fontSize: 14, color: theme.colors.textSecondary, fontWeight: '600' },
 });

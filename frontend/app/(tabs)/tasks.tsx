@@ -126,7 +126,12 @@ export default function Tasks() {
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           ListEmptyComponent={<Text style={styles.empty}>Нет задач</Text>}
           renderItem={({ item }) => (
-            <TaskCard task={item} onDone={() => markDone(item.id)} onDelete={() => remove(item.id)} />
+            <TaskCard
+              task={item}
+              onPress={() => router.push(`/task/${item.id}` as any)}
+              onDone={() => markDone(item.id)}
+              onDelete={() => remove(item.id)}
+            />
           )}
         />
       )}
@@ -134,12 +139,12 @@ export default function Tasks() {
   );
 }
 
-function TaskCard({ task, onDone, onDelete }: { task: any; onDone: () => void; onDelete: () => void }) {
+function TaskCard({ task, onPress, onDone, onDelete }: { task: any; onPress: () => void; onDone: () => void; onDelete: () => void }) {
   const typeInfo = TASK_TYPES[task.task_type] || TASK_TYPES.other;
   const isDone = task.status === 'done';
 
   return (
-    <View style={[styles.card, isDone && styles.cardDone]}>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.card, isDone && styles.cardDone]}>
       <View style={styles.cardMain}>
         {/* Emoji icon */}
         <View style={styles.emojiWrap}>
@@ -184,7 +189,7 @@ function TaskCard({ task, onDone, onDelete }: { task: any; onDone: () => void; o
           <Text style={styles.deleteBtnText}>Удалить</Text>
         </TouchableOpacity>
       )}
-    </View>
+    </TouchableOpacity>
   );
 }
 
