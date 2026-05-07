@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView,
@@ -27,6 +27,12 @@ const monthLabel = (ym: string) => {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+const orderInPeriod = (o: any, p: string) => {
+  if (p === 'all') return true;
+  const ud = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
+  return ud.startsWith(p);
+};
+
 interface Withdrawal { id: string; amount: number; date: string; note?: string; }
 
 export default function Finance() {
@@ -39,6 +45,7 @@ export default function Finance() {
   const [plan, setPlan] = useState('');
   const [planInput, setPlanInput] = useState('');
   const [editingPlan, setEditingPlan] = useState(false);
+  const [allPlans, setAllPlans] = useState<Record<string, number>>({});
 
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -48,14 +55,26 @@ export default function Finance() {
 
   const load = useCallback(async () => {
     try {
-      const [all, storedPlan, storedW] = await Promise.all([
+      const [all, storedW] = await Promise.all([
         api.orders.list(),
-        AsyncStorage.getItem('monthly_plan'),
         AsyncStorage.getItem('withdrawals'),
       ]);
       setOrders(all);
-      if (storedPlan) { setPlan(storedPlan); setPlanInput(storedPlan); }
       if (storedW) setWithdrawals(JSON.parse(storedW));
+
+      // Load plans for all months for the chart
+      const months = Array.from(new Set(
+        (all as any[]).map(o => {
+          const d = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
+          return (d || '').slice(0, 7);
+        }).filter(Boolean)
+      )) as string[];
+      if (months.length) {
+        const pairs = await AsyncStorage.multiGet(months.map(m => `plan_${m}`));
+        const plans: Record<string, number> = {};
+        pairs.forEach(([k, v]) => { if (v) plans[k.replace('plan_', '')] = parseFloat(v) || 0; });
+        setAllPlans(plans);
+      }
     } catch (e: any) {
       Alert.alert('Ошибка', e.message);
     } finally {
@@ -66,9 +85,19 @@ export default function Finance() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  // Reload plan when period changes
+  useEffect(() => {
+    AsyncStorage.getItem(`plan_${period}`).then(val => {
+      const v = val || '';
+      setPlan(v);
+      setPlanInput(v);
+    });
+  }, [period]);
+
   const savePlan = async () => {
-    await AsyncStorage.setItem('monthly_plan', planInput);
+    await AsyncStorage.setItem(`plan_${period}`, planInput);
     setPlan(planInput);
+    setAllPlans(prev => ({ ...prev, [period]: parseFloat(planInput) || 0 }));
     setEditingPlan(false);
   };
 
@@ -90,14 +119,6 @@ export default function Finance() {
     await AsyncStorage.setItem('withdrawals', JSON.stringify(updated));
   };
 
-  // Mirror of backend order_in_period: use unload_date, fallback to load_date, then created_at
-  const orderInPeriod = (o: any, p: string) => {
-    if (p === 'all') return true;
-    const ud = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
-    return ud.startsWith(p);
-  };
-
-  // Derive period items from orders (same fallback chain)
   const cm = currentMonth();
   const monthsInOrders = Array.from(new Set(
     orders.map(o => {
@@ -105,7 +126,9 @@ export default function Finance() {
       return (d || '').slice(0, 7);
     }).filter(Boolean)
   )).sort().reverse();
+
   const periodItems = [
+    { id: 'all', label: 'За все время' },
     { id: cm, label: `Этот месяц · ${monthLabel(cm)}` },
     ...monthsInOrders.filter(m => m !== cm).map(m => ({ id: m, label: monthLabel(m) })),
   ];
@@ -126,7 +149,9 @@ export default function Finance() {
   const barColor = pct >= 100 ? theme.colors.profit : theme.colors.accent;
 
   // Withdrawals for this period
-  const periodWithdrawals = withdrawals.filter(w => (w.date || '').startsWith(period));
+  const periodWithdrawals = period === 'all'
+    ? withdrawals
+    : withdrawals.filter(w => (w.date || '').startsWith(period));
   const totalWithdrawn = periodWithdrawals.reduce((s, w) => s + w.amount, 0);
   const available = netProfit - totalWithdrawn;
 
@@ -154,7 +179,7 @@ export default function Finance() {
 
         {/* Plan card */}
         <View style={styles.card}>
-          <Text style={styles.sLabel}>ПЛАН НА МЕСЯЦ</Text>
+          <Text style={styles.sLabel}>{period === 'all' ? 'ПЛАН НА ПЕРИОД' : 'ПЛАН НА МЕСЯЦ'}</Text>
 
           {editingPlan ? (
             <View style={styles.planRow}>
@@ -235,6 +260,12 @@ export default function Finance() {
             </>
           )}
         </View>
+
+        <PlanChart
+          orders={orders}
+          allPlans={allPlans}
+          months={[...monthsInOrders].reverse()}
+        />
       </ScrollView>
 
       {/* Withdrawal modal */}
@@ -296,6 +327,64 @@ function MetricCard({ label, value, color, highlight }: { label: string; value: 
     <View style={[styles.metricCard, highlight && { borderColor: theme.colors.accent + '50' }]}>
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={[styles.metricValue, { color }]}>{formatMoney(value)}</Text>
+    </View>
+  );
+}
+
+const PLAN_GOLD = '#C9A84C';
+const PLAN_GREY = '#555';
+const CHART_BAR_H = 100;
+const CHART_LABEL_H = 24;
+
+function PlanChart({ orders, allPlans, months }: { orders: any[]; allPlans: Record<string, number>; months: string[] }) {
+  if (!months.length) return null;
+
+  const data = months.map(ym => {
+    const mo = orders.filter(o => orderInPeriod(o, ym));
+    const rev = mo.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate || 0), 0);
+    const exp = mo.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
+    const fact = Math.max(0, (rev - exp) * 0.8);
+    const plan = allPlans[ym] || 0;
+    return { ym, fact, plan };
+  });
+
+  if (data.every(d => d.fact === 0 && d.plan === 0)) return null;
+
+  const maxVal = Math.max(...data.map(d => Math.max(d.fact, d.plan)), 1);
+
+  return (
+    <View style={[styles.card, { marginTop: 8, marginBottom: 8 }]}>
+      <Text style={[styles.sLabel, { marginBottom: 10 }]}>ВЫПОЛНЕНИЕ ПЛАНА ПО МЕСЯЦАМ</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <View style={{ width: 10, height: 10, backgroundColor: PLAN_GOLD, borderRadius: 2 }} />
+        <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginRight: 8 }}>Факт</Text>
+        <View style={{ width: 10, height: 10, backgroundColor: PLAN_GREY, borderRadius: 2 }} />
+        <Text style={{ fontSize: 10, color: theme.colors.textTertiary }}>План</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6, height: CHART_BAR_H + CHART_LABEL_H + 14 }}>
+          {data.map(({ ym, fact, plan }) => {
+            const factH = Math.max(fact > 0 ? 2 : 0, (fact / maxVal) * CHART_BAR_H);
+            const planH = Math.max(plan > 0 ? 2 : 0, (plan / maxVal) * CHART_BAR_H);
+            const pct = plan > 0 ? Math.round((fact / plan) * 100) : null;
+            const lbl = MONTHS[parseInt(ym.slice(5), 10) - 1];
+            return (
+              <View key={ym} style={{ alignItems: 'center', width: 50 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: CHART_BAR_H }}>
+                  <View style={{ width: 20, height: factH, backgroundColor: PLAN_GOLD, borderRadius: 3 }} />
+                  <View style={{ width: 20, height: planH, backgroundColor: PLAN_GREY, borderRadius: 3 }} />
+                </View>
+                {pct !== null && (
+                  <Text style={{ fontSize: 8, color: pct >= 100 ? theme.colors.profit : theme.colors.accent, fontWeight: '700', marginTop: 2 }}>
+                    {pct}%
+                  </Text>
+                )}
+                <Text style={{ fontSize: 9, color: theme.colors.textTertiary, marginTop: 2 }}>{lbl}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
     </View>
   );
 }

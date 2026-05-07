@@ -173,6 +173,16 @@ export default function OrderDetail() {
 
         <Picker label="Клиент" value={order.client_id || ''} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client" />
         <Picker label="Перевозчик" value={order.carrier_id || ''} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier" />
+        {!!order.carrier_id && (
+          <TouchableOpacity
+            onPress={() => router.push(`/carrier/${order.carrier_id}`)}
+            style={styles.entityLink}
+            activeOpacity={0.7}
+          >
+            <ExternalLink size={13} color={theme.colors.accent} strokeWidth={1.8} />
+            <Text style={styles.entityLinkText}>Карточка перевозчика</Text>
+          </TouchableOpacity>
+        )}
 
         <Text style={styles.groupLabel}>МАРШРУТ</Text>
         <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -212,7 +222,7 @@ export default function OrderDetail() {
 
         <Text style={styles.groupLabel}>ДОКУМЕНТЫ</Text>
         <DocToggle
-          label="Документы Клиенту"
+          label="Документы отправлены клиенту"
           value={order.docs_to_client_sent}
           onToggle={() => update({ docs_to_client_sent: !order.docs_to_client_sent })}
           onText="Отправлены"
@@ -220,7 +230,7 @@ export default function OrderDetail() {
           testID="doc-to-client"
         />
         <DocToggle
-          label="Документы от Клиента"
+          label="Документы получены от клиента"
           value={order.docs_from_client_received}
           onToggle={() => update({ docs_from_client_received: !order.docs_from_client_received })}
           onText="Получены"
@@ -228,19 +238,19 @@ export default function OrderDetail() {
           testID="doc-from-client"
         />
         <DocToggle
-          label="Документы Перевозчику"
+          label="Документы отправлены перевозчику"
           value={order.docs_to_carrier_sent}
           onToggle={() => update({ docs_to_carrier_sent: !order.docs_to_carrier_sent })}
-          onText="Получены"
-          offText="Не получены"
+          onText="Отправлены"
+          offText="Не отправлены"
           testID="doc-to-carrier"
         />
         <DocToggle
-          label="Документы от Перевозчика"
+          label="Документы получены от перевозчика"
           value={order.docs_from_carrier_received}
           onToggle={() => update({ docs_from_carrier_received: !order.docs_from_carrier_received })}
-          onText="Отправлены"
-          offText="Не отправлены"
+          onText="Получены"
+          offText="Не получены"
           testID="doc-from-carrier"
         />
 
@@ -348,4 +358,6 @@ const styles = StyleSheet.create({
   docBtnLabel: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '600' },
   docBtnSub: { fontSize: 11, marginTop: 2 },
   docBtnRegen: { padding: 8 },
+  entityLink: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 2, marginTop: -4, marginBottom: 8 },
+  entityLinkText: { color: theme.colors.accent, fontSize: 12, fontWeight: '600' },
 });

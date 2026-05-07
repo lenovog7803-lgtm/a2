@@ -43,6 +43,7 @@ export default function Orders() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [payFilter, setPayFilter] = useState<string>('any');
   const [docFilter, setDocFilter] = useState<string>('any');
+  const [payChipFilter, setPayChipFilter] = useState<string>('any');
   const [showFilters, setShowFilters] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -79,6 +80,8 @@ export default function Orders() {
       (o.route_to || '').toLowerCase().includes(q)
     );
     if (statusFilter !== 'all') result = result.filter(o => o.status === statusFilter);
+    if (payChipFilter === 'need_pay_carrier') result = result.filter(o => o.client_paid && !o.carrier_paid);
+    else if (payChipFilter === 'wait_client') result = result.filter(o => !o.client_paid);
     if (payFilter === 'unpaid_client') result = result.filter(o => !o.client_paid);
     else if (payFilter === 'unpaid_carrier') result = result.filter(o => !o.carrier_paid);
     else if (payFilter === 'overdue') result = result.filter(isOverdue);
@@ -100,6 +103,11 @@ export default function Orders() {
     { id: 'new', label: 'Новые', count: orders.filter(o => o.status === 'new').length },
     { id: 'in_progress', label: 'В работе', count: orders.filter(o => o.status === 'in_progress').length },
     { id: 'delivered', label: 'Доставлено', count: orders.filter(o => o.status === 'delivered').length },
+  ];
+
+  const payChips = [
+    { id: 'need_pay_carrier', label: 'Клиент оплатил, перевозчику нет', count: orders.filter(o => o.client_paid && !o.carrier_paid).length },
+    { id: 'wait_client', label: 'Жду оплату от клиента', count: orders.filter(o => !o.client_paid).length },
   ];
 
   const activeFilters = (payFilter !== 'any' ? 1 : 0) + (docFilter !== 'any' ? 1 : 0);
@@ -155,6 +163,27 @@ export default function Orders() {
           }}
         />
 
+        <FlatList
+          horizontal
+          data={payChips}
+          keyExtractor={(i) => i.id}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 8, paddingTop: 8, paddingBottom: 4 }}
+          renderItem={({ item }) => {
+            const active = payChipFilter === item.id;
+            return (
+              <TouchableOpacity
+                onPress={() => setPayChipFilter(active ? 'any' : item.id)}
+                style={[styles.chip, active && styles.chipPayActive]}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.chipText, active && styles.chipPayTextActive]}>{item.label}</Text>
+                <Text style={[styles.chipCount, active && styles.chipPayCountActive]}>{item.count}</Text>
+              </TouchableOpacity>
+            );
+          }}
+        />
+
         {showFilters && (
           <View style={styles.filterPanel}>
             <Picker
@@ -174,7 +203,7 @@ export default function Orders() {
               testID="filter-docs"
             />
             {activeFilters > 0 && (
-              <TouchableOpacity onPress={() => { setPayFilter('any'); setDocFilter('any'); }} style={styles.resetBtn} activeOpacity={0.7}>
+              <TouchableOpacity onPress={() => { setPayFilter('any'); setDocFilter('any'); setPayChipFilter('any'); }} style={styles.resetBtn} activeOpacity={0.7}>
                 <Text style={styles.resetText}>Сбросить фильтры</Text>
               </TouchableOpacity>
             )}
@@ -260,10 +289,13 @@ const styles = StyleSheet.create({
 
   chip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 999 },
   chipActive: { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent },
+  chipPayActive: { backgroundColor: theme.colors.warning + '20', borderColor: theme.colors.warning },
   chipText: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
   chipTextActive: { color: theme.colors.accent },
+  chipPayTextActive: { color: theme.colors.warning },
   chipCount: { color: theme.colors.textTertiary, fontSize: 11, fontWeight: '700', backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 },
   chipCountActive: { color: theme.colors.accent, backgroundColor: theme.colors.accent + '20' },
+  chipPayCountActive: { color: theme.colors.warning, backgroundColor: theme.colors.warning + '20' },
 
   filterPanel: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, marginTop: 12 },
   resetBtn: { paddingVertical: 8, alignItems: 'center' },

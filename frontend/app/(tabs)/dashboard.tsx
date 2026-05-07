@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal } from 'react-native';
 import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X } from 'lucide-react-native';
 import { theme, formatMoney, formatShort } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
@@ -27,9 +27,11 @@ export default function Dashboard() {
   const insets = useSafeAreaInsets();
   const { mode, toggle } = useTheme();
   const [data, setData] = useState<any>(null);
+  const [allOrders, setAllOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState<string>(currentMonth());
+  const [selectedDebtor, setSelectedDebtor] = useState<{ name: string; isCreditor: boolean } | null>(null);
 
   // Sheets import state
   const [syncing, setSyncing] = useState(false);
@@ -38,8 +40,9 @@ export default function Dashboard() {
 
   const load = useCallback(async (p: string) => {
     try {
-      const d = await api.dashboard(p);
+      const [d, orders] = await Promise.all([api.dashboard(p), api.orders.list()]);
       setData(d);
+      setAllOrders(orders);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -137,6 +140,7 @@ export default function Dashboard() {
   const periodValue = period;
 
   return (
+    <>
     <ScrollView
       testID="dashboard-screen"
       style={{ flex: 1, backgroundColor: theme.colors.bg }}
@@ -234,7 +238,13 @@ export default function Dashboard() {
             <Text style={styles.sectionLabel}>ДОЛЖНИКИ — КЛИЕНТЫ</Text>
             <View style={styles.listCard}>
               {(d.debtors || []).map((c: any, i: number) => (
-                <DebtRow key={c.name} item={c} color={theme.colors.warning} last={i === d.debtors.length - 1} />
+                <DebtRow
+                  key={c.name}
+                  item={c}
+                  color={theme.colors.warning}
+                  last={i === d.debtors.length - 1}
+                  onPress={() => setSelectedDebtor({ name: c.name, isCreditor: false })}
+                />
               ))}
             </View>
           </>
@@ -246,7 +256,13 @@ export default function Dashboard() {
             <Text style={styles.sectionLabel}>ДОЛЖЕН ПЕРЕВОЗЧИКАМ</Text>
             <View style={styles.listCard}>
               {(d.creditors || []).map((c: any, i: number) => (
-                <DebtRow key={c.name} item={c} color={theme.colors.loss} last={i === d.creditors.length - 1} />
+                <DebtRow
+                  key={c.name}
+                  item={c}
+                  color={theme.colors.loss}
+                  last={i === d.creditors.length - 1}
+                  onPress={() => setSelectedDebtor({ name: c.name, isCreditor: true })}
+                />
               ))}
             </View>
           </>
@@ -285,18 +301,65 @@ export default function Dashboard() {
         <ProfitChart chartOrders={d.chart_orders || []} period={period} />
       </View>
     </ScrollView>
+
+    {/* Debtor orders modal */}
+    <Modal
+      visible={!!selectedDebtor}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setSelectedDebtor(null)}
+    >
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSelectedDebtor(null)} />
+        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalTitle} numberOfLines={1}>{selectedDebtor?.name}</Text>
+              <Text style={styles.modalSub}>
+                {selectedDebtor?.isCreditor ? 'Заявки с долгом перевозчику' : 'Заявки с долгом клиента'}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => setSelectedDebtor(null)} style={{ padding: 4 }}>
+              <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+            {selectedDebtor && (
+              selectedDebtor.isCreditor
+                ? allOrders.filter(o => o.carrier_name === selectedDebtor.name && !o.carrier_paid && o.status !== 'cancelled')
+                : allOrders.filter(o => o.client_name === selectedDebtor.name && !o.client_paid && o.status !== 'cancelled')
+            ).map((o, i, arr) => (
+              <View key={o.id} style={[styles.modalOrderRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalOrderNum}>{o.order_number}</Text>
+                  <Text style={styles.modalOrderRoute} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
+                  <Text style={styles.modalOrderDate}>{o.load_date || '—'}</Text>
+                </View>
+                <Text style={[styles.modalOrderAmt, { color: selectedDebtor.isCreditor ? theme.colors.loss : theme.colors.warning }]}>
+                  {formatMoney(selectedDebtor.isCreditor ? o.carrier_rate : o.client_rate)}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 
-function DebtRow({ item, color, last }: any) {
+function DebtRow({ item, color, last, onPress }: any) {
   return (
-    <View style={[styles.debtRow, last && { borderBottomWidth: 0 }]}>
+    <TouchableOpacity onPress={onPress} style={[styles.debtRow, last && { borderBottomWidth: 0 }]} activeOpacity={0.7}>
       <View style={{ flex: 1 }}>
         <Text style={styles.debtName} numberOfLines={1}>{item.name}</Text>
         <Text style={styles.debtMeta}>{item.orders} заявок</Text>
       </View>
-      <Text style={[styles.debtAmount, { color }]}>{formatMoney(item.amount)}</Text>
-    </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Text style={[styles.debtAmount, { color }]}>{formatMoney(item.amount)}</Text>
+        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
+      </View>
+    </TouchableOpacity>
   );
 }
 
@@ -568,6 +631,24 @@ const styles = StyleSheet.create({
   topRank: { color: theme.colors.accent, fontSize: 12, fontWeight: '700' },
   topName: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '500', marginBottom: 6 },
   topRevenue: { color: theme.colors.accent, fontSize: 13, fontWeight: '700', minWidth: 70, textAlign: 'right' },
+
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalSheet: {
+    backgroundColor: theme.colors.surface,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.border,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 16 },
+  modalTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '700' },
+  modalSub: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
+  modalOrderRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border,
+  },
+  modalOrderNum: { color: theme.colors.accent, fontSize: 13, fontWeight: '700' },
+  modalOrderRoute: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 },
+  modalOrderDate: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
+  modalOrderAmt: { fontSize: 14, fontWeight: '700', minWidth: 80, textAlign: 'right' },
 
   // Sheets sync
   syncCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16, marginBottom: 16 },
