@@ -51,14 +51,18 @@ DELAY           = 0.3
 BATCH_SIZE      = 50
 MAX_PAGES       = 50   # максимум страниц на одну комбинацию город+запрос
 
-CITIES = [
-    "Минск",
-    "Москва",
-    "Санкт-Петербург",
-    "Екатеринбург",
-    "Новосибирск",
-    "Казань",
-]
+CITY_IDS: Dict[str, str] = {
+    "Минск":       "1141",
+    "Брест":       "1142",
+    "Витебск":     "1144",
+    "Гомель":      "1146",
+    "Гродно":      "1147",
+    "Могилев":     "1149",
+    "Борисов":     "1150",
+    "Барановичи":  "1143",
+    "Пинск":       "1154",
+    "Бобруйск":    "1145",
+}
 
 QUERIES = [
     "производитель",
@@ -93,33 +97,6 @@ def get_json(session: requests.Session, url: str, **params) -> Optional[dict]:
     except Exception as exc:
         print(f"    [WARN] GET {url}: {exc}")
         return None
-
-# ─── Города ───────────────────────────────────────────────────────────────────
-
-def find_city_id(session: requests.Session, city_name: str, api_key: str) -> Optional[str]:
-    data = get_json(
-        session,
-        f"{API_BASE}/2.0/region/search",
-        q=city_name,
-        key=api_key,
-        locale="ru_RU",
-    )
-    if not data:
-        return None
-
-    items = (
-        (data.get("result") or {}).get("items")
-        or data.get("items")
-        or []
-    )
-    for item in items:
-        name = str(item.get("name") or "").strip().lower()
-        if city_name.lower() in name or name in city_name.lower():
-            return str(item["id"])
-    # Первый результат как запасной вариант
-    if items:
-        return str(items[0]["id"])
-    return None
 
 # ─── Парсинг компаний ─────────────────────────────────────────────────────────
 
@@ -265,35 +242,20 @@ def main() -> None:
 
     session = make_session()
 
-    # 1. Поиск city_id
-    print(f"\n[1/3] Поиск ID городов ({len(CITIES)})...")
-    city_ids: Dict[str, str] = {}
-    for city in CITIES:
-        cid = find_city_id(session, city, api_key)
-        if cid:
-            print(f"  {city}: id={cid}")
-            city_ids[city] = cid
-        else:
-            print(f"  {city}: не найден, пропускаем")
-
-    if not city_ids:
-        print("Ни один город не найден. Проверьте API ключ.")
-        sys.exit(1)
-
-    # 2. Google Sheets
-    print("\n[2/3] Подключение к Google Sheets...")
+    # 1. Google Sheets
+    print("\n[1/2] Подключение к Google Sheets...")
     ws       = get_worksheet()
     existing = load_existing_names(ws)
     next_row = last_data_row(ws) + 1
     print(f"  В таблице: {len(existing)} записей, пишем с строки {next_row}")
 
-    # 3. Парсинг
-    print(f"\n[3/3] Парсинг: {len(city_ids)} городов × {len(QUERIES)} запросов...\n")
+    # 2. Парсинг
+    print(f"\n[2/2] Парсинг: {len(CITY_IDS)} городов × {len(QUERIES)} запросов...\n")
     total_added = 0
     total_skip  = 0
     batch: List[Tuple[int, Dict[str, str]]] = []
 
-    for city_name, city_id in city_ids.items():
+    for city_name, city_id in CITY_IDS.items():
         for query in QUERIES:
             print(f"  ▸ {city_name} / «{query}»")
 
