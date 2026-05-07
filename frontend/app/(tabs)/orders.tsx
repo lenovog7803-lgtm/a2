@@ -106,8 +106,8 @@ export default function Orders() {
   ];
 
   const payChips = [
-    { id: 'need_pay_carrier', label: 'Клиент оплатил, перевозчику нет', count: orders.filter(o => o.client_paid && !o.carrier_paid).length },
-    { id: 'wait_client', label: 'Жду оплату от клиента', count: orders.filter(o => !o.client_paid).length },
+    { id: 'need_pay_carrier', label: 'Долг по оплате', count: orders.filter(o => o.client_paid && !o.carrier_paid).length },
+    { id: 'wait_client', label: 'Не оплаченные заявки', count: orders.filter(o => !o.client_paid).length },
   ];
 
   const activeFilters = (payFilter !== 'any' ? 1 : 0) + (docFilter !== 'any' ? 1 : 0);
