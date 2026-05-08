@@ -327,13 +327,13 @@ export default function Dashboard() {
             {selectedDebtor && (
               selectedDebtor.isCreditor
                 ? allOrders.filter(o => o.carrier_name === selectedDebtor.name && !o.carrier_paid && o.status !== 'cancelled')
-                : allOrders.filter(o => o.client_name === selectedDebtor.name && !o.client_paid && o.status !== 'cancelled')
+                : allOrders.filter(o => o.client_name === selectedDebtor.name && !o.client_paid && o.status === 'delivered')
             ).map((o, i, arr) => (
               <View key={o.id} style={[styles.modalOrderRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.modalOrderNum}>{o.order_number}</Text>
                   <Text style={styles.modalOrderRoute} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
-                  <Text style={styles.modalOrderDate}>{o.load_date || '—'}</Text>
+                  <Text style={styles.modalOrderDate}>{o.unload_date || o.load_date || '—'}</Text>
                 </View>
                 <Text style={[styles.modalOrderAmt, { color: selectedDebtor.isCreditor ? theme.colors.loss : theme.colors.warning }]}>
                   {formatMoney(selectedDebtor.isCreditor ? o.carrier_rate : o.client_rate)}

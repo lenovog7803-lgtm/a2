@@ -63,5 +63,17 @@ export const api = {
     googleStatus: () => req('/auth/google/status'),
     googleDisconnect: () => req('/auth/google', { method: 'DELETE' }),
   },
+  finance: {
+    withdrawals: {
+      list: () => req('/finance/withdrawals'),
+      create: (data: any) => req('/finance/withdrawals', { method: 'POST', body: JSON.stringify(data) }),
+      delete: (id: string) => req(`/finance/withdrawals/${id}`, { method: 'DELETE' }),
+    },
+    transactions: {
+      list: () => req('/finance/transactions'),
+      create: (data: any) => req('/finance/transactions', { method: 'POST', body: JSON.stringify(data) }),
+      delete: (id: string) => req(`/finance/transactions/${id}`, { method: 'DELETE' }),
+    },
+  },
   seed: () => req('/seed', { method: 'POST' }),
 };

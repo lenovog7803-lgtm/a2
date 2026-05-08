@@ -13,6 +13,14 @@ import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+const QUARTERS = [
+  { name: 'Q1', months: [1, 2, 3],   label: 'Янв–Мар' },
+  { name: 'Q2', months: [4, 5, 6],   label: 'Апр–Июн' },
+  { name: 'Q3', months: [7, 8, 9],   label: 'Июл–Сен' },
+  { name: 'Q4', months: [10, 11, 12], label: 'Окт–Дек' },
+];
+
+type TabType = 'orders' | 'accounting';
 
 const currentMonth = () => {
   const d = new Date();
@@ -33,10 +41,9 @@ const orderInPeriod = (o: any, p: string) => {
   return ud.startsWith(p);
 };
 
-interface Withdrawal { id: string; amount: number; date: string; note?: string; }
-
 export default function Finance() {
   const insets = useSafeAreaInsets();
+  const [tab, setTab] = useState<TabType>('orders');
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -47,24 +54,32 @@ export default function Finance() {
   const [editingPlan, setEditingPlan] = useState(false);
   const [allPlans, setAllPlans] = useState<Record<string, number>>({});
 
-  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
-  const [modalVisible, setModalVisible] = useState(false);
+  const [withdrawals, setWithdrawals] = useState<any[]>([]);
+  const [wModalVisible, setWModalVisible] = useState(false);
   const [wAmount, setWAmount] = useState('');
   const [wNote, setWNote] = useState('');
   const [wDate, setWDate] = useState(todayISO);
 
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [txModalVisible, setTxModalVisible] = useState(false);
+  const [txType, setTxType] = useState<'income' | 'expense'>('income');
+  const [txAmount, setTxAmount] = useState('');
+  const [txDesc, setTxDesc] = useState('');
+  const [txDate, setTxDate] = useState(todayISO);
+
   const load = useCallback(async () => {
     try {
-      const [all, storedW] = await Promise.all([
+      const [allOrders, ws, txs] = await Promise.all([
         api.orders.list(),
-        AsyncStorage.getItem('withdrawals'),
+        api.finance.withdrawals.list().catch(() => []),
+        api.finance.transactions.list().catch(() => []),
       ]);
-      setOrders(all);
-      if (storedW) setWithdrawals(JSON.parse(storedW));
+      setOrders(allOrders);
+      setWithdrawals(ws);
+      setTransactions(txs);
 
-      // Load plans for all months for the chart
       const months = Array.from(new Set(
-        (all as any[]).map(o => {
+        (allOrders as any[]).map(o => {
           const d = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
           return (d || '').slice(0, 7);
         }).filter(Boolean)
@@ -85,7 +100,6 @@ export default function Finance() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  // Reload plan when period changes
   useEffect(() => {
     AsyncStorage.getItem(`plan_${period}`).then(val => {
       const v = val || '';
@@ -104,19 +118,47 @@ export default function Finance() {
   const saveWithdrawal = async () => {
     const amount = parseFloat(wAmount.replace(/\s/g, '').replace(',', '.'));
     if (!amount || isNaN(amount)) { Alert.alert('Введите сумму'); return; }
-    const entry: Withdrawal = { id: Date.now().toString(), amount, date: wDate, note: wNote || undefined };
-    const updated = [entry, ...withdrawals];
-    setWithdrawals(updated);
-    await AsyncStorage.setItem('withdrawals', JSON.stringify(updated));
-    setModalVisible(false);
-    setWAmount(''); setWNote(''); setWDate(todayISO());
+    try {
+      const entry = await api.finance.withdrawals.create({ amount, date: wDate, note: wNote || '' });
+      setWithdrawals(prev => [entry, ...prev]);
+      setWModalVisible(false);
+      setWAmount(''); setWNote(''); setWDate(todayISO());
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message);
+    }
   };
 
-  const deleteWithdrawal = async (id: string) => {
-    if (!window.confirm('Удалить запись о снятии?')) return;
-    const updated = withdrawals.filter(w => w.id !== id);
-    setWithdrawals(updated);
-    await AsyncStorage.setItem('withdrawals', JSON.stringify(updated));
+  const deleteWithdrawal = (id: string) => {
+    Alert.alert('Удалить снятие?', '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        await api.finance.withdrawals.delete(id);
+        setWithdrawals(prev => prev.filter(w => w.id !== id));
+      }},
+    ]);
+  };
+
+  const saveTransaction = async () => {
+    const amount = parseFloat(txAmount.replace(/\s/g, '').replace(',', '.'));
+    if (!amount || isNaN(amount)) { Alert.alert('Введите сумму'); return; }
+    try {
+      const entry = await api.finance.transactions.create({ type: txType, amount, date: txDate, description: txDesc || '' });
+      setTransactions(prev => [entry, ...prev]);
+      setTxModalVisible(false);
+      setTxAmount(''); setTxDesc(''); setTxDate(todayISO());
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message);
+    }
+  };
+
+  const deleteTransaction = (id: string) => {
+    Alert.alert('Удалить транзакцию?', '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        await api.finance.transactions.delete(id);
+        setTransactions(prev => prev.filter(t => t.id !== id));
+      }},
+    ]);
   };
 
   const cm = currentMonth();
@@ -133,27 +175,72 @@ export default function Finance() {
     ...monthsInOrders.filter(m => m !== cm).map(m => ({ id: m, label: monthLabel(m) })),
   ];
 
-  // Metrics for selected period
+  // === "По заявкам" metrics (ALL orders, regardless of payment) ===
   const mo = orders.filter(o => orderInPeriod(o, period));
-  const revenue  = mo.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate  || 0), 0);
-  const expenses = mo.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
+  const revenue  = mo.reduce((s, o) => s + (o.client_rate  || 0), 0);
+  const expenses = mo.reduce((s, o) => s + (o.carrier_rate || 0), 0);
   const margin   = revenue - expenses;
   const tax      = Math.max(0, margin * 0.2);
   const netProfit = Math.max(0, margin * 0.8);
-  const pendingFromClients = mo.filter(o => !o.client_paid  && o.status !== 'cancelled').reduce((s, o) => s + (o.client_rate  || 0), 0);
-  const owedToCarriers     = mo.filter(o => !o.carrier_paid && o.status !== 'cancelled').reduce((s, o) => s + (o.carrier_rate || 0), 0);
 
-  // Plan
-  const planNum = parseFloat(plan) || 0;
-  const pct = planNum > 0 ? (netProfit / planNum) * 100 : 0;
-  const barColor = pct >= 100 ? theme.colors.profit : theme.colors.accent;
-
-  // Withdrawals for this period
   const periodWithdrawals = period === 'all'
     ? withdrawals
     : withdrawals.filter(w => (w.date || '').startsWith(period));
   const totalWithdrawn = periodWithdrawals.reduce((s, w) => s + w.amount, 0);
   const available = netProfit - totalWithdrawn;
+
+  const planNum = parseFloat(plan) || 0;
+  const pct = planNum > 0 ? (netProfit / planNum) * 100 : 0;
+  const barColor = pct >= 100 ? theme.colors.profit : theme.colors.accent;
+
+  // === "Бухгалтерия" metrics (paid only + manual transactions) ===
+  const accOrderIncome   = mo.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate  || 0), 0);
+  const accOrderExpenses = mo.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
+
+  const periodTxs = period === 'all'
+    ? transactions
+    : transactions.filter(t => (t.date || '').startsWith(period));
+  const manualIncome   = periodTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const manualExpenses = periodTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+
+  const totalAccIncome   = accOrderIncome + manualIncome;
+  const totalAccExpenses = accOrderExpenses + manualExpenses;
+  const accMargin    = totalAccIncome - totalAccExpenses;
+  const accTax       = Math.max(0, accMargin * 0.2);
+  const accNetProfit = Math.max(0, accMargin * 0.8);
+
+  // === Quarterly data ===
+  const currentYear = new Date().getFullYear();
+  const currentQuarterIdx = Math.floor(new Date().getMonth() / 3);
+
+  const quarterData = QUARTERS.map((q, qi) => {
+    const qOrders = orders.filter(o => {
+      const d = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
+      if (!d) return false;
+      const parts = d.split('-').map(Number);
+      return parts[0] === currentYear && q.months.includes(parts[1]);
+    });
+    const qIncome   = qOrders.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate  || 0), 0);
+    const qExpenses = qOrders.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
+    const qTx = transactions.filter(t => {
+      if (!t.date) return false;
+      const parts = t.date.split('-').map(Number);
+      return parts[0] === currentYear && q.months.includes(parts[1]);
+    });
+    const qManualInc = qTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const qManualExp = qTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const totalInc = qIncome + qManualInc;
+    const totalExp = qExpenses + qManualExp;
+    const qMargin = totalInc - totalExp;
+    return {
+      ...q,
+      income: totalInc,
+      expenses: totalExp,
+      tax: Math.max(0, qMargin * 0.2),
+      profit: Math.max(0, qMargin * 0.8),
+      isCurrent: qi === currentQuarterIdx,
+    };
+  });
 
   if (loading) {
     return <View style={[styles.center, { backgroundColor: theme.colors.bg }]}><ActivityIndicator color={theme.colors.accent} /></View>;
@@ -169,6 +256,16 @@ export default function Finance() {
         <Text style={styles.kicker}>ФИНАНСЫ</Text>
         <Text style={styles.title}>Финансы</Text>
 
+        {/* Tab switcher */}
+        <View style={styles.tabRow}>
+          <TouchableOpacity style={[styles.tabBtn, tab === 'orders' && styles.tabBtnActive]} onPress={() => setTab('orders')} activeOpacity={0.7}>
+            <Text style={[styles.tabBtnTxt, tab === 'orders' && styles.tabBtnTxtActive]}>По заявкам</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.tabBtn, tab === 'accounting' && styles.tabBtnActive]} onPress={() => setTab('accounting')} activeOpacity={0.7}>
+            <Text style={[styles.tabBtnTxt, tab === 'accounting' && styles.tabBtnTxtActive]}>Бухгалтерия</Text>
+          </TouchableOpacity>
+        </View>
+
         <Picker
           label="Период"
           value={period}
@@ -177,132 +274,181 @@ export default function Finance() {
           searchable={false}
         />
 
-        {/* Plan card */}
-        <View style={styles.card}>
-          <Text style={styles.sLabel}>{period === 'all' ? 'ПЛАН НА ПЕРИОД' : 'ПЛАН НА МЕСЯЦ'}</Text>
-
-          {editingPlan ? (
-            <View style={styles.planRow}>
-              <TextInput
-                style={styles.planInput}
-                value={planInput}
-                onChangeText={setPlanInput}
-                keyboardType="numeric"
-                placeholder="Сумма плана, Br"
-                placeholderTextColor={theme.colors.textTertiary}
-                autoFocus
-              />
-              <TouchableOpacity onPress={savePlan} style={styles.planSaveBtn}>
-                <Text style={styles.planSaveTxt}>ОК</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity onPress={() => { setPlanInput(plan); setEditingPlan(true); }} activeOpacity={0.7}>
-              <Text style={styles.planValue}>
-                {plan ? `${Number(plan).toLocaleString()} Br` : 'Нажмите, чтобы задать план →'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {planNum > 0 && (
-            <>
-              <View style={styles.progressBg}>
-                <View style={[styles.progressFill, { width: `${Math.min(pct, 100)}%`, backgroundColor: barColor }]} />
-              </View>
-              <Text style={[styles.pctBig, { color: barColor }]}>{pct.toFixed(1)}%</Text>
-              <Text style={styles.pctSub}>{pct >= 100 ? '🎯 перевыполнено' : 'выполнено'}</Text>
-            </>
-          )}
-        </View>
-
-        {/* Metrics grid */}
-        <View style={styles.grid}>
-          <MetricCard label="ВЫРУЧКА"            value={revenue}           color={theme.colors.profit} />
-          <MetricCard label="РАСХОДЫ"            value={expenses}          color={theme.colors.loss} />
-          <MetricCard label="НАЛОГ 20%"          value={tax}               color={theme.colors.textSecondary} />
-          <MetricCard label="ЧИСТАЯ ПРИБЫЛЬ"     value={netProfit}         color={theme.colors.accent} highlight />
-          <MetricCard label="ОЖИДАЕТСЯ ОТ КЛИЕНТОВ" value={pendingFromClients} color={theme.colors.warning} />
-          <MetricCard label="К ОПЛАТЕ ПЕРЕВОЗЧИКАМ" value={owedToCarriers}     color={theme.colors.info} />
-        </View>
-
-        {/* Available to withdraw */}
-        <View style={[styles.card, { marginTop: 4 }]}>
-          <Text style={styles.sLabel}>ДОСТУПНО К СНЯТИЮ</Text>
-          <Text style={[styles.availableNum, { color: available >= 0 ? theme.colors.accentBright : theme.colors.loss }]}>
-            {formatMoney(Math.max(0, available))}
-          </Text>
-          {totalWithdrawn > 0 && (
-            <Text style={styles.withdrawnSub}>Снято в этом периоде: {formatMoney(totalWithdrawn)}</Text>
-          )}
-
-          <TouchableOpacity onPress={() => setModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
-            <Plus size={16} color="#000" strokeWidth={2.5} />
-            <Text style={styles.withdrawBtnTxt}>Записать снятие</Text>
-          </TouchableOpacity>
-
-          {withdrawals.length > 0 && (
-            <>
-              <Text style={[styles.sLabel, { marginTop: 20, marginBottom: 0 }]}>ВСЕ СНЯТИЯ</Text>
-              {withdrawals.map((w, i) => (
-                <TouchableOpacity
-                  key={w.id}
-                  onLongPress={() => deleteWithdrawal(w.id)}
-                  style={[styles.wRow, i === withdrawals.length - 1 && { borderBottomWidth: 0 }]}
-                  activeOpacity={0.7}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.wDate}>{w.date}</Text>
-                    {!!w.note && <Text style={styles.wNote}>{w.note}</Text>}
-                  </View>
-                  <Text style={styles.wAmount}>{formatMoney(w.amount)}</Text>
+        {tab === 'orders' ? (
+          <>
+            {/* Plan card */}
+            <View style={styles.card}>
+              <Text style={styles.sLabel}>{period === 'all' ? 'ПЛАН НА ПЕРИОД' : 'ПЛАН НА МЕСЯЦ'}</Text>
+              {editingPlan ? (
+                <View style={styles.planRow}>
+                  <TextInput
+                    style={styles.planInput}
+                    value={planInput}
+                    onChangeText={setPlanInput}
+                    keyboardType="numeric"
+                    placeholder="Сумма плана, Br"
+                    placeholderTextColor={theme.colors.textTertiary}
+                    autoFocus
+                  />
+                  <TouchableOpacity onPress={savePlan} style={styles.planSaveBtn}>
+                    <Text style={styles.planSaveTxt}>ОК</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity onPress={() => { setPlanInput(plan); setEditingPlan(true); }} activeOpacity={0.7}>
+                  <Text style={styles.planValue}>
+                    {plan ? `${Number(plan).toLocaleString()} Br` : 'Нажмите, чтобы задать план →'}
+                  </Text>
                 </TouchableOpacity>
-              ))}
-            </>
-          )}
-        </View>
+              )}
+              {planNum > 0 && (
+                <>
+                  <View style={styles.progressBg}>
+                    <View style={[styles.progressFill, { width: `${Math.min(pct, 100)}%`, backgroundColor: barColor }]} />
+                  </View>
+                  <Text style={[styles.pctBig, { color: barColor }]}>{pct.toFixed(1)}%</Text>
+                  <Text style={styles.pctSub}>{pct >= 100 ? '🎯 перевыполнено' : 'выполнено'}</Text>
+                </>
+              )}
+            </View>
 
-        <PlanChart
-          orders={orders}
-          allPlans={allPlans}
-          months={[...monthsInOrders].reverse()}
-        />
+            {/* Metrics grid */}
+            <View style={styles.grid}>
+              <MetricCard label="ВЫРУЧКА"        value={revenue}   color={theme.colors.profit} />
+              <MetricCard label="РАСХОДЫ"        value={expenses}  color={theme.colors.loss} />
+              <MetricCard label="МАРЖА"          value={margin}    color={theme.colors.textSecondary} />
+              <MetricCard label="НАЛОГ 20%"      value={tax}       color={theme.colors.textSecondary} />
+              <MetricCard label="ЧИСТАЯ ПРИБЫЛЬ" value={netProfit} color={theme.colors.accent} highlight />
+            </View>
+
+            {/* Available to withdraw */}
+            <View style={[styles.card, { marginTop: 4 }]}>
+              <Text style={styles.sLabel}>ДОСТУПНО К СНЯТИЮ</Text>
+              <Text style={[styles.availableNum, { color: available >= 0 ? theme.colors.accentBright : theme.colors.loss }]}>
+                {formatMoney(Math.max(0, available))}
+              </Text>
+              {totalWithdrawn > 0 && (
+                <Text style={styles.withdrawnSub}>Снято за период: {formatMoney(totalWithdrawn)}</Text>
+              )}
+              <TouchableOpacity onPress={() => setWModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
+                <Plus size={16} color="#000" strokeWidth={2.5} />
+                <Text style={styles.withdrawBtnTxt}>Записать снятие</Text>
+              </TouchableOpacity>
+              {withdrawals.length > 0 && (
+                <>
+                  <Text style={[styles.sLabel, { marginTop: 20, marginBottom: 0 }]}>ВСЕ СНЯТИЯ</Text>
+                  {withdrawals.map((w, i) => (
+                    <TouchableOpacity
+                      key={w.id}
+                      onLongPress={() => deleteWithdrawal(w.id)}
+                      style={[styles.wRow, i === withdrawals.length - 1 && { borderBottomWidth: 0 }]}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.wDate}>{w.date}</Text>
+                        {!!w.note && <Text style={styles.wNote}>{w.note}</Text>}
+                      </View>
+                      <Text style={styles.wAmount}>{formatMoney(w.amount)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+            </View>
+
+            <PlanChart orders={orders} allPlans={allPlans} months={[...monthsInOrders].reverse()} />
+          </>
+        ) : (
+          <>
+            {/* Accounting summary */}
+            <View style={styles.grid}>
+              <MetricCard label="ДОХОДЫ (ОПЛАЧЕНО)"  value={totalAccIncome}   color={theme.colors.profit} />
+              <MetricCard label="РАСХОДЫ (ОПЛАЧЕНО)" value={totalAccExpenses} color={theme.colors.loss} />
+              <MetricCard label="НАЛОГ 20%"           value={accTax}          color={theme.colors.textSecondary} />
+              <MetricCard label="ЧИСТАЯ ПРИБЫЛЬ"      value={accNetProfit}    color={theme.colors.accent} highlight />
+            </View>
+
+            {/* Quarterly breakdown */}
+            <Text style={[styles.sLabel, { marginBottom: 8 }]}>КВАРТАЛЫ {currentYear}</Text>
+            {quarterData.map(q => (
+              <View key={q.name} style={[styles.quarterCard, q.isCurrent && { borderColor: theme.colors.accent + '60' }]}>
+                <View style={styles.quarterHeader}>
+                  <Text style={[styles.quarterName, q.isCurrent && { color: theme.colors.accent }]}>{q.name}</Text>
+                  <Text style={styles.quarterPeriod}>{q.label}</Text>
+                  {q.isCurrent && (
+                    <View style={styles.currentBadge}>
+                      <Text style={styles.currentBadgeTxt}>текущий</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.quarterRow}>
+                  <View style={styles.quarterItem}>
+                    <Text style={styles.quarterMetaLabel}>Доходы</Text>
+                    <Text style={[styles.quarterValue, { color: theme.colors.profit }]}>{formatMoney(q.income)}</Text>
+                  </View>
+                  <View style={styles.quarterItem}>
+                    <Text style={styles.quarterMetaLabel}>Расходы</Text>
+                    <Text style={[styles.quarterValue, { color: theme.colors.loss }]}>{formatMoney(q.expenses)}</Text>
+                  </View>
+                  <View style={styles.quarterItem}>
+                    <Text style={styles.quarterMetaLabel}>Налог</Text>
+                    <Text style={[styles.quarterValue, { color: theme.colors.textSecondary }]}>{formatMoney(q.tax)}</Text>
+                  </View>
+                </View>
+              </View>
+            ))}
+
+            <AccountingChart orders={orders} transactions={transactions} year={currentYear} />
+
+            {/* Manual transactions */}
+            <View style={[styles.card, { marginTop: 4 }]}>
+              <Text style={styles.sLabel}>РУЧНЫЕ ТРАНЗАКЦИИ</Text>
+              <TouchableOpacity onPress={() => setTxModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
+                <Plus size={16} color="#000" strokeWidth={2.5} />
+                <Text style={styles.withdrawBtnTxt}>Добавить доход / расход</Text>
+              </TouchableOpacity>
+              {periodTxs.length > 0 ? (
+                periodTxs.map((t, i) => (
+                  <TouchableOpacity
+                    key={t.id}
+                    onLongPress={() => deleteTransaction(t.id)}
+                    style={[styles.wRow, i === periodTxs.length - 1 && { borderBottomWidth: 0 }]}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.wDate}>{t.date}</Text>
+                      {!!t.description && <Text style={styles.wNote}>{t.description}</Text>}
+                    </View>
+                    <Text style={[styles.wAmount, { color: t.type === 'income' ? theme.colors.profit : theme.colors.loss }]}>
+                      {t.type === 'income' ? '+' : '−'}{formatMoney(t.amount)}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 13, marginTop: 12, textAlign: 'center' }}>
+                  Нет транзакций за период
+                </Text>
+              )}
+            </View>
+          </>
+        )}
       </ScrollView>
 
       {/* Withdrawal modal */}
-      <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
+      <Modal visible={wModalVisible} transparent animationType="slide" onRequestClose={() => setWModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setModalVisible(false)} />
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setWModalVisible(false)} />
           <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>Записать снятие</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <TouchableOpacity onPress={() => setWModalVisible(false)}>
                 <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
               </TouchableOpacity>
             </View>
-
             {Platform.OS === 'web' ? (
               <>
-                <input
-                  type="number"
-                  placeholder="Сумма, Br"
-                  value={wAmount}
-                  onChange={e => setWAmount(e.target.value)}
-                  style={webInputStyle}
-                  autoFocus
-                />
-                <input
-                  type="date"
-                  value={wDate}
-                  onChange={e => setWDate(e.target.value)}
-                  style={webInputStyle}
-                />
-                <input
-                  type="text"
-                  placeholder="Заметка (необязательно)"
-                  value={wNote}
-                  onChange={e => setWNote(e.target.value)}
-                  style={webInputStyle}
-                />
+                <input type="number" placeholder="Сумма, Br" value={wAmount} onChange={e => setWAmount((e.target as any).value)} style={webInputStyle} autoFocus />
+                <input type="date" value={wDate} onChange={e => setWDate((e.target as any).value)} style={webInputStyle} />
+                <input type="text" placeholder="Заметка (необязательно)" value={wNote} onChange={e => setWNote((e.target as any).value)} style={webInputStyle} />
               </>
             ) : (
               <>
@@ -311,8 +457,54 @@ export default function Finance() {
                 <TextInput style={styles.mInput} placeholder="Заметка (необязательно)" placeholderTextColor={theme.colors.textTertiary} value={wNote} onChangeText={setWNote} />
               </>
             )}
-
             <TouchableOpacity onPress={saveWithdrawal} style={styles.mSaveBtn} activeOpacity={0.8}>
+              <Text style={styles.mSaveTxt}>Сохранить</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Transaction modal */}
+      <Modal visible={txModalVisible} transparent animationType="slide" onRequestClose={() => setTxModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setTxModalVisible(false)} />
+          <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Добавить транзакцию</Text>
+              <TouchableOpacity onPress={() => setTxModalVisible(false)}>
+                <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+              <TouchableOpacity
+                style={[styles.typeBtn, txType === 'income' && { backgroundColor: theme.colors.profit + '20', borderColor: theme.colors.profit }]}
+                onPress={() => setTxType('income')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.typeBtnTxt, txType === 'income' && { color: theme.colors.profit }]}>+ Доход</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.typeBtn, txType === 'expense' && { backgroundColor: theme.colors.loss + '20', borderColor: theme.colors.loss }]}
+                onPress={() => setTxType('expense')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.typeBtnTxt, txType === 'expense' && { color: theme.colors.loss }]}>− Расход</Text>
+              </TouchableOpacity>
+            </View>
+            {Platform.OS === 'web' ? (
+              <>
+                <input type="number" placeholder="Сумма, Br" value={txAmount} onChange={e => setTxAmount((e.target as any).value)} style={webInputStyle} autoFocus />
+                <input type="date" value={txDate} onChange={e => setTxDate((e.target as any).value)} style={webInputStyle} />
+                <input type="text" placeholder="Описание" value={txDesc} onChange={e => setTxDesc((e.target as any).value)} style={webInputStyle} />
+              </>
+            ) : (
+              <>
+                <TextInput style={styles.mInput} placeholder="Сумма, Br" placeholderTextColor={theme.colors.textTertiary} keyboardType="numeric" value={txAmount} onChangeText={setTxAmount} autoFocus />
+                <TextInput style={styles.mInput} placeholder="Дата (ГГГГ-ММ-ДД)" placeholderTextColor={theme.colors.textTertiary} value={txDate} onChangeText={setTxDate} />
+                <TextInput style={styles.mInput} placeholder="Описание" placeholderTextColor={theme.colors.textTertiary} value={txDesc} onChangeText={setTxDesc} />
+              </>
+            )}
+            <TouchableOpacity onPress={saveTransaction} style={styles.mSaveBtn} activeOpacity={0.8}>
               <Text style={styles.mSaveTxt}>Сохранить</Text>
             </TouchableOpacity>
           </View>
@@ -341,8 +533,8 @@ function PlanChart({ orders, allPlans, months }: { orders: any[]; allPlans: Reco
 
   const data = months.map(ym => {
     const mo = orders.filter(o => orderInPeriod(o, ym));
-    const rev = mo.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate || 0), 0);
-    const exp = mo.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
+    const rev = mo.reduce((s, o) => s + (o.client_rate || 0), 0);
+    const exp = mo.reduce((s, o) => s + (o.carrier_rate || 0), 0);
     const fact = Math.max(0, (rev - exp) * 0.8);
     const plan = allPlans[ym] || 0;
     return { ym, fact, plan };
@@ -354,7 +546,7 @@ function PlanChart({ orders, allPlans, months }: { orders: any[]; allPlans: Reco
 
   return (
     <View style={[styles.card, { marginTop: 8, marginBottom: 8 }]}>
-      <Text style={[styles.sLabel, { marginBottom: 10 }]}>ВЫПОЛНЕНИЕ ПЛАНА ПО МЕСЯЦАМ</Text>
+      <Text style={[styles.sLabel, { marginBottom: 10 }]}>ЧИСТАЯ ПРИБЫЛЬ ПО МЕСЯЦАМ</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <View style={{ width: 10, height: 10, backgroundColor: PLAN_GOLD, borderRadius: 2 }} />
         <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginRight: 8 }}>Факт</Text>
@@ -389,6 +581,57 @@ function PlanChart({ orders, allPlans, months }: { orders: any[]; allPlans: Reco
   );
 }
 
+function AccountingChart({ orders, transactions, year }: { orders: any[]; transactions: any[]; year: number }) {
+  const data = MONTHS.map((label, i) => {
+    const m = String(i + 1).padStart(2, '0');
+    const ym = `${year}-${m}`;
+    const mo = orders.filter(o => {
+      const d = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
+      return d.startsWith(ym);
+    });
+    const income   = mo.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate  || 0), 0);
+    const expenses = mo.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
+    const txs = transactions.filter(t => (t.date || '').startsWith(ym));
+    const manualInc = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const manualExp = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    return { label, ym, income: income + manualInc, expenses: expenses + manualExp };
+  });
+
+  if (data.every(d => d.income === 0 && d.expenses === 0)) return null;
+
+  const maxVal = Math.max(...data.map(d => Math.max(d.income, d.expenses)), 1);
+  const H = 100;
+
+  return (
+    <View style={[styles.card, { marginTop: 8, marginBottom: 8 }]}>
+      <Text style={[styles.sLabel, { marginBottom: 10 }]}>ДОХОДЫ / РАСХОДЫ ПО МЕСЯЦАМ {year}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <View style={{ width: 10, height: 10, backgroundColor: theme.colors.profit, borderRadius: 2 }} />
+        <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginRight: 8 }}>Доходы</Text>
+        <View style={{ width: 10, height: 10, backgroundColor: theme.colors.loss, borderRadius: 2 }} />
+        <Text style={{ fontSize: 10, color: theme.colors.textTertiary }}>Расходы</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 4, height: H + 24 }}>
+          {data.map(({ label, ym, income, expenses }) => {
+            const incH = Math.max(income > 0 ? 2 : 0, (income / maxVal) * H);
+            const expH = Math.max(expenses > 0 ? 2 : 0, (expenses / maxVal) * H);
+            return (
+              <View key={ym} style={{ alignItems: 'center', width: 44 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: H }}>
+                  <View style={{ width: 18, height: incH, backgroundColor: theme.colors.profit, borderRadius: 3 }} />
+                  <View style={{ width: 18, height: expH, backgroundColor: theme.colors.loss, borderRadius: 3 }} />
+                </View>
+                <Text style={{ fontSize: 9, color: theme.colors.textTertiary, marginTop: 4 }}>{label}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
 const webInputStyle: any = {
   width: '100%',
   backgroundColor: theme.colors.surfaceElevated,
@@ -407,6 +650,17 @@ const styles = StyleSheet.create({
 
   kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 6 },
   title:  { fontSize: 34, fontWeight: '300', letterSpacing: -1,  color: theme.colors.textPrimary, marginBottom: 16 },
+
+  tabRow: {
+    flexDirection: 'row',
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: 12, padding: 4, marginBottom: 14, gap: 4,
+  },
+  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: 'center' },
+  tabBtnActive: { backgroundColor: theme.colors.accent },
+  tabBtnTxt: { fontSize: 13, fontWeight: '600', color: theme.colors.textTertiary },
+  tabBtnTxtActive: { color: '#000' },
 
   card: {
     backgroundColor: theme.colors.surface,
@@ -455,6 +709,27 @@ const styles = StyleSheet.create({
   wDate:   { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '500' },
   wNote:   { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
   wAmount: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '700' },
+
+  quarterCard: {
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: 14, padding: 14, marginBottom: 8,
+  },
+  quarterHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  quarterName:   { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary },
+  quarterPeriod: { fontSize: 12, color: theme.colors.textTertiary, flex: 1 },
+  currentBadge:  { backgroundColor: theme.colors.accent + '20', borderWidth: 1, borderColor: theme.colors.accent + '40', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
+  currentBadgeTxt: { fontSize: 10, color: theme.colors.accent, fontWeight: '700' },
+  quarterRow:    { flexDirection: 'row', gap: 8 },
+  quarterItem:   { flex: 1 },
+  quarterMetaLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.2, color: theme.colors.textTertiary, marginBottom: 4 },
+  quarterValue:  { fontSize: 14, fontWeight: '700' },
+
+  typeBtn: {
+    flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+    borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated,
+  },
+  typeBtnTxt: { fontSize: 14, fontWeight: '600', color: theme.colors.textSecondary },
 
   overlay: { flex: 1, justifyContent: 'flex-end' },
   sheet: {

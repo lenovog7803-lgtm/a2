@@ -1109,6 +1109,76 @@ async def seed_data():
     return {"ok": True, "clients": len(clients), "carriers": len(carriers), "orders": len(orders_data), "leads": len(leads)}
 
 
+# ====== Finance: Withdrawals ======
+class FinanceWithdrawal(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    amount: float
+    date: str
+    note: Optional[str] = ""
+    created_at: str = Field(default_factory=now_iso)
+
+
+class FinanceWithdrawalPayload(BaseModel):
+    amount: float
+    date: str
+    note: Optional[str] = ""
+
+
+@api_router.get("/finance/withdrawals", response_model=List[FinanceWithdrawal])
+async def list_withdrawals():
+    docs = await db.finance_withdrawals.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
+    return [FinanceWithdrawal(**d) for d in docs]
+
+
+@api_router.post("/finance/withdrawals", response_model=FinanceWithdrawal)
+async def create_withdrawal(payload: FinanceWithdrawalPayload):
+    obj = FinanceWithdrawal(**payload.dict())
+    await db.finance_withdrawals.insert_one(obj.dict())
+    return obj
+
+
+@api_router.delete("/finance/withdrawals/{wid}")
+async def delete_withdrawal(wid: str):
+    await db.finance_withdrawals.delete_one({"id": wid})
+    return {"ok": True}
+
+
+# ====== Finance: Transactions ======
+class FinanceTransaction(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    type: str  # "income" | "expense"
+    amount: float
+    date: str
+    description: Optional[str] = ""
+    created_at: str = Field(default_factory=now_iso)
+
+
+class FinanceTransactionPayload(BaseModel):
+    type: str
+    amount: float
+    date: str
+    description: Optional[str] = ""
+
+
+@api_router.get("/finance/transactions", response_model=List[FinanceTransaction])
+async def list_finance_transactions():
+    docs = await db.finance_transactions.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
+    return [FinanceTransaction(**d) for d in docs]
+
+
+@api_router.post("/finance/transactions", response_model=FinanceTransaction)
+async def create_finance_transaction(payload: FinanceTransactionPayload):
+    obj = FinanceTransaction(**payload.dict())
+    await db.finance_transactions.insert_one(obj.dict())
+    return obj
+
+
+@api_router.delete("/finance/transactions/{tid}")
+async def delete_finance_transaction(tid: str):
+    await db.finance_transactions.delete_one({"id": tid})
+    return {"ok": True}
+
+
 @api_router.get("/")
 async def root():
     return {"message": "Logistics CRM API"}
