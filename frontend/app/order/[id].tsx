@@ -230,8 +230,26 @@ export default function OrderDetail() {
         </View>
 
         <Text style={styles.groupLabel}>ОПЛАТЫ</Text>
-        <DocToggle label="Клиент оплатил" value={order.client_paid} onToggle={() => update({ client_paid: !order.client_paid })} amount={formatMoney(order.client_rate)} paidDate={order.client_paid_date} />
-        <DocToggle label="Перевозчик оплачен" value={order.carrier_paid} onToggle={() => update({ carrier_paid: !order.carrier_paid })} amount={formatMoney(order.carrier_rate)} paidDate={order.carrier_paid_date} />
+        <DocToggle
+          label="Клиент оплатил"
+          value={order.client_paid}
+          onToggle={() => {
+            const next = !order.client_paid;
+            update({ client_paid: next, client_paid_date: next && !order.client_paid_date ? new Date().toISOString().slice(0, 10) : order.client_paid_date });
+          }}
+          amount={formatMoney(order.client_rate)}
+          paidDate={order.client_paid_date || (order.client_paid ? order.created_at?.slice(0, 10) : '')}
+        />
+        <DocToggle
+          label="Перевозчик оплачен"
+          value={order.carrier_paid}
+          onToggle={() => {
+            const next = !order.carrier_paid;
+            update({ carrier_paid: next, carrier_paid_date: next && !order.carrier_paid_date ? new Date().toISOString().slice(0, 10) : order.carrier_paid_date });
+          }}
+          amount={formatMoney(order.carrier_rate)}
+          paidDate={order.carrier_paid_date || (order.carrier_paid ? order.created_at?.slice(0, 10) : '')}
+        />
 
         <Text style={styles.groupLabel}>ДОКУМЕНТЫ</Text>
         <DocToggle
@@ -319,14 +337,14 @@ function DocToggle({ label, value, onToggle, onText, offText, amount, paidDate, 
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.toggleLabel}>{label}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={[styles.toggleStatus, { color: value ? theme.colors.profit : theme.colors.textTertiary }]}>{display}</Text>
-          {value && !!formattedDate && (
-            <Text style={styles.toggleDate}>оплачено {formattedDate}</Text>
-          )}
-        </View>
+        <Text style={[styles.toggleStatus, { color: value ? theme.colors.profit : theme.colors.textTertiary }]}>{display}</Text>
       </View>
-      {!!amount && <Text style={styles.toggleAmt}>{amount}</Text>}
+      <View style={{ alignItems: 'flex-end', gap: 2 }}>
+        {!!amount && <Text style={styles.toggleAmt}>{amount}</Text>}
+        {value && !!formattedDate && (
+          <Text style={styles.toggleDate}>оплачено {formattedDate}</Text>
+        )}
+      </View>
     </TouchableOpacity>
   );
 }
@@ -356,7 +374,7 @@ const styles = StyleSheet.create({
   checkBox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: theme.colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   toggleLabel: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '600' },
   toggleStatus: { fontSize: 11, fontWeight: '500', marginTop: 2 },
-  toggleDate: { fontSize: 10, color: theme.colors.textTertiary, marginTop: 2 },
+  toggleDate: { fontSize: 11, color: theme.colors.textTertiary },
   toggleAmt: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
 
   saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 24 },
