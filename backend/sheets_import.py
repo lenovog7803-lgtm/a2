@@ -130,7 +130,10 @@ _LEAD_STATUS_MAP = {
     "перезвонить": "callback",
     "клиент": "won",
     "потерян": "lost",
-    "в работе": "in_progress",
+    "думают": "thinking",
+    "выслал кп": "sent_kp",
+    "кп": "sent_kp",
+    "в работе": "thinking",
     "новый": "new",
     "новая": "new",
 }

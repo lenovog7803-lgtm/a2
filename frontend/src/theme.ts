@@ -108,7 +108,8 @@ export const docsLabels: Record<string, string> = {
 
 export const leadStatusLabels: Record<string, string> = {
   new: 'Новый',
-  in_progress: 'В работе',
+  thinking: 'Думают',
+  sent_kp: 'Выслал КП',
   won: 'Клиент',
   lost: 'Потерян',
   callback: 'Перезвонить',
@@ -116,7 +117,8 @@ export const leadStatusLabels: Record<string, string> = {
 
 export const leadStatusColors: Record<string, string> = {
   new: '#60A5FA',
-  in_progress: '#F59E0B',
+  thinking: '#F59E0B',
+  sent_kp: '#F97316',
   won: '#00E676',
   lost: '#71717A',
   callback: '#8B5CF6',

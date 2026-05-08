@@ -151,7 +151,8 @@ def carrier_cells(cr: Dict[str, Any]) -> Dict[int, Any]:
 def _lead_status_label(s: str) -> str:
     return {
         'new': 'Новый',
-        'in_progress': 'В работе',
+        'thinking': 'Думают',
+        'sent_kp': 'Выслал КП',
         'won': 'Клиент',
         'lost': 'Потерян',
         'callback': 'Перезвонить',

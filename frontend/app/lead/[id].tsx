@@ -13,7 +13,7 @@ import { Field } from '../../src/components/Field';
 import { ClientModal } from '../../src/components/ClientModal';
 import { DateField } from '../../src/components/DateField';
 
-const STATUSES = ['new', 'in_progress', 'callback', 'won', 'lost'];
+const STATUSES = ['new', 'thinking', 'sent_kp', 'callback', 'won', 'lost'];
 
 export default function LeadDetail() {
   const insets = useSafeAreaInsets();

@@ -50,7 +50,8 @@ export default function Leads() {
   const filters = [
     { id: 'all', label: 'Все', count: leads.length },
     { id: 'new', label: 'Новые', count: leads.filter(l => l.status === 'new').length },
-    { id: 'in_progress', label: 'В работе', count: leads.filter(l => l.status === 'in_progress').length },
+    { id: 'thinking', label: 'Думают', count: leads.filter(l => l.status === 'thinking').length },
+    { id: 'sent_kp', label: 'Выслал КП', count: leads.filter(l => l.status === 'sent_kp').length },
     { id: 'callback', label: 'Перезвонить', count: leads.filter(l => l.status === 'callback').length },
     { id: 'won', label: 'Клиенты', count: leads.filter(l => l.status === 'won').length },
   ];
@@ -173,11 +174,12 @@ function LeadsStats({ leads }: { leads: any[] }) {
   const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
   const funnel = [
-    { label: 'Новые',       status: 'new',         color: leadStatusColors['new'] },
-    { label: 'В работе',    status: 'in_progress',  color: leadStatusColors['in_progress'] },
-    { label: 'Перезвонить', status: 'callback',     color: leadStatusColors['callback'] },
-    { label: 'Клиенты',    status: 'won',           color: leadStatusColors['won'] },
-    { label: 'Потеряны',   status: 'lost',          color: leadStatusColors['lost'] },
+    { label: 'Новые',       status: 'new',      color: leadStatusColors['new'] },
+    { label: 'Думают',      status: 'thinking', color: leadStatusColors['thinking'] },
+    { label: 'Выслал КП',   status: 'sent_kp',  color: leadStatusColors['sent_kp'] },
+    { label: 'Перезвонить', status: 'callback', color: leadStatusColors['callback'] },
+    { label: 'Клиенты',    status: 'won',       color: leadStatusColors['won'] },
+    { label: 'Потеряны',   status: 'lost',      color: leadStatusColors['lost'] },
   ].map(f => ({ ...f, count: cnt(f.status), pct: pct(cnt(f.status)) }));
 
   const wonCount = cnt('won');
@@ -343,13 +345,22 @@ function LeadCard({ lead, onPress, onAction, testID }: any) {
             <Text style={styles.secondaryText}>Стал клиентом</Text>
           </TouchableOpacity>
         )}
-        {lead.status !== 'in_progress' && lead.status !== 'won' && (
+        {lead.status !== 'thinking' && lead.status !== 'won' && (
           <TouchableOpacity
             style={styles.secondaryBtn}
-            onPress={(e) => { e.stopPropagation?.(); onAction('in_progress'); }}
+            onPress={(e) => { e.stopPropagation?.(); onAction('thinking'); }}
             activeOpacity={0.7}
           >
-            <Text style={styles.secondaryText}>В работу</Text>
+            <Text style={styles.secondaryText}>Думают</Text>
+          </TouchableOpacity>
+        )}
+        {lead.status !== 'sent_kp' && lead.status !== 'won' && (
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            onPress={(e) => { e.stopPropagation?.(); onAction('sent_kp'); }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.secondaryText}>Выслал КП</Text>
           </TouchableOpacity>
         )}
         {lead.status !== 'callback' && lead.status !== 'won' && (

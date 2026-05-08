@@ -1115,8 +1115,8 @@ async def seed_data():
 
     leads = [
         Lead(name="Орлов Михаил", company="ООО Восток-Логистик", phone="+7 (495) 700-10-20", city="Москва", status="new", next_call="2026-02-12", notes="Интерес — еженедельные перевозки МСК-СПб"),
-        Lead(name="Захарова Анна", company="ТД Полюс", phone="+7 (812) 700-20-30", city="СПб", status="in_progress", last_contact="2026-02-08", next_call="2026-02-13", notes="Просили КП на реф направление"),
-        Lead(name="Николаев Пётр", company="АО Стройка-Сервис", phone="+7 (343) 700-30-40", city="Екатеринбург", status="in_progress", last_contact="2026-02-09", next_call="2026-02-11", notes="Готовы к тестовому рейсу"),
+        Lead(name="Захарова Анна", company="ТД Полюс", phone="+7 (812) 700-20-30", city="СПб", status="sent_kp", last_contact="2026-02-08", next_call="2026-02-13", notes="Просили КП на реф направление"),
+        Lead(name="Николаев Пётр", company="АО Стройка-Сервис", phone="+7 (343) 700-30-40", city="Екатеринбург", status="thinking", last_contact="2026-02-09", next_call="2026-02-11", notes="Готовы к тестовому рейсу"),
         Lead(name="Григорьев Олег", company="ИП Григорьев", phone="+7 (961) 700-40-50", city="Краснодар", status="won", last_contact="2026-02-07", notes="Стал клиентом"),
         Lead(name="Соколова Мария", company="ООО АгроТранс", phone="+7 (902) 700-50-60", city="Воронеж", status="new", next_call="2026-02-14", notes="Сезон — март-октябрь"),
     ]
