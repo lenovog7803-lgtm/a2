@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal } from 'react-native';
 import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X } from 'lucide-react-native';
 import { theme, formatMoney, formatShort } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
@@ -25,6 +25,7 @@ const currentMonth = () => {
 
 export default function Dashboard() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { mode, toggle } = useTheme();
   const [data, setData] = useState<any>(null);
   const [allOrders, setAllOrders] = useState<any[]>([]);
@@ -329,16 +330,24 @@ export default function Dashboard() {
                 ? allOrders.filter(o => o.carrier_name === selectedDebtor.name && !o.carrier_paid && o.status !== 'cancelled')
                 : allOrders.filter(o => o.client_name === selectedDebtor.name && !o.client_paid && o.status === 'delivered')
             ).map((o, i, arr) => (
-              <View key={o.id} style={[styles.modalOrderRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+              <TouchableOpacity
+                key={o.id}
+                style={[styles.modalOrderRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}
+                activeOpacity={0.7}
+                onPress={() => { setSelectedDebtor(null); router.push(`/order/${o.id}`); }}
+              >
                 <View style={{ flex: 1 }}>
                   <Text style={styles.modalOrderNum}>{o.order_number}</Text>
                   <Text style={styles.modalOrderRoute} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
-                  <Text style={styles.modalOrderDate}>{o.unload_date || o.load_date || '—'}</Text>
+                  <Text style={styles.modalOrderDate}>{o.unload_date || '—'}</Text>
                 </View>
-                <Text style={[styles.modalOrderAmt, { color: selectedDebtor.isCreditor ? theme.colors.loss : theme.colors.warning }]}>
-                  {formatMoney(selectedDebtor.isCreditor ? o.carrier_rate : o.client_rate)}
-                </Text>
-              </View>
+                <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                  <Text style={[styles.modalOrderAmt, { color: selectedDebtor.isCreditor ? theme.colors.loss : theme.colors.warning }]}>
+                    {formatMoney(selectedDebtor.isCreditor ? o.carrier_rate : o.client_rate)}
+                  </Text>
+                  <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
+                </View>
+              </TouchableOpacity>
             ))}
           </ScrollView>
         </View>

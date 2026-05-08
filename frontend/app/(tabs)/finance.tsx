@@ -193,9 +193,18 @@ export default function Finance() {
   const pct = planNum > 0 ? (netProfit / planNum) * 100 : 0;
   const barColor = pct >= 100 ? theme.colors.profit : theme.colors.accent;
 
-  // === "Бухгалтерия" metrics (paid only + manual transactions) ===
-  const accOrderIncome   = mo.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate  || 0), 0);
-  const accOrderExpenses = mo.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
+  // === "Бухгалтерия" metrics — grouped by paid dates ===
+  const accDateInPeriod = (dateStr: string | undefined, p: string) => {
+    if (p === 'all') return true;
+    return !!(dateStr && dateStr.startsWith(p));
+  };
+
+  const accOrderIncome = orders
+    .filter(o => o.client_paid && accDateInPeriod(o.client_paid_date || o.unload_date || o.load_date, period))
+    .reduce((s, o) => s + (o.client_rate || 0), 0);
+  const accOrderExpenses = orders
+    .filter(o => o.carrier_paid && accDateInPeriod(o.carrier_paid_date || o.unload_date || o.load_date, period))
+    .reduce((s, o) => s + (o.carrier_rate || 0), 0);
 
   const periodTxs = period === 'all'
     ? transactions
@@ -209,24 +218,23 @@ export default function Finance() {
   const accTax       = Math.max(0, accMargin * 0.2);
   const accNetProfit = Math.max(0, accMargin * 0.8);
 
-  // === Quarterly data ===
+  // === Quarterly data (by paid dates) ===
   const currentYear = new Date().getFullYear();
   const currentQuarterIdx = Math.floor(new Date().getMonth() / 3);
 
   const quarterData = QUARTERS.map((q, qi) => {
-    const qOrders = orders.filter(o => {
-      const d = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
-      if (!d) return false;
-      const parts = d.split('-').map(Number);
+    const inQuarter = (dateStr: string | undefined) => {
+      if (!dateStr) return false;
+      const parts = dateStr.split('-').map(Number);
       return parts[0] === currentYear && q.months.includes(parts[1]);
-    });
-    const qIncome   = qOrders.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate  || 0), 0);
-    const qExpenses = qOrders.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
-    const qTx = transactions.filter(t => {
-      if (!t.date) return false;
-      const parts = t.date.split('-').map(Number);
-      return parts[0] === currentYear && q.months.includes(parts[1]);
-    });
+    };
+    const qIncome = orders
+      .filter(o => o.client_paid && inQuarter(o.client_paid_date || o.unload_date || o.load_date))
+      .reduce((s, o) => s + (o.client_rate || 0), 0);
+    const qExpenses = orders
+      .filter(o => o.carrier_paid && inQuarter(o.carrier_paid_date || o.unload_date || o.load_date))
+      .reduce((s, o) => s + (o.carrier_rate || 0), 0);
+    const qTx = transactions.filter(t => inQuarter(t.date));
     const qManualInc = qTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const qManualExp = qTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
     const totalInc = qIncome + qManualInc;
@@ -236,8 +244,8 @@ export default function Finance() {
       ...q,
       income: totalInc,
       expenses: totalExp,
+      profit: qMargin,
       tax: Math.max(0, qMargin * 0.2),
-      profit: Math.max(0, qMargin * 0.8),
       isCurrent: qi === currentQuarterIdx,
     };
   });
@@ -388,6 +396,10 @@ export default function Finance() {
                   <View style={styles.quarterItem}>
                     <Text style={styles.quarterMetaLabel}>Расходы</Text>
                     <Text style={[styles.quarterValue, { color: theme.colors.loss }]}>{formatMoney(q.expenses)}</Text>
+                  </View>
+                  <View style={styles.quarterItem}>
+                    <Text style={styles.quarterMetaLabel}>Прибыль</Text>
+                    <Text style={[styles.quarterValue, { color: q.profit >= 0 ? theme.colors.accent : theme.colors.loss }]}>{formatMoney(q.profit)}</Text>
                   </View>
                   <View style={styles.quarterItem}>
                     <Text style={styles.quarterMetaLabel}>Налог</Text>
@@ -585,12 +597,12 @@ function AccountingChart({ orders, transactions, year }: { orders: any[]; transa
   const data = MONTHS.map((label, i) => {
     const m = String(i + 1).padStart(2, '0');
     const ym = `${year}-${m}`;
-    const mo = orders.filter(o => {
-      const d = o.unload_date || o.load_date || (o.created_at || '').slice(0, 10);
-      return d.startsWith(ym);
-    });
-    const income   = mo.filter(o => o.client_paid).reduce((s, o) => s + (o.client_rate  || 0), 0);
-    const expenses = mo.filter(o => o.carrier_paid).reduce((s, o) => s + (o.carrier_rate || 0), 0);
+    const income = orders
+      .filter(o => o.client_paid && (o.client_paid_date || o.unload_date || o.load_date || '').startsWith(ym))
+      .reduce((s, o) => s + (o.client_rate || 0), 0);
+    const expenses = orders
+      .filter(o => o.carrier_paid && (o.carrier_paid_date || o.unload_date || o.load_date || '').startsWith(ym))
+      .reduce((s, o) => s + (o.carrier_rate || 0), 0);
     const txs = transactions.filter(t => (t.date || '').startsWith(ym));
     const manualInc = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const manualExp = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);

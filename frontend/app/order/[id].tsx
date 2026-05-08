@@ -230,8 +230,8 @@ export default function OrderDetail() {
         </View>
 
         <Text style={styles.groupLabel}>ОПЛАТЫ</Text>
-        <DocToggle label="Клиент оплатил" value={order.client_paid} onToggle={() => update({ client_paid: !order.client_paid })} amount={formatMoney(order.client_rate)} />
-        <DocToggle label="Перевозчик оплачен" value={order.carrier_paid} onToggle={() => update({ carrier_paid: !order.carrier_paid })} amount={formatMoney(order.carrier_rate)} />
+        <DocToggle label="Клиент оплатил" value={order.client_paid} onToggle={() => update({ client_paid: !order.client_paid })} amount={formatMoney(order.client_rate)} paidDate={order.client_paid_date} />
+        <DocToggle label="Перевозчик оплачен" value={order.carrier_paid} onToggle={() => update({ carrier_paid: !order.carrier_paid })} amount={formatMoney(order.carrier_rate)} paidDate={order.carrier_paid_date} />
 
         <Text style={styles.groupLabel}>ДОКУМЕНТЫ</Text>
         <DocToggle
@@ -309,8 +309,9 @@ function DocGenButton({ label, url }: any) {
   );
 }
 
-function DocToggle({ label, value, onToggle, onText, offText, amount, testID }: any) {
+function DocToggle({ label, value, onToggle, onText, offText, amount, paidDate, testID }: any) {
   const display = value ? (onText || 'Готово') : (offText || 'Ждём');
+  const formattedDate = paidDate ? paidDate.slice(0, 10).split('-').reverse().join('.') : null;
   return (
     <TouchableOpacity testID={testID} onPress={onToggle} style={[styles.toggle, value && styles.toggleOn]} activeOpacity={0.7}>
       <View style={[styles.checkBox, value && { backgroundColor: theme.colors.profit, borderColor: theme.colors.profit }]}>
@@ -318,7 +319,12 @@ function DocToggle({ label, value, onToggle, onText, offText, amount, testID }: 
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.toggleLabel}>{label}</Text>
-        <Text style={[styles.toggleStatus, { color: value ? theme.colors.profit : theme.colors.textTertiary }]}>{display}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={[styles.toggleStatus, { color: value ? theme.colors.profit : theme.colors.textTertiary }]}>{display}</Text>
+          {value && !!formattedDate && (
+            <Text style={styles.toggleDate}>оплачено {formattedDate}</Text>
+          )}
+        </View>
       </View>
       {!!amount && <Text style={styles.toggleAmt}>{amount}</Text>}
     </TouchableOpacity>
@@ -350,6 +356,7 @@ const styles = StyleSheet.create({
   checkBox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: theme.colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   toggleLabel: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '600' },
   toggleStatus: { fontSize: 11, fontWeight: '500', marginTop: 2 },
+  toggleDate: { fontSize: 10, color: theme.colors.textTertiary, marginTop: 2 },
   toggleAmt: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
 
   saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 24 },

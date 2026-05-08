@@ -328,6 +328,8 @@ class Order(BaseModel):
     status: str = "new"
     client_paid: bool = False
     carrier_paid: bool = False
+    client_paid_date: Optional[str] = ""
+    carrier_paid_date: Optional[str] = ""
     # 4 раздельных статуса по документам
     docs_to_client_sent: bool = False       # Документы Клиенту — отправлены
     docs_from_client_received: bool = False  # Документы от Клиента — получены
@@ -364,6 +366,8 @@ class OrderPayload(BaseModel):
     status: str = "new"
     client_paid: bool = False
     carrier_paid: bool = False
+    client_paid_date: Optional[str] = ""
+    carrier_paid_date: Optional[str] = ""
     docs_to_client_sent: bool = False
     docs_from_client_received: bool = False
     docs_to_carrier_sent: bool = False
@@ -397,6 +401,8 @@ class OrderUpdate(BaseModel):
     status: Optional[str] = None
     client_paid: Optional[bool] = None
     carrier_paid: Optional[bool] = None
+    client_paid_date: Optional[str] = None
+    carrier_paid_date: Optional[str] = None
     docs_to_client_sent: Optional[bool] = None
     docs_from_client_received: Optional[bool] = None
     docs_to_carrier_sent: Optional[bool] = None
@@ -668,6 +674,16 @@ async def get_order(order_id: str):
 @api_router.put("/orders/{order_id}", response_model=Order)
 async def update_order(order_id: str, payload: OrderUpdate, background_tasks: BackgroundTasks):
     update_data = {k: v for k, v in payload.dict().items() if v is not None}
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Auto-set paid dates when payment status flips to true
+    if update_data.get("client_paid") is True and "client_paid_date" not in update_data:
+        existing = await db.orders.find_one({"id": order_id}, {"_id": 0, "client_paid": 1})
+        if existing and not existing.get("client_paid"):
+            update_data["client_paid_date"] = today
+    if update_data.get("carrier_paid") is True and "carrier_paid_date" not in update_data:
+        existing = await db.orders.find_one({"id": order_id}, {"_id": 0, "carrier_paid": 1})
+        if existing and not existing.get("carrier_paid"):
+            update_data["carrier_paid_date"] = today
     if update_data:
         await db.orders.update_one({"id": order_id}, {"$set": update_data})
     doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
