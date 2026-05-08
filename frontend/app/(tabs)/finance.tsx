@@ -44,6 +44,7 @@ const orderInPeriod = (o: any, p: string) => {
 export default function Finance() {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabType>('orders');
+  const [accPeriod, setAccPeriod] = useState<string>('all'); // 'all' | YYYY-MM | 'qN'
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -193,59 +194,75 @@ export default function Finance() {
   const pct = planNum > 0 ? (netProfit / planNum) * 100 : 0;
   const barColor = pct >= 100 ? theme.colors.profit : theme.colors.accent;
 
-  // === "Бухгалтерия" metrics — grouped by paid dates ===
-  const accDateInPeriod = (dateStr: string | undefined, p: string) => {
-    if (p === 'all') return true;
-    return !!(dateStr && dateStr.startsWith(p));
+  // === "Бухгалтерия" — helper to resolve effective paid date (with unload_date fallback) ===
+  const currentYear = new Date().getFullYear();
+  const currentQuarterIdx = Math.floor(new Date().getMonth() / 3);
+
+  const clientEffDate = (o: any): string => o.client_paid_date || o.unload_date || '';
+  const carrierEffDate = (o: any): string => o.carrier_paid_date || o.unload_date || '';
+
+  // Filter by accPeriod: 'all' | YYYY-MM | 'q0'..'q3'
+  const accInPeriod = (dateStr: string): boolean => {
+    if (accPeriod === 'all') return true;
+    if (!dateStr) return false;
+    if (accPeriod.startsWith('q')) {
+      const qIdx = parseInt(accPeriod[1], 10);
+      const [y, m] = dateStr.split('-').map(Number);
+      return y === currentYear && QUARTERS[qIdx].months.includes(m);
+    }
+    return dateStr.startsWith(accPeriod);
   };
 
   const accOrderIncome = orders
-    .filter(o => o.client_paid && accDateInPeriod(o.client_paid_date || o.unload_date || o.load_date, period))
+    .filter(o => o.client_paid && accInPeriod(clientEffDate(o)))
     .reduce((s, o) => s + (o.client_rate || 0), 0);
   const accOrderExpenses = orders
-    .filter(o => o.carrier_paid && accDateInPeriod(o.carrier_paid_date || o.unload_date || o.load_date, period))
+    .filter(o => o.carrier_paid && accInPeriod(carrierEffDate(o)))
     .reduce((s, o) => s + (o.carrier_rate || 0), 0);
 
-  const periodTxs = period === 'all'
-    ? transactions
-    : transactions.filter(t => (t.date || '').startsWith(period));
+  const periodTxs = transactions.filter(t => accInPeriod(t.date || ''));
   const manualIncome   = periodTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
   const manualExpenses = periodTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
 
   const totalAccIncome   = accOrderIncome + manualIncome;
   const totalAccExpenses = accOrderExpenses + manualExpenses;
-  const accMargin    = totalAccIncome - totalAccExpenses;
-  const accTax       = Math.max(0, accMargin * 0.2);
-  const accNetProfit = Math.max(0, accMargin * 0.8);
+  const accProfit    = totalAccIncome - totalAccExpenses;
+  const accTax       = Math.max(0, accProfit * 0.2);
+  const accNetProfit = Math.max(0, accProfit * 0.8);
 
-  // === Quarterly data (by paid dates) ===
-  const currentYear = new Date().getFullYear();
-  const currentQuarterIdx = Math.floor(new Date().getMonth() / 3);
+  // Accounting period label
+  const accPeriodLabel = accPeriod === 'all'
+    ? 'За все время'
+    : accPeriod.startsWith('q')
+      ? `${QUARTERS[parseInt(accPeriod[1], 10)].name} ${QUARTERS[parseInt(accPeriod[1], 10)].label} ${currentYear}`
+      : monthLabel(accPeriod);
 
+  // === Quarterly data (by paid dates, always current year) ===
   const quarterData = QUARTERS.map((q, qi) => {
-    const inQuarter = (dateStr: string | undefined) => {
+    const inQuarter = (dateStr: string): boolean => {
       if (!dateStr) return false;
-      const parts = dateStr.split('-').map(Number);
-      return parts[0] === currentYear && q.months.includes(parts[1]);
+      const [y, m] = dateStr.split('-').map(Number);
+      return y === currentYear && q.months.includes(m);
     };
     const qIncome = orders
-      .filter(o => o.client_paid && inQuarter(o.client_paid_date || o.unload_date || o.load_date))
+      .filter(o => o.client_paid && inQuarter(clientEffDate(o)))
       .reduce((s, o) => s + (o.client_rate || 0), 0);
     const qExpenses = orders
-      .filter(o => o.carrier_paid && inQuarter(o.carrier_paid_date || o.unload_date || o.load_date))
+      .filter(o => o.carrier_paid && inQuarter(carrierEffDate(o)))
       .reduce((s, o) => s + (o.carrier_rate || 0), 0);
-    const qTx = transactions.filter(t => inQuarter(t.date));
+    const qTx = transactions.filter(t => inQuarter(t.date || ''));
     const qManualInc = qTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const qManualExp = qTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
     const totalInc = qIncome + qManualInc;
     const totalExp = qExpenses + qManualExp;
-    const qMargin = totalInc - totalExp;
+    const qProfit = totalInc - totalExp;
     return {
       ...q,
       income: totalInc,
       expenses: totalExp,
-      profit: qMargin,
-      tax: Math.max(0, qMargin * 0.2),
+      profit: qProfit,
+      tax: Math.max(0, qProfit * 0.2),
+      netProfit: Math.max(0, qProfit * 0.8),
       isCurrent: qi === currentQuarterIdx,
     };
   });
@@ -367,12 +384,32 @@ export default function Finance() {
           </>
         ) : (
           <>
+            {/* Accounting period switcher */}
+            <View style={styles.accSegRow}>
+              {([
+                { id: 'all',                   label: 'Всё время' },
+                { id: cm,                      label: `Месяц · ${monthLabel(cm)}` },
+                { id: `q${currentQuarterIdx}`, label: `${QUARTERS[currentQuarterIdx].name} · ${QUARTERS[currentQuarterIdx].label}` },
+              ] as { id: string; label: string }[]).map(opt => (
+                <TouchableOpacity
+                  key={opt.id}
+                  style={[styles.accSegBtn, accPeriod === opt.id && styles.accSegBtnActive]}
+                  onPress={() => setAccPeriod(opt.id)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.accSegTxt, accPeriod === opt.id && styles.accSegTxtActive]} numberOfLines={1}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={[styles.sLabel, { marginBottom: 10 }]}>{accPeriodLabel.toUpperCase()}</Text>
+
             {/* Accounting summary */}
             <View style={styles.grid}>
-              <MetricCard label="ДОХОДЫ (ОПЛАЧЕНО)"  value={totalAccIncome}   color={theme.colors.profit} />
-              <MetricCard label="РАСХОДЫ (ОПЛАЧЕНО)" value={totalAccExpenses} color={theme.colors.loss} />
-              <MetricCard label="НАЛОГ 20%"           value={accTax}          color={theme.colors.textSecondary} />
-              <MetricCard label="ЧИСТАЯ ПРИБЫЛЬ"      value={accNetProfit}    color={theme.colors.accent} highlight />
+              <MetricCard label="ДОХОДЫ"        value={totalAccIncome}   color={theme.colors.profit} />
+              <MetricCard label="РАСХОДЫ"       value={totalAccExpenses} color={theme.colors.loss} />
+              <MetricCard label="ПРИБЫЛЬ"       value={accProfit}        color={accProfit >= 0 ? theme.colors.textSecondary : theme.colors.loss} />
+              <MetricCard label="НАЛОГ 20%"     value={accTax}           color={theme.colors.textSecondary} />
+              <MetricCard label="ЧИСТАЯ ПРИБЫЛЬ" value={accNetProfit}   color={theme.colors.accent} highlight />
             </View>
 
             {/* Quarterly breakdown */}
@@ -402,7 +439,7 @@ export default function Finance() {
                     <Text style={[styles.quarterValue, { color: q.profit >= 0 ? theme.colors.accent : theme.colors.loss }]}>{formatMoney(q.profit)}</Text>
                   </View>
                   <View style={styles.quarterItem}>
-                    <Text style={styles.quarterMetaLabel}>Налог</Text>
+                    <Text style={styles.quarterMetaLabel}>Налог 20%</Text>
                     <Text style={[styles.quarterValue, { color: theme.colors.textSecondary }]}>{formatMoney(q.tax)}</Text>
                   </View>
                 </View>
@@ -736,6 +773,17 @@ const styles = StyleSheet.create({
   quarterItem:   { flex: 1 },
   quarterMetaLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.2, color: theme.colors.textTertiary, marginBottom: 4 },
   quarterValue:  { fontSize: 14, fontWeight: '700' },
+
+  accSegRow: {
+    flexDirection: 'row', gap: 6, marginBottom: 12,
+  },
+  accSegBtn: {
+    flex: 1, paddingVertical: 8, paddingHorizontal: 4, borderRadius: 10, alignItems: 'center',
+    borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface,
+  },
+  accSegBtnActive: { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
+  accSegTxt: { fontSize: 11, fontWeight: '600', color: theme.colors.textTertiary },
+  accSegTxtActive: { color: '#000' },
 
   typeBtn: {
     flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
