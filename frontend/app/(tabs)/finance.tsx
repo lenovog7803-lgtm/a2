@@ -44,7 +44,7 @@ const orderInPeriod = (o: any, p: string) => {
 export default function Finance() {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabType>('orders');
-  const [accPeriod, setAccPeriod] = useState<string>('all'); // 'all' | YYYY-MM | 'qN'
+  const [accPeriod, setAccPeriod] = useState<string>(currentMonth()); // 'all' | YYYY-MM | 'qN'
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -387,9 +387,9 @@ export default function Finance() {
             {/* Accounting period switcher */}
             <View style={styles.accSegRow}>
               {([
-                { id: 'all',                   label: 'Всё время' },
                 { id: cm,                      label: `Месяц · ${monthLabel(cm)}` },
                 { id: `q${currentQuarterIdx}`, label: `${QUARTERS[currentQuarterIdx].name} · ${QUARTERS[currentQuarterIdx].label}` },
+                { id: 'all',                   label: 'За все время' },
               ] as { id: string; label: string }[]).map(opt => (
                 <TouchableOpacity
                   key={opt.id}
