@@ -359,14 +359,14 @@ export default function Finance() {
                 <Plus size={16} color="#000" strokeWidth={2.5} />
                 <Text style={styles.withdrawBtnTxt}>Записать снятие</Text>
               </TouchableOpacity>
-              {withdrawals.length > 0 && (
+              {periodWithdrawals.length > 0 && (
                 <>
-                  <Text style={[styles.sLabel, { marginTop: 20, marginBottom: 0 }]}>ВСЕ СНЯТИЯ</Text>
-                  {withdrawals.map((w, i) => (
+                  <Text style={[styles.sLabel, { marginTop: 20, marginBottom: 0 }]}>СНЯТИЯ ЗА ПЕРИОД</Text>
+                  {periodWithdrawals.map((w, i) => (
                     <TouchableOpacity
                       key={w.id}
                       onLongPress={() => deleteWithdrawal(w.id)}
-                      style={[styles.wRow, i === withdrawals.length - 1 && { borderBottomWidth: 0 }]}
+                      style={[styles.wRow, i === periodWithdrawals.length - 1 && { borderBottomWidth: 0 }]}
                       activeOpacity={0.7}
                     >
                       <View style={{ flex: 1 }}>
@@ -376,6 +376,10 @@ export default function Finance() {
                       <Text style={styles.wAmount}>{formatMoney(w.amount)}</Text>
                     </TouchableOpacity>
                   ))}
+                  <View style={styles.wTotalRow}>
+                    <Text style={styles.wTotalLabel}>Итого снято:</Text>
+                    <Text style={styles.wTotalValue}>{formatMoney(totalWithdrawn)}</Text>
+                  </View>
                 </>
               )}
             </View>
@@ -758,6 +762,9 @@ const styles = StyleSheet.create({
   wDate:   { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '500' },
   wNote:   { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
   wAmount: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '700' },
+  wTotalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 12, marginTop: 4, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  wTotalLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.4, color: theme.colors.textSecondary },
+  wTotalValue: { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary },
 
   quarterCard: {
     backgroundColor: theme.colors.surface,
