@@ -56,6 +56,14 @@ except Exception as _e:  # pragma: no cover
     logging.getLogger(__name__).warning(f"google_tasks import failed: {_e}")
 
 try:
+    from google_calendar import (create_calendar_event as _gc_create,
+                                  update_calendar_event as _gc_update,
+                                  delete_calendar_event as _gc_delete)
+except Exception as _e:  # pragma: no cover
+    _gc_create = _gc_update = _gc_delete = None
+    logging.getLogger(__name__).warning(f"google_calendar import failed: {_e}")
+
+try:
     from oauth_google import (
         build_auth_url as _oauth_build_auth_url,
         fetch_token as _oauth_fetch_token,
@@ -342,6 +350,8 @@ class Order(BaseModel):
     doc_url_client: Optional[str] = ""
     doc_url_carrier: Optional[str] = ""
     doc_url_act: Optional[str] = ""
+    calendar_event_id: Optional[str] = ""
+    calendar_event_url: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -413,6 +423,8 @@ class OrderUpdate(BaseModel):
     doc_url_client: Optional[str] = None
     doc_url_carrier: Optional[str] = None
     doc_url_act: Optional[str] = None
+    calendar_event_id: Optional[str] = None
+    calendar_event_url: Optional[str] = None
 
 
 class Lead(BaseModel):
@@ -625,6 +637,48 @@ async def _bg_gt_delete(google_task_id: str):
         logging.getLogger(__name__).error(f"_bg_gt_delete failed: {e}")
 
 
+# ====== Google Calendar background helpers ======
+async def _bg_cal_create(order_obj: dict):
+    if _gc_create is None:
+        return
+    try:
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            return
+        result = await asyncio.to_thread(_gc_create, order_obj, token_doc)
+        if result:
+            await db.orders.update_one(
+                {"id": order_obj["id"]},
+                {"$set": {"calendar_event_id": result["event_id"], "calendar_event_url": result["html_link"]}},
+            )
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_cal_create failed: {e}")
+
+
+async def _bg_cal_update(order_doc: dict):
+    if _gc_update is None or not order_doc.get("calendar_event_id"):
+        return
+    try:
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            return
+        await asyncio.to_thread(_gc_update, order_doc["calendar_event_id"], order_doc, token_doc)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_cal_update failed: {e}")
+
+
+async def _bg_cal_delete(event_id: str):
+    if _gc_delete is None or not event_id:
+        return
+    try:
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            return
+        await asyncio.to_thread(_gc_delete, event_id, token_doc)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_cal_delete failed: {e}")
+
+
 # ====== Task CRUD endpoints ======
 @api_router.get("/tasks", response_model=List[Task])
 async def list_tasks():
@@ -694,6 +748,7 @@ async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks)
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())
     background_tasks.add_task(_bg_trigger_apps_script, obj.order_number)
+    background_tasks.add_task(_bg_cal_create, obj.dict())
     return obj
 
 
@@ -724,15 +779,18 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     if not doc:
         raise HTTPException(404, "Order not found")
     background_tasks.add_task(_bg_push_order, doc)
+    background_tasks.add_task(_bg_cal_update, doc)
     return Order(**doc)
 
 
 @api_router.delete("/orders/{order_id}")
 async def delete_order(order_id: str, background_tasks: BackgroundTasks):
-    doc = await db.orders.find_one({"id": order_id}, {"_id": 0, "order_number": 1})
+    doc = await db.orders.find_one({"id": order_id}, {"_id": 0, "order_number": 1, "calendar_event_id": 1})
     await db.orders.delete_one({"id": order_id})
     if doc and doc.get("order_number"):
         background_tasks.add_task(_bg_delete_order_row, doc["order_number"])
+    if doc and doc.get("calendar_event_id"):
+        background_tasks.add_task(_bg_cal_delete, doc["calendar_event_id"])
     return {"ok": True}
 
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X, Trash2, Check, AlertTriangle, FileText, ExternalLink, RefreshCw } from 'lucide-react-native';
+import { X, Trash2, Check, AlertTriangle, FileText, ExternalLink, RefreshCw, Calendar } from 'lucide-react-native';
 import { theme, formatMoney, statusLabels } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
@@ -292,6 +292,13 @@ export default function OrderDetail() {
         <DocGenButton label="Договор-заявка перевозчику" url={order.doc_url_carrier} />
         <DocGenButton label="Счёт-Акт" url={order.doc_url_act} />
 
+        {!!order.calendar_event_url && (
+          <TouchableOpacity onPress={() => Linking.openURL(order.calendar_event_url)} style={styles.calBtn} activeOpacity={0.8}>
+            <Calendar size={15} color={theme.colors.accent} strokeWidth={1.8} />
+            <Text style={styles.calBtnText}>Открыть в Calendar</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity testID="save-btn" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8}>
           {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveText}>Сохранить</Text>}
         </TouchableOpacity>
@@ -379,6 +386,9 @@ const styles = StyleSheet.create({
 
   saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 24 },
   saveText: { color: '#000', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
+
+  calBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 13, paddingHorizontal: 14, backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.accent + '50', marginBottom: 8, marginTop: 4 },
+  calBtnText: { color: theme.colors.accent, fontSize: 13, fontWeight: '600' },
 
   docBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14,
