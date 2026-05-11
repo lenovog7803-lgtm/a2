@@ -591,8 +591,12 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
   const router = useRouter();
   const today = new Date().toISOString().slice(0, 10);
 
-  const todayCalls = leads.filter(l => l.next_call === today);
+  const todayCalls = leads.filter(l => l.next_call === today && l.status !== 'won' && l.status !== 'lost');
   const overdue = leads.filter(l => l.next_call && l.next_call < today && l.status !== 'won' && l.status !== 'lost');
+  const callNow = [
+    ...overdue.slice().sort((a, b) => a.next_call.localeCompare(b.next_call)),
+    ...todayCalls,
+  ];
   const total = leads.length;
   const wonCount = leads.filter(l => l.status === 'won').length;
   const convRate = total > 0 ? Math.round((wonCount / total) * 100) : 0;
@@ -667,36 +671,32 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
         ))}
       </View>
 
-      {todayCalls.length > 0 && (
+      {callNow.length > 0 && (
         <>
-          <Text style={mStyles.sectionLabel}>ЗВОНКИ СЕГОДНЯ</Text>
+          <Text style={mStyles.sectionLabel}>ПЕРЕЗВОНИТЬ СЕЙЧАС</Text>
           <View style={mStyles.listCard}>
-            {todayCalls.map((l, i) => (
-              <TouchableOpacity key={l.id} onPress={() => router.push(`/lead/${l.id}` as any)} style={[mStyles.leadRow, i === todayCalls.length - 1 && { borderBottomWidth: 0 }]} activeOpacity={0.7}>
-                <View style={{ flex: 1 }}>
-                  <Text style={mStyles.leadName} numberOfLines={1}>{l.name}</Text>
-                  {!!l.company && <Text style={mStyles.leadMeta} numberOfLines={1}>{l.company}</Text>}
-                </View>
-                <Text style={mStyles.leadPhone}>{l.phone}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </>
-      )}
-
-      {overdue.length > 0 && (
-        <>
-          <Text style={[mStyles.sectionLabel, { color: theme.colors.loss }]}>ПРОСРОЧЕНО ПЕРЕЗВОНОВ</Text>
-          <View style={[mStyles.listCard, { borderColor: theme.colors.loss + '50' }]}>
-            {overdue.slice(0, 10).map((l, i) => (
-              <TouchableOpacity key={l.id} onPress={() => router.push(`/lead/${l.id}` as any)} style={[mStyles.leadRow, i === Math.min(overdue.length, 10) - 1 && { borderBottomWidth: 0 }]} activeOpacity={0.7}>
-                <View style={{ flex: 1 }}>
-                  <Text style={mStyles.leadName} numberOfLines={1}>{l.name}</Text>
-                  <Text style={[mStyles.leadMeta, { color: theme.colors.loss }]}>Перезвонить: {l.next_call}</Text>
-                </View>
-                <Text style={mStyles.leadPhone}>{l.phone}</Text>
-              </TouchableOpacity>
-            ))}
+            {callNow.map((l, i) => {
+              const isOverdue = l.next_call < today;
+              const accent = isOverdue ? theme.colors.loss : theme.colors.warning;
+              return (
+                <TouchableOpacity
+                  key={l.id}
+                  onPress={() => router.push(`/lead/${l.id}` as any)}
+                  style={[mStyles.callNowRow, i === callNow.length - 1 && { borderBottomWidth: 0 }]}
+                  activeOpacity={0.7}
+                >
+                  <View style={[mStyles.callNowBar, { backgroundColor: accent }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={mStyles.leadName} numberOfLines={1}>{l.name}</Text>
+                    {!!l.company && <Text style={mStyles.leadMeta} numberOfLines={1}>{l.company}</Text>}
+                    <Text style={[mStyles.callNowDate, { color: accent }]}>
+                      {isOverdue ? `Просрочено: ${l.next_call}` : 'Сегодня'}
+                    </Text>
+                  </View>
+                  <Text style={[mStyles.leadPhone, { color: accent }]}>{l.phone}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </>
       )}
@@ -755,6 +755,14 @@ const mStyles = StyleSheet.create({
   leadMeta: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
   leadPhone: { color: theme.colors.accent, fontSize: 12, fontWeight: '600' },
   leadDate: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '500' },
+
+  callNowRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 13, paddingLeft: 0,
+    borderBottomWidth: 1, borderBottomColor: theme.colors.border,
+  },
+  callNowBar: { width: 3, height: 38, borderRadius: 2, flexShrink: 0 },
+  callNowDate: { fontSize: 11, fontWeight: '600', marginTop: 3 },
 });
 
 const cStyles = StyleSheet.create({
