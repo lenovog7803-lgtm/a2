@@ -428,6 +428,7 @@ class Lead(BaseModel):
     next_call: Optional[str] = ""
     notes: Optional[str] = ""
     directions: Optional[str] = ""
+    call_notes: Optional[List] = Field(default_factory=list)
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -443,6 +444,7 @@ class LeadPayload(BaseModel):
     next_call: Optional[str] = ""
     notes: Optional[str] = ""
     directions: Optional[str] = ""
+    call_notes: Optional[List] = Field(default_factory=list)
 
 
 class LeadUpdate(BaseModel):
@@ -457,6 +459,7 @@ class LeadUpdate(BaseModel):
     next_call: Optional[str] = None
     notes: Optional[str] = None
     directions: Optional[str] = None
+    call_notes: Optional[List] = None
 
 
 # ===== CRUD helper =====
@@ -488,10 +491,25 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
 
     @api_router.put(f"/{prefix}/{{item_id}}", response_model=ModelCls)
     async def update_item(item_id: str, payload: PayloadCls, background_tasks: BackgroundTasks):
+        old_status = None
+        if collection == "leads":
+            old_doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
+            old_status = (old_doc or {}).get("status")
         await db[collection].update_one({"id": item_id}, {"$set": payload.dict(exclude_none=True)})
         doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
         if not doc:
             raise HTTPException(404, "Not found")
+        if collection == "leads" and old_status is not None:
+            new_status = doc.get("status")
+            if new_status and new_status != old_status:
+                await db.lead_activity.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "lead_id": item_id,
+                    "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    "old_status": old_status,
+                    "new_status": new_status,
+                    "timestamp": now_iso(),
+                })
         if sync_to_sheets:
             if collection == "clients":
                 background_tasks.add_task(_bg_push_client, doc)
@@ -517,6 +535,22 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
 
 make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True)
 make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True)
+
+
+@api_router.get("/leads/activity/stats")
+async def leads_activity_stats():
+    from datetime import timedelta
+    today = datetime.now(timezone.utc)
+    start = (today - timedelta(days=29)).strftime("%Y-%m-%d")
+    docs = await db.lead_activity.find({"date": {"$gte": start}}, {"_id": 0}).to_list(10000)
+    counts: dict = {}
+    for d in docs:
+        dt = d.get("date", "")
+        if dt:
+            counts[dt] = counts.get(dt, 0) + 1
+    return [{"date": k, "count": v} for k, v in sorted(counts.items())]
+
+
 make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True)
 
 

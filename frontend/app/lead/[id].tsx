@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
-  Modal, Linking,
+  Modal, Linking, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -23,6 +23,8 @@ export default function LeadDetail() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showClientModal, setShowClientModal] = useState(false);
+  const [showNoteInput, setShowNoteInput] = useState(false);
+  const [newNote, setNewNote] = useState('');
 
   useEffect(() => {
     const fetchWithRetry = async (attempts = 3) => { try { const data = await api.leads.get(id!); if (data) { setLead(data); setLoading(false); } else if (attempts > 1) { setTimeout(() => fetchWithRetry(attempts - 1), 500); } else { setLoading(false); } } catch { if (attempts > 1) setTimeout(() => fetchWithRetry(attempts - 1), 500); else setLoading(false); } }; fetchWithRetry();
@@ -53,6 +55,14 @@ export default function LeadDetail() {
   };
 
   const update = (patch: any) => setLead((prev: any) => ({ ...prev, ...patch }));
+
+  const addCallNote = () => {
+    if (!newNote.trim()) return;
+    const note = { date: new Date().toISOString(), text: newNote.trim() };
+    update({ call_notes: [note, ...(lead.call_notes || [])] });
+    setNewNote('');
+    setShowNoteInput(false);
+  };
 
   if (loading) return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center' }}>
@@ -100,6 +110,41 @@ export default function LeadDetail() {
           </View>
 
           <Field label="Заметки" multiline value={lead.notes || ''} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
+
+          <Text style={styles.label}>ЗАМЕТКИ ПОСЛЕ ЗВОНКОВ</Text>
+          {(lead.call_notes || []).map((note: any, i: number) => (
+            <View key={i} style={styles.callNoteItem}>
+              <Text style={styles.callNoteDate}>
+                {new Date(note.date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </Text>
+              <Text style={styles.callNoteText}>{note.text}</Text>
+            </View>
+          ))}
+          {showNoteInput ? (
+            <View style={styles.noteInputWrap}>
+              <TextInput
+                style={styles.noteInput}
+                placeholder="Введите заметку после звонка..."
+                placeholderTextColor={theme.colors.textTertiary}
+                value={newNote}
+                onChangeText={setNewNote}
+                multiline
+                autoFocus
+              />
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <TouchableOpacity onPress={addCallNote} style={styles.noteConfirmBtn} activeOpacity={0.8}>
+                  <Text style={styles.noteConfirmText}>Сохранить</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { setShowNoteInput(false); setNewNote(''); }} style={styles.noteCancelBtn} activeOpacity={0.8}>
+                  <Text style={styles.noteCancelText}>Отмена</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.addNoteBtn} onPress={() => setShowNoteInput(true)} activeOpacity={0.7}>
+              <Text style={styles.addNoteBtnText}>+ Добавить заметку после звонка</Text>
+            </TouchableOpacity>
+          )}
 
           {!!lead.phone && (
             <TouchableOpacity style={styles.callBtn} onPress={() => Linking.openURL(`tel:${lead.phone}`)} activeOpacity={0.7}>
@@ -151,4 +196,39 @@ const styles = StyleSheet.create({
   saveText: { color: '#000', fontSize: 15, fontWeight: '700' },
   clientHint: { backgroundColor: theme.colors.surfaceElevated, borderRadius: 10, padding: 12, marginBottom: 16 },
   clientHintText: { color: theme.colors.textSecondary, fontSize: 13 },
+
+  callNoteItem: {
+    backgroundColor: theme.colors.surfaceElevated,
+    borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: 10, padding: 12, marginBottom: 8,
+  },
+  callNoteDate: { fontSize: 10, color: theme.colors.textTertiary, fontWeight: '600', marginBottom: 4 },
+  callNoteText: { fontSize: 13, color: theme.colors.textPrimary, lineHeight: 18 },
+
+  noteInputWrap: {
+    backgroundColor: theme.colors.surfaceElevated,
+    borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: 10, padding: 12, marginBottom: 10,
+  },
+  noteInput: {
+    color: theme.colors.textPrimary, fontSize: 14,
+    minHeight: 64, textAlignVertical: 'top',
+  },
+  noteConfirmBtn: {
+    flex: 1, backgroundColor: theme.colors.accent,
+    paddingVertical: 10, borderRadius: 8, alignItems: 'center',
+  },
+  noteConfirmText: { color: '#000', fontSize: 13, fontWeight: '700' },
+  noteCancelBtn: {
+    flex: 1, backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border,
+    paddingVertical: 10, borderRadius: 8, alignItems: 'center',
+  },
+  noteCancelText: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' },
+
+  addNoteBtn: {
+    borderWidth: 1, borderColor: theme.colors.border, borderStyle: 'dashed',
+    borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginBottom: 16,
+  },
+  addNoteBtnText: { color: theme.colors.textTertiary, fontSize: 13, fontWeight: '500' },
 });

@@ -68,7 +68,8 @@ export default function Leads() {
     const prevLeads = leads;
     setLeads(prev => prev.map(l => l.id === id ? { ...l, status, last_contact: today } : l));
     try {
-      await api.leads.update(id, { status, last_contact: today });
+      const updated = await api.leads.update(id, { status, last_contact: today });
+      setLeads(prev => prev.map(l => l.id === id ? updated : l));
     } catch (e: any) {
       setLeads(prevLeads);
       Alert.alert('Ошибка', e.message);
