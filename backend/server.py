@@ -1229,6 +1229,38 @@ async def delete_finance_transaction(tid: str):
     return {"ok": True}
 
 
+# ====== Notes ======
+class Note(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    text: Optional[str] = ""
+    created_at: str = Field(default_factory=now_iso)
+
+
+class NotePayload(BaseModel):
+    title: str
+    text: Optional[str] = ""
+
+
+@api_router.get("/notes", response_model=List[Note])
+async def list_notes():
+    docs = await db.notes.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return [Note(**d) for d in docs]
+
+
+@api_router.post("/notes", response_model=Note)
+async def create_note(payload: NotePayload):
+    obj = Note(**payload.dict())
+    await db.notes.insert_one(obj.dict())
+    return obj
+
+
+@api_router.delete("/notes/{note_id}")
+async def delete_note(note_id: str):
+    await db.notes.delete_one({"id": note_id})
+    return {"ok": True}
+
+
 @api_router.get("/")
 async def root():
     return {"message": "Logistics CRM API"}

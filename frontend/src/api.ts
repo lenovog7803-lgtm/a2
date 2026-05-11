@@ -53,6 +53,11 @@ export const api = {
     delete: (id: string) => req(`/leads/${id}`, { method: 'DELETE' }),
     activityStats: () => req('/leads/activity/stats'),
   },
+  notes: {
+    list: () => req('/notes'),
+    create: (data: any) => req('/notes', { method: 'POST', body: JSON.stringify(data) }),
+    delete: (id: string) => req(`/notes/${id}`, { method: 'DELETE' }),
+  },
   sync: {
     importFromSheets: () => req('/sync/import_from_sheets', { method: 'POST' }),
     importStatus: () => req('/sync/import_status'),

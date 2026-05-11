@@ -4,7 +4,7 @@ import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X } from 'lucide-react-native';
-import { theme, formatMoney, formatShort } from '../../src/theme';
+import { theme, formatMoney, formatShort, leadStatusColors, leadStatusLabels } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
@@ -33,6 +33,9 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState<string>(currentMonth());
   const [selectedDebtor, setSelectedDebtor] = useState<{ name: string; isCreditor: boolean } | null>(null);
+  const [dashView, setDashView] = useState<'dashboard' | 'manager'>('dashboard');
+  const [leads, setLeads] = useState<any[]>([]);
+  const [activityStats, setActivityStats] = useState<any[]>([]);
 
   // Sheets import state
   const [syncing, setSyncing] = useState(false);
@@ -41,9 +44,16 @@ export default function Dashboard() {
 
   const load = useCallback(async (p: string) => {
     try {
-      const [d, orders] = await Promise.all([api.dashboard(p), api.orders.list()]);
+      const [d, orders, leadsData, statsData] = await Promise.all([
+        api.dashboard(p),
+        api.orders.list(),
+        api.leads.list().catch(() => [] as any[]),
+        api.leads.activityStats().catch(() => [] as any[]),
+      ]);
       setData(d);
       setAllOrders(orders);
+      setLeads(leadsData);
+      setActivityStats(statsData);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -170,6 +180,16 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
+        <View style={styles.modeToggle}>
+          <TouchableOpacity onPress={() => setDashView('dashboard')} style={[styles.modeBtn, dashView === 'dashboard' && styles.modeBtnActive]} activeOpacity={0.7}>
+            <Text style={[styles.modeBtnText, dashView === 'dashboard' && styles.modeBtnTextActive]}>Дашборд</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setDashView('manager')} style={[styles.modeBtn, dashView === 'manager' && styles.modeBtnActive]} activeOpacity={0.7}>
+            <Text style={[styles.modeBtnText, dashView === 'manager' && styles.modeBtnTextActive]}>Менеджер</Text>
+          </TouchableOpacity>
+        </View>
+
+        {dashView === 'dashboard' ? (<>
         {/* Дропдаун периодов */}
         <Picker
           testID="period-picker"
@@ -300,6 +320,9 @@ export default function Dashboard() {
         )}
 
         <ProfitChart chartOrders={d.chart_orders || []} period={period} />
+        </>) : (
+          <ManagerView leads={leads} activityStats={activityStats} />
+        )}
       </View>
     </ScrollView>
 
@@ -562,6 +585,178 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
   );
 }
 
+// ─── Manager View ─────────────────────────────────────────────────────────────
+
+function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: any[] }) {
+  const router = useRouter();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const todayCalls = leads.filter(l => l.next_call === today);
+  const overdue = leads.filter(l => l.next_call && l.next_call < today && l.status !== 'won' && l.status !== 'lost');
+  const total = leads.length;
+  const wonCount = leads.filter(l => l.status === 'won').length;
+  const convRate = total > 0 ? Math.round((wonCount / total) * 100) : 0;
+
+  const funnelRows = [
+    { key: 'new',      label: 'Новые' },
+    { key: 'thinking', label: 'Думают' },
+    { key: 'sent_kp',  label: 'Выслал КП' },
+    { key: 'callback', label: 'Перезвонить' },
+    { key: 'won',      label: 'Клиенты' },
+    { key: 'lost',     label: 'Потеряны' },
+  ].map(s => ({ ...s, count: leads.filter(l => l.status === s.key).length, color: leadStatusColors[s.key] }));
+
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - 6 + i);
+    return d.toISOString().slice(0, 10);
+  });
+  const actMap = Object.fromEntries(activityStats.map(s => [s.date, s.count]));
+  const weekAct = last7.map(date => ({ date, count: actMap[date] || 0, day: parseInt(date.slice(8, 10), 10) }));
+
+  const top5 = [...leads]
+    .filter(l => l.last_contact)
+    .sort((a, b) => b.last_contact.localeCompare(a.last_contact))
+    .slice(0, 5);
+
+  return (
+    <>
+      <View style={mStyles.summaryRow}>
+        <View style={mStyles.summaryCard}>
+          <Text style={mStyles.summaryLabel}>КОНВЕРСИЯ</Text>
+          <Text style={[mStyles.summaryValue, { color: theme.colors.profit }]}>{convRate}%</Text>
+          <Text style={mStyles.summarySub}>{wonCount} из {total}</Text>
+        </View>
+        <View style={mStyles.summaryCard}>
+          <Text style={mStyles.summaryLabel}>СЕГОДНЯ</Text>
+          <Text style={[mStyles.summaryValue, { color: todayCalls.length > 0 ? theme.colors.accent : theme.colors.textTertiary }]}>{todayCalls.length}</Text>
+          <Text style={mStyles.summarySub}>звонков</Text>
+        </View>
+        <View style={[mStyles.summaryCard, overdue.length > 0 && { borderColor: theme.colors.loss + '60' }]}>
+          <Text style={mStyles.summaryLabel}>ПРОСРОЧЕНО</Text>
+          <Text style={[mStyles.summaryValue, { color: overdue.length > 0 ? theme.colors.loss : theme.colors.textTertiary }]}>{overdue.length}</Text>
+          <Text style={mStyles.summarySub}>перезвонов</Text>
+        </View>
+      </View>
+
+      <Text style={mStyles.sectionLabel}>ВОРОНКА ОБЗВОНА</Text>
+      <View style={mStyles.funnelCard}>
+        {funnelRows.map(s => {
+          const pct = total > 0 ? (s.count / total) * 100 : 0;
+          return (
+            <View key={s.key} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
+                <Text style={mStyles.barLabel}>{s.label}</Text>
+                <Text style={[mStyles.barCount, { color: s.color || theme.colors.textTertiary }]}>{s.count}</Text>
+              </View>
+              <View style={mStyles.barBg}>
+                <View style={[mStyles.barFill, { width: `${pct}%`, backgroundColor: s.color || theme.colors.accent }]} />
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
+      <Text style={mStyles.sectionLabel}>АКТИВНОСТЬ — 7 ДНЕЙ</Text>
+      <View style={mStyles.actCard}>
+        {weekAct.map(({ date, count, day }, i) => (
+          <View key={date} style={[mStyles.actCol, i < weekAct.length - 1 && { borderRightWidth: 1, borderRightColor: theme.colors.border }]}>
+            <Text style={[mStyles.actNum, { color: count > 0 ? theme.colors.accent : theme.colors.textTertiary }]}>{count}</Text>
+            <Text style={mStyles.actDate}>{day}</Text>
+          </View>
+        ))}
+      </View>
+
+      {todayCalls.length > 0 && (
+        <>
+          <Text style={mStyles.sectionLabel}>ЗВОНКИ СЕГОДНЯ</Text>
+          <View style={mStyles.listCard}>
+            {todayCalls.map((l, i) => (
+              <TouchableOpacity key={l.id} onPress={() => router.push(`/lead/${l.id}` as any)} style={[mStyles.leadRow, i === todayCalls.length - 1 && { borderBottomWidth: 0 }]} activeOpacity={0.7}>
+                <View style={{ flex: 1 }}>
+                  <Text style={mStyles.leadName} numberOfLines={1}>{l.name}</Text>
+                  {!!l.company && <Text style={mStyles.leadMeta} numberOfLines={1}>{l.company}</Text>}
+                </View>
+                <Text style={mStyles.leadPhone}>{l.phone}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </>
+      )}
+
+      {overdue.length > 0 && (
+        <>
+          <Text style={[mStyles.sectionLabel, { color: theme.colors.loss }]}>ПРОСРОЧЕНО ПЕРЕЗВОНОВ</Text>
+          <View style={[mStyles.listCard, { borderColor: theme.colors.loss + '50' }]}>
+            {overdue.slice(0, 10).map((l, i) => (
+              <TouchableOpacity key={l.id} onPress={() => router.push(`/lead/${l.id}` as any)} style={[mStyles.leadRow, i === Math.min(overdue.length, 10) - 1 && { borderBottomWidth: 0 }]} activeOpacity={0.7}>
+                <View style={{ flex: 1 }}>
+                  <Text style={mStyles.leadName} numberOfLines={1}>{l.name}</Text>
+                  <Text style={[mStyles.leadMeta, { color: theme.colors.loss }]}>Перезвонить: {l.next_call}</Text>
+                </View>
+                <Text style={mStyles.leadPhone}>{l.phone}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </>
+      )}
+
+      {top5.length > 0 && (
+        <>
+          <Text style={mStyles.sectionLabel}>ПОСЛЕДНЯЯ АКТИВНОСТЬ</Text>
+          <View style={mStyles.listCard}>
+            {top5.map((l, i) => (
+              <TouchableOpacity key={l.id} onPress={() => router.push(`/lead/${l.id}` as any)} style={[mStyles.leadRow, i === top5.length - 1 && { borderBottomWidth: 0 }]} activeOpacity={0.7}>
+                <View style={{ flex: 1 }}>
+                  <Text style={mStyles.leadName} numberOfLines={1}>{l.name}</Text>
+                  {!!l.company && <Text style={mStyles.leadMeta} numberOfLines={1}>{l.company}</Text>}
+                </View>
+                <Text style={mStyles.leadDate}>{l.last_contact}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </>
+      )}
+    </>
+  );
+}
+
+const mStyles = StyleSheet.create({
+  summaryRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  summaryCard: {
+    flex: 1, backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 12,
+  },
+  summaryLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary },
+  summaryValue: { fontSize: 24, fontWeight: '700', letterSpacing: -0.5, marginTop: 4 },
+  summarySub: { fontSize: 10, color: theme.colors.textTertiary, marginTop: 1 },
+
+  sectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 10, marginTop: 8 },
+
+  funnelCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16, marginBottom: 16 },
+  barLabel: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '500' },
+  barCount: { fontSize: 13, fontWeight: '700' },
+  barBg: { height: 4, backgroundColor: theme.colors.surfaceElevated, borderRadius: 2, overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 2 },
+
+  actCard: {
+    flexDirection: 'row', height: 80,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: 14, marginBottom: 16, overflow: 'hidden',
+  },
+  actCol: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  actNum: { fontSize: 24, fontWeight: '800', letterSpacing: -1 },
+  actDate: { fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 },
+
+  listCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, marginBottom: 16, paddingHorizontal: 16 },
+  leadRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  leadName: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '500' },
+  leadMeta: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
+  leadPhone: { color: theme.colors.accent, fontSize: 12, fontWeight: '600' },
+  leadDate: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '500' },
+});
+
 const cStyles = StyleSheet.create({
   wrap: {
     backgroundColor: theme.colors.surface,
@@ -594,6 +789,17 @@ const styles = StyleSheet.create({
   },
   label: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 6 },
   title: { fontSize: 34, fontWeight: '300', letterSpacing: -1, color: theme.colors.textPrimary, marginBottom: 16 },
+
+  modeToggle: {
+    flexDirection: 'row', marginBottom: 14,
+    backgroundColor: theme.colors.surfaceElevated,
+    borderRadius: 12, padding: 3,
+    borderWidth: 1, borderColor: theme.colors.border,
+  },
+  modeBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
+  modeBtnActive: { backgroundColor: theme.colors.surface },
+  modeBtnText: { color: theme.colors.textTertiary, fontSize: 13, fontWeight: '600' },
+  modeBtnTextActive: { color: theme.colors.textPrimary, fontWeight: '700' },
 
   heroCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 16, padding: 20, marginBottom: 12 },
   metricLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.accent },
