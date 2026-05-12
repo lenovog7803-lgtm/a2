@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { bootstrapTheme, ThemeMode } from './theme';
 
@@ -44,7 +44,7 @@ export function ThemeProvider({ children }: { children: (mode: ThemeMode) => Rea
 
   return (
     <ThemeContext.Provider value={{ mode, toggleTheme, setMode, ready }}>
-      {ready ? <React.Fragment key={mode}>{children(mode)}</React.Fragment> : null}
+      {ready ? children(mode) : null}
     </ThemeContext.Provider>
   );
 }
