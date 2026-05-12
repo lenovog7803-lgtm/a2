@@ -1,9 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { applyTheme, ThemeMode } from './theme';
+import { bootstrapTheme, ThemeMode } from './theme';
 
-const STORAGE_KEY = 'crm.themeMode';
+const STORAGE_KEY = 'theme_mode';
 
 type Ctx = {
   mode: ThemeMode;
@@ -26,31 +25,19 @@ export function ThemeProvider({ children }: { children: (mode: ThemeMode) => Rea
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then(v => {
       const m: ThemeMode = v === 'light' ? 'light' : 'dark';
-      applyTheme(m);
+      bootstrapTheme(m);
       setModeState(m);
+      setReady(true);
+    }).catch(() => {
+      bootstrapTheme('dark');
       setReady(true);
     });
   }, []);
 
   const setMode = (m: ThemeMode) => {
-    applyTheme(m);
+    bootstrapTheme(m);
     setModeState(m);
     AsyncStorage.setItem(STORAGE_KEY, m).catch(() => {});
-
-    // На вебе StyleSheet.create кешируется на уровне модуля. Делаем hard reload
-    // с cache-busting, чтобы пересобрать стили с новой палитрой.
-    if (Platform.OS === 'web') {
-      try { (window as any).localStorage.setItem('crm.themeMode', m); } catch (_) {}
-      setTimeout(() => {
-        try {
-          const url = new URL((window as any).location.href);
-          url.searchParams.set('_t', String(Date.now()));
-          (window as any).location.href = url.toString();
-        } catch (_) {
-          try { (window as any).location.reload(); } catch (_) {}
-        }
-      }, 100);
-    }
   };
 
   const toggle = () => setMode(mode === 'dark' ? 'light' : 'dark');

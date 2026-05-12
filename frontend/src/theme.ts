@@ -48,16 +48,27 @@ export const theme = {
 
 // Синхронный bootstrap для веба. Вызвать из _layout до рендера, чтобы стили в дочерних
 // модулях прочитали правильные цвета.
-export function bootstrapTheme(): ThemeMode {
+// Если передать mode — записывает в localStorage и применяет палитру.
+// Без аргумента — читает из localStorage и возвращает сохранённый режим.
+export function bootstrapTheme(mode?: ThemeMode): ThemeMode {
+  if (mode !== undefined) {
+    try {
+      if (typeof window !== 'undefined' && (window as any).localStorage) {
+        (window as any).localStorage.setItem('theme_mode', mode);
+      }
+    } catch (_) {}
+    applyTheme(mode);
+    return mode;
+  }
   try {
     if (typeof window !== 'undefined' && (window as any).localStorage) {
-      const saved = (window as any).localStorage.getItem('crm.themeMode');
-      if (saved === 'light') {
-        applyTheme('light');
-        return 'light';
+      const saved = (window as any).localStorage.getItem('theme_mode');
+      if (saved === 'light' || saved === 'dark') {
+        applyTheme(saved as ThemeMode);
+        return saved as ThemeMode;
       }
     }
-  } catch (_) { /* no-op */ }
+  } catch (_) {}
   return 'dark';
 }
 
