@@ -3,6 +3,7 @@ uvicorn
 motor
 python-dotenv
 pydantic
+PyJWT>=2.0
 gspread
 google-auth
 google-auth-oauthlib

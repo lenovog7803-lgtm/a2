@@ -1,13 +1,15 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Request, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, asyncio
+import os, logging, uuid, asyncio, hashlib, secrets
+import jwt as _jwt
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -218,6 +220,18 @@ async def _auto_sync_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(_auto_sync_loop())
+    count = await db.users.count_documents({})
+    if count == 0:
+        admin = {
+            "id": str(uuid.uuid4()),
+            "name": "Администратор",
+            "login": "admin",
+            "password_hash": _hash_password("admin123"),
+            "role": "admin",
+            "created_at": now_iso(),
+        }
+        await db.users.insert_one(admin)
+        logging.getLogger(__name__).info("Created default admin user (login=admin, password=admin123)")
     yield
     client.close()
 
@@ -227,8 +241,72 @@ api_router = APIRouter(prefix="/api")
 
 TAX_RATE = 0.20  # 20% — для расчёта прибыли (маржа − налог)
 
+JWT_SECRET = os.environ.get("JWT_SECRET", "crm-secret-key-change-in-production-2024")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_HOURS = 24 * 7
+
+_http_bearer = HTTPBearer(auto_error=False)
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000)
+    return f"{salt}${key.hex()}"
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    try:
+        salt, key_hex = password_hash.split("$", 1)
+        key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000)
+        return key.hex() == key_hex
+    except Exception:
+        return False
+
+
+def _create_token(user_id: str, role: str) -> str:
+    payload = {
+        "sub": user_id,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS),
+    }
+    return _jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def _get_user_from_token(credentials: HTTPAuthorizationCredentials = Depends(_http_bearer)) -> Optional[dict]:
+    if not credentials:
+        return None
+    try:
+        payload = _jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        return await db.users.find_one({"id": user_id}, {"_id": 0})
+    except Exception:
+        return None
+
+
+async def _require_user(credentials: HTTPAuthorizationCredentials = Depends(_http_bearer)) -> dict:
+    if not credentials:
+        raise HTTPException(401, "Требуется авторизация")
+    try:
+        payload = _jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(401, "Неверный токен")
+        user = await db.users.find_one({"id": user_id}, {"_id": 0})
+        if not user:
+            raise HTTPException(401, "Пользователь не найден")
+        return user
+    except HTTPException:
+        raise
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Токен истёк")
+    except Exception:
+        raise HTTPException(401, "Неверный токен")
 
 
 # ====== Models ======
@@ -352,6 +430,7 @@ class Order(BaseModel):
     doc_url_act: Optional[str] = ""
     calendar_event_id: Optional[str] = ""
     calendar_event_url: Optional[str] = ""
+    assigned_to: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -388,6 +467,7 @@ class OrderPayload(BaseModel):
     doc_url_client: Optional[str] = ""
     doc_url_carrier: Optional[str] = ""
     doc_url_act: Optional[str] = ""
+    assigned_to: Optional[str] = ""
 
 
 class OrderUpdate(BaseModel):
@@ -425,6 +505,7 @@ class OrderUpdate(BaseModel):
     doc_url_act: Optional[str] = None
     calendar_event_id: Optional[str] = None
     calendar_event_url: Optional[str] = None
+    assigned_to: Optional[str] = None
 
 
 class Lead(BaseModel):
@@ -441,6 +522,7 @@ class Lead(BaseModel):
     notes: Optional[str] = ""
     directions: Optional[str] = ""
     call_notes: Optional[List] = Field(default_factory=list)
+    assigned_to: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -457,6 +539,7 @@ class LeadPayload(BaseModel):
     notes: Optional[str] = ""
     directions: Optional[str] = ""
     call_notes: Optional[List] = Field(default_factory=list)
+    assigned_to: Optional[str] = ""
 
 
 class LeadUpdate(BaseModel):
@@ -472,13 +555,17 @@ class LeadUpdate(BaseModel):
     notes: Optional[str] = None
     directions: Optional[str] = None
     call_notes: Optional[List] = None
+    assigned_to: Optional[str] = None
 
 
 # ===== CRUD helper =====
-def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets: bool = False):
+def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets: bool = False, user_filter: bool = False):
     @api_router.get(f"/{prefix}", response_model=List[ModelCls])
-    async def list_items():
-        docs = await db[collection].find({}, {"_id": 0}).sort("created_at", -1).to_list(50000)
+    async def list_items(current_user: Optional[dict] = Depends(_get_user_from_token)):
+        filter_q: dict = {}
+        if user_filter and current_user and current_user.get("role") == "manager":
+            filter_q["assigned_to"] = current_user["id"]
+        docs = await db[collection].find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(50000)
         return [ModelCls(**d) for d in docs]
 
     @api_router.post(f"/{prefix}", response_model=ModelCls)
@@ -549,6 +636,7 @@ make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True)
 make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True)
 
 
+
 @api_router.get("/leads/activity/stats")
 async def leads_activity_stats():
     from datetime import timedelta
@@ -563,7 +651,7 @@ async def leads_activity_stats():
     return [{"date": k, "count": v} for k, v in sorted(counts.items())]
 
 
-make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True)
+make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True)
 
 
 # ====== Task models ======
@@ -714,8 +802,11 @@ async def delete_task(task_id: str, background_tasks: BackgroundTasks):
 
 
 @api_router.get("/orders", response_model=List[Order])
-async def list_orders():
-    docs = await db.orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_token)):
+    filter_q: dict = {}
+    if current_user and current_user.get("role") == "manager":
+        filter_q["assigned_to"] = current_user["id"]
+    docs = await db.orders.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return [Order(**d) for d in docs]
 
 
@@ -761,26 +852,55 @@ async def get_order(order_id: str):
 
 
 @api_router.put("/orders/{order_id}", response_model=Order)
-async def update_order(order_id: str, payload: OrderUpdate, background_tasks: BackgroundTasks):
+async def update_order(order_id: str, payload: OrderUpdate, background_tasks: BackgroundTasks,
+                       current_user: Optional[dict] = Depends(_get_user_from_token)):
+    old_doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not old_doc:
+        raise HTTPException(404, "Order not found")
     update_data = {k: v for k, v in payload.dict().items() if v is not None}
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    # Auto-set paid dates when payment status flips to true
     if update_data.get("client_paid") is True and "client_paid_date" not in update_data:
-        existing = await db.orders.find_one({"id": order_id}, {"_id": 0, "client_paid": 1})
-        if existing and not existing.get("client_paid"):
+        if not old_doc.get("client_paid"):
             update_data["client_paid_date"] = today
     if update_data.get("carrier_paid") is True and "carrier_paid_date" not in update_data:
-        existing = await db.orders.find_one({"id": order_id}, {"_id": 0, "carrier_paid": 1})
-        if existing and not existing.get("carrier_paid"):
+        if not old_doc.get("carrier_paid"):
             update_data["carrier_paid_date"] = today
     if update_data:
         await db.orders.update_one({"id": order_id}, {"$set": update_data})
+        # Log changes
+        actor = (current_user or {}).get("name") or "admin"
+        log_entries = []
+        skip_log = {"calendar_event_id", "calendar_event_url", "doc_url_client", "doc_url_carrier", "doc_url_act",
+                    "client_paid_date", "carrier_paid_date"}
+        for field, new_val in update_data.items():
+            if field in skip_log:
+                continue
+            old_val = old_doc.get(field)
+            if old_val != new_val:
+                log_entries.append({
+                    "id": str(uuid.uuid4()),
+                    "order_id": order_id,
+                    "order_number": old_doc.get("order_number", ""),
+                    "field": field,
+                    "old_value": str(old_val) if old_val is not None else "",
+                    "new_value": str(new_val) if new_val is not None else "",
+                    "timestamp": now_iso(),
+                    "user": actor,
+                })
+        if log_entries:
+            await db.order_logs.insert_many(log_entries)
     doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Order not found")
     background_tasks.add_task(_bg_push_order, doc)
     background_tasks.add_task(_bg_cal_update, doc)
     return Order(**doc)
+
+
+@api_router.get("/orders/{order_id}/logs")
+async def get_order_logs(order_id: str):
+    logs = await db.order_logs.find({"order_id": order_id}, {"_id": 0}).sort("timestamp", -1).to_list(1000)
+    return logs
 
 
 @api_router.delete("/orders/{order_id}")
@@ -892,6 +1012,91 @@ p {{ color: #A1A1AA; line-height: 1.5; }}
   <p>{msg}</p>
 </div></body></html>
 """
+
+
+# ====== User Auth & Management ======
+class _LoginPayload(BaseModel):
+    login: str
+    password: str
+
+
+class _CreateUserPayload(BaseModel):
+    name: str
+    login: str
+    password: str
+    role: str = "manager"
+
+
+@api_router.post("/auth/login")
+async def auth_login(payload: _LoginPayload):
+    user = await db.users.find_one({"login": payload.login}, {"_id": 0})
+    if not user or not _verify_password(payload.password, user.get("password_hash", "")):
+        raise HTTPException(401, "Неверный логин или пароль")
+    token = _create_token(user["id"], user["role"])
+    safe_user = {k: v for k, v in user.items() if k != "password_hash"}
+    return {"token": token, "user": safe_user}
+
+
+@api_router.get("/auth/me")
+async def auth_me(current_user: dict = Depends(_require_user)):
+    return {k: v for k, v in current_user.items() if k != "password_hash"}
+
+
+@api_router.get("/users")
+async def list_users(current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    return users
+
+
+@api_router.post("/users")
+async def create_user(payload: _CreateUserPayload, current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    existing = await db.users.find_one({"login": payload.login})
+    if existing:
+        raise HTTPException(400, "Логин уже занят")
+    user = {
+        "id": str(uuid.uuid4()),
+        "name": payload.name,
+        "login": payload.login,
+        "password_hash": _hash_password(payload.password),
+        "role": payload.role,
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(user)
+    return {k: v for k, v in user.items() if k not in ("password_hash", "_id")}
+
+
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: str, current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    if user_id == current_user.get("id"):
+        raise HTTPException(400, "Нельзя удалить себя")
+    await db.users.delete_one({"id": user_id})
+    return {"ok": True}
+
+
+@api_router.get("/users/{user_id}/stats")
+async def get_user_stats(user_id: str, current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    now_dt = datetime.now(timezone.utc)
+    month_start = f"{now_dt.year}-{now_dt.month:02d}-01"
+    orders = await db.orders.find({"assigned_to": user_id}, {"_id": 0}).to_list(10000)
+    leads = await db.leads.find({"assigned_to": user_id}, {"_id": 0}).to_list(10000)
+    month_orders = [o for o in orders if (o.get("created_at") or "")[:10] >= month_start]
+    revenue_month = sum(o.get("client_rate", 0) for o in month_orders)
+    won_leads = len([l for l in leads if l.get("status") == "won"])
+    conversion = round(won_leads / len(leads) * 100) if leads else 0
+    return {
+        "orders_count": len(orders),
+        "leads_count": len(leads),
+        "conversion": conversion,
+        "revenue_month": revenue_month,
+    }
 
 
 # ====== Documents generation ======

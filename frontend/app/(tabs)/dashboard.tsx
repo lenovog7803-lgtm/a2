@@ -1,14 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput } from 'react-native';
 import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus } from 'lucide-react-native';
 import { theme, formatMoney, formatShort, leadStatusColors, leadStatusLabels } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
 import { Linking } from 'react-native';
+import { getUser, clearAuth } from '../../src/auth';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
@@ -36,6 +37,7 @@ export default function Dashboard() {
   const [dashView, setDashView] = useState<'dashboard' | 'manager'>('dashboard');
   const [leads, setLeads] = useState<any[]>([]);
   const [activityStats, setActivityStats] = useState<any[]>([]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   // Sheets import state
   const [syncing, setSyncing] = useState(false);
@@ -67,6 +69,7 @@ export default function Dashboard() {
   useEffect(() => {
     api.sync.importStatus().then(setImportStatus).catch(() => {});
     api.auth.googleStatus().then(setAuthStatus).catch(() => {});
+    getUser().then(setCurrentUser).catch(() => {});
   }, []);
 
   const connectGoogle = async () => {
@@ -321,7 +324,7 @@ export default function Dashboard() {
 
         <ProfitChart chartOrders={d.chart_orders || []} period={period} />
         </>) : (
-          <ManagerView leads={leads} activityStats={activityStats} />
+          <ManagerView leads={leads} activityStats={activityStats} currentUser={currentUser} />
         )}
       </View>
     </ScrollView>
@@ -587,9 +590,69 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
 
 // ─── Manager View ─────────────────────────────────────────────────────────────
 
-function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: any[] }) {
+function ManagerView({ leads, activityStats, currentUser }: { leads: any[]; activityStats: any[]; currentUser: any }) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const today = new Date().toISOString().slice(0, 10);
+  const [managers, setManagers] = useState<any[]>([]);
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [statsModalUser, setStatsModalUser] = useState<any>(null);
+  const [statsData, setStatsData] = useState<any>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newLogin, setNewLogin] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const isAdmin = currentUser?.role === 'admin';
+
+  useEffect(() => {
+    if (isAdmin) {
+      api.users.list().then(setManagers).catch(() => {});
+    }
+  }, [isAdmin]);
+
+  const openManagerStats = async (mgr: any) => {
+    setStatsModalUser(mgr);
+    setStatsData(null);
+    setStatsLoading(true);
+    try {
+      const s = await api.users.stats(mgr.id);
+      setStatsData(s);
+    } catch {
+      setStatsData(null);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  const createManager = async () => {
+    if (!newName.trim() || !newLogin.trim() || !newPassword.trim()) {
+      Alert.alert('Заполните все поля');
+      return;
+    }
+    setCreating(true);
+    try {
+      const mgr = await api.users.create({ name: newName.trim(), login: newLogin.trim(), password: newPassword });
+      setManagers(prev => [...prev, mgr]);
+      setAddModalVisible(false);
+      setNewName(''); setNewLogin(''); setNewPassword('');
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message || 'Не удалось создать менеджера');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const deleteManager = (mgr: any) => {
+    Alert.alert('Удалить менеджера?', mgr.name, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        await api.users.delete(mgr.id).catch(() => {});
+        setManagers(prev => prev.filter(m => m.id !== mgr.id));
+      }},
+    ]);
+  };
 
   const todayCalls = leads.filter(l => l.next_call === today && l.status !== 'won' && l.status !== 'lost');
   const overdue = leads.filter(l => l.next_call && l.next_call < today && l.status !== 'won' && l.status !== 'lost');
@@ -717,6 +780,111 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
           </View>
         </>
       )}
+
+      {isAdmin && (
+        <>
+          <View style={mStyles.mgrHeader}>
+            <Text style={mStyles.sectionLabel}>МЕНЕДЖЕРЫ</Text>
+            <TouchableOpacity onPress={() => setAddModalVisible(true)} style={mStyles.addBtn} activeOpacity={0.7}>
+              <UserPlus size={14} color={theme.colors.accent} strokeWidth={1.8} />
+              <Text style={mStyles.addBtnText}>Добавить</Text>
+            </TouchableOpacity>
+          </View>
+          {managers.length > 0 && (
+            <View style={mStyles.listCard}>
+              {managers.map((mgr, i) => (
+                <TouchableOpacity
+                  key={mgr.id}
+                  onPress={() => openManagerStats(mgr)}
+                  onLongPress={() => deleteManager(mgr)}
+                  style={[mStyles.mgrRow, i === managers.length - 1 && { borderBottomWidth: 0 }]}
+                  activeOpacity={0.7}
+                >
+                  <View style={mStyles.mgrAvatar}>
+                    <Text style={mStyles.mgrAvatarText}>{mgr.name[0]?.toUpperCase() || '?'}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={mStyles.leadName}>{mgr.name}</Text>
+                    <Text style={mStyles.leadMeta}>{mgr.role === 'admin' ? 'Администратор' : 'Менеджер'} · {mgr.login}</Text>
+                  </View>
+                  <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </>
+      )}
+
+      {/* Add Manager Modal */}
+      <Modal visible={addModalVisible} transparent animationType="slide" onRequestClose={() => setAddModalVisible(false)}>
+        <View style={mStyles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setAddModalVisible(false)} />
+          <View style={[mStyles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+            <View style={mStyles.modalHeaderRow}>
+              <Text style={mStyles.modalTitle}>Новый менеджер</Text>
+              <TouchableOpacity onPress={() => setAddModalVisible(false)} style={{ padding: 4 }}>
+                <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ gap: 12 }}>
+              <View style={mStyles.inputWrap}>
+                <Text style={mStyles.inputLabel}>ИМЯ</Text>
+                <TextInput style={mStyles.input} value={newName} onChangeText={setNewName} placeholder="Иван Иванов" placeholderTextColor={theme.colors.textTertiary} />
+              </View>
+              <View style={mStyles.inputWrap}>
+                <Text style={mStyles.inputLabel}>ЛОГИН</Text>
+                <TextInput style={mStyles.input} value={newLogin} onChangeText={setNewLogin} autoCapitalize="none" placeholder="ivanov" placeholderTextColor={theme.colors.textTertiary} />
+              </View>
+              <View style={mStyles.inputWrap}>
+                <Text style={mStyles.inputLabel}>ПАРОЛЬ</Text>
+                <TextInput style={mStyles.input} value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="••••••••" placeholderTextColor={theme.colors.textTertiary} />
+              </View>
+              <TouchableOpacity onPress={createManager} disabled={creating} style={[mStyles.createBtn, creating && { opacity: 0.6 }]} activeOpacity={0.8}>
+                {creating ? <ActivityIndicator color="#000" /> : <Text style={mStyles.createBtnText}>Создать</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Manager Stats Modal */}
+      <Modal visible={!!statsModalUser} transparent animationType="slide" onRequestClose={() => setStatsModalUser(null)}>
+        <View style={mStyles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setStatsModalUser(null)} />
+          <View style={[mStyles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+            <View style={mStyles.modalHeaderRow}>
+              <Text style={mStyles.modalTitle}>{statsModalUser?.name}</Text>
+              <TouchableOpacity onPress={() => setStatsModalUser(null)} style={{ padding: 4 }}>
+                <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+              </TouchableOpacity>
+            </View>
+            {statsLoading ? (
+              <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
+            ) : statsData ? (
+              <View style={mStyles.statsGrid}>
+                <View style={mStyles.statCard}>
+                  <Text style={mStyles.statCardLabel}>ЗАЯВКИ</Text>
+                  <Text style={mStyles.statCardValue}>{statsData.orders_count}</Text>
+                </View>
+                <View style={mStyles.statCard}>
+                  <Text style={mStyles.statCardLabel}>ЛИДЫ</Text>
+                  <Text style={mStyles.statCardValue}>{statsData.leads_count}</Text>
+                </View>
+                <View style={mStyles.statCard}>
+                  <Text style={mStyles.statCardLabel}>КОНВЕРСИЯ</Text>
+                  <Text style={[mStyles.statCardValue, { color: theme.colors.profit }]}>{statsData.conversion}%</Text>
+                </View>
+                <View style={mStyles.statCard}>
+                  <Text style={mStyles.statCardLabel}>ВЫРУЧКА МЕС.</Text>
+                  <Text style={[mStyles.statCardValue, { color: theme.colors.accent, fontSize: 16 }]}>{formatMoney(statsData.revenue_month)}</Text>
+                </View>
+              </View>
+            ) : (
+              <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
+            )}
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -763,6 +931,27 @@ const mStyles = StyleSheet.create({
   },
   callNowBar: { width: 3, height: 38, borderRadius: 2, flexShrink: 0 },
   callNowDate: { fontSize: 11, fontWeight: '600', marginTop: 3 },
+
+  mgrHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 8 },
+  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: theme.colors.accent + '15', borderRadius: 8, borderWidth: 1, borderColor: theme.colors.accent + '40' },
+  addBtnText: { color: theme.colors.accent, fontSize: 12, fontWeight: '700' },
+  mgrRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  mgrAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.accent + '20', alignItems: 'center', justifyContent: 'center' },
+  mgrAvatarText: { color: theme.colors.accent, fontSize: 16, fontWeight: '700' },
+
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+  modalSheet: { backgroundColor: theme.colors.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 20, paddingHorizontal: 20 },
+  modalHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary },
+  inputWrap: { gap: 6 },
+  inputLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary },
+  input: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, color: theme.colors.textPrimary, fontSize: 14 },
+  createBtn: { backgroundColor: theme.colors.accent, paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 4 },
+  createBtnText: { color: '#000', fontSize: 14, fontWeight: '700' },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 8 },
+  statCard: { flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' },
+  statCardLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 },
+  statCardValue: { fontSize: 22, fontWeight: '700', color: theme.colors.textPrimary },
 });
 
 const cStyles = StyleSheet.create({

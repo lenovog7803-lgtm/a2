@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { X } from 'lucide-react-native';
@@ -8,28 +9,72 @@ import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
 import { DateField } from '../../src/components/DateField';
 
+const DRAFT_KEY = 'draft_lead';
 const STATUSES = ['new', 'in_progress', 'callback', 'won', 'lost'];
+
+const EMPTY: any = {
+  name: '', company: '', phone: '', email: '', city: '', industry: '', status: 'new',
+  last_contact: '', next_call: '', notes: '', directions: '',
+};
 
 export default function NewLead() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [saving, setSaving] = useState(false);
-  const [data, setData] = useState<any>({
-    name: '', company: '', phone: '', email: '', city: '', industry: '', status: 'new',
-    last_contact: '', next_call: '', notes: '', directions: '',
-  });
+  const [data, setData] = useState<any>(EMPTY);
+  const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isDirtyRef = useRef(false);
 
-  const update = (patch: any) => setData({ ...data, ...patch });
+  useEffect(() => {
+    (async () => {
+      const draft = await AsyncStorage.getItem(DRAFT_KEY);
+      if (draft) {
+        Alert.alert(
+          'Восстановить черновик?',
+          'Найден несохранённый черновик контакта. Восстановить?',
+          [
+            { text: 'Нет', style: 'cancel' },
+            { text: 'Восстановить', onPress: () => setData(JSON.parse(draft)) },
+          ],
+        );
+      }
+    })();
+
+    autoSaveRef.current = setInterval(() => {
+      if (isDirtyRef.current) {
+        setData((current: any) => {
+          AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(current)).catch(() => {});
+          return current;
+        });
+        isDirtyRef.current = false;
+      }
+    }, 3000);
+
+    return () => {
+      if (autoSaveRef.current) clearInterval(autoSaveRef.current);
+    };
+  }, []);
+
+  const update = (patch: any) => {
+    isDirtyRef.current = true;
+    setData((d: any) => ({ ...d, ...patch }));
+  };
 
   const save = async () => {
-    if (!data.name || !data.phone) { Alert.alert('Заполните', 'Имя и телефон обязательны'); return; }
+    if (!data.name || !data.phone) {
+      Alert.alert('Заполните', 'Имя и телефон обязательны');
+      return;
+    }
     setSaving(true);
     try {
       await api.leads.create(data);
+      await AsyncStorage.removeItem(DRAFT_KEY);
       router.back();
     } catch (e: any) {
       Alert.alert('Ошибка', e.message);
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

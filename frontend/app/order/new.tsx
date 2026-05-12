@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { X } from 'lucide-react-native';
@@ -9,24 +10,30 @@ import { Field } from '../../src/components/Field';
 import { Picker } from '../../src/components/Picker';
 import { DateField } from '../../src/components/DateField';
 
+const DRAFT_KEY = 'draft_order';
+
+const EMPTY: any = {
+  order_number: '',
+  client_id: '', client_name: '', carrier_id: '', carrier_name: '',
+  route_from: '', route_to: '', route_from_address: '', route_to_address: '',
+  load_date: '', unload_date: '',
+  driver_name: '', driver_phone: '', vehicle_type: '', vehicle_plate: '',
+  client_rate: 0, carrier_rate: 0,
+  status: 'new', client_paid: false, carrier_paid: false,
+  docs_to_client_sent: false, docs_from_client_received: false,
+  docs_to_carrier_sent: false, docs_from_carrier_received: false,
+  cargo: '', weight_tons: 0, notes: '',
+};
+
 export default function NewOrder() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [clients, setClients] = useState<any[]>([]);
   const [carriers, setCarriers] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
-  const [data, setData] = useState<any>({
-    order_number: '',
-    client_id: '', client_name: '', carrier_id: '', carrier_name: '',
-    route_from: '', route_to: '', route_from_address: '', route_to_address: '',
-    load_date: '', unload_date: '',
-    driver_name: '', driver_phone: '', vehicle_type: '', vehicle_plate: '',
-    client_rate: 0, carrier_rate: 0,
-    status: 'new', client_paid: false, carrier_paid: false,
-    docs_to_client_sent: false, docs_from_client_received: false,
-    docs_to_carrier_sent: false, docs_from_carrier_received: false,
-    cargo: '', weight_tons: 0, notes: '',
-  });
+  const [data, setData] = useState<any>(EMPTY);
+  const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isDirtyRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -35,14 +42,48 @@ export default function NewOrder() {
         api.carriers.list(),
         api.orders.nextNumber().catch(() => null),
       ]);
-      setClients(c); setCarriers(cr);
-      if (nn?.next_number) {
+      setClients(c);
+      setCarriers(cr);
+
+      // Check for draft
+      const draft = await AsyncStorage.getItem(DRAFT_KEY);
+      if (draft) {
+        const parsed = JSON.parse(draft);
+        Alert.alert(
+          'Восстановить черновик?',
+          'Найден несохранённый черновик заявки. Восстановить?',
+          [
+            { text: 'Нет', style: 'cancel', onPress: () => {
+              if (nn?.next_number) setData((d: any) => ({ ...d, order_number: nn.next_number }));
+            }},
+            { text: 'Восстановить', onPress: () => setData(parsed) },
+          ],
+        );
+      } else if (nn?.next_number) {
         setData((d: any) => ({ ...d, order_number: nn.next_number }));
       }
     })();
+
+    // Auto-save every 3 seconds
+    autoSaveRef.current = setInterval(async () => {
+      if (isDirtyRef.current) {
+        setData((current: any) => {
+          AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(current)).catch(() => {});
+          return current;
+        });
+        isDirtyRef.current = false;
+      }
+    }, 3000);
+
+    return () => {
+      if (autoSaveRef.current) clearInterval(autoSaveRef.current);
+    };
   }, []);
 
-  const update = (patch: any) => setData({ ...data, ...patch });
+  const update = (patch: any) => {
+    isDirtyRef.current = true;
+    setData((d: any) => ({ ...d, ...patch }));
+  };
 
   const selectClient = (it: any) => update({ client_id: it.id, client_name: it.label });
   const selectCarrier = (it: any) => {
@@ -60,9 +101,14 @@ export default function NewOrder() {
       return;
     }
     setSaving(true);
-    try { await api.orders.create(data); router.back(); }
-    catch (e: any) { Alert.alert('Ошибка', e.message); }
-    finally { setSaving(false); }
+    try {
+      await api.orders.create(data);
+      await AsyncStorage.removeItem(DRAFT_KEY);
+      router.back();
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message);
+    } finally {
+      setSaving(false); }
   };
 
   const clientItems = clients.map(c => ({ id: c.id, label: c.name, sublabel: c.contact_person || c.phone }));

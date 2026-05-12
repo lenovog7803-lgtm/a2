@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X, Trash2, Check, AlertTriangle, FileText, ExternalLink, RefreshCw, Calendar } from 'lucide-react-native';
+import { X, Trash2, Check, AlertTriangle, FileText, ExternalLink, RefreshCw, Calendar, History } from 'lucide-react-native';
 import { theme, formatMoney, statusLabels } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
@@ -27,7 +27,10 @@ export default function OrderDetail() {
   const [carriers, setCarriers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [genKind, setGenKind] = useState<string | null>(null); // какой документ сейчас генерируем
+  const [genKind, setGenKind] = useState<string | null>(null);
+  const [logsVisible, setLogsVisible] = useState(false);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   const openOrGenerate = async (kind: 'client' | 'carrier' | 'act') => {
     const field = kind === 'client' ? 'doc_url_client' : kind === 'carrier' ? 'doc_url_carrier' : 'doc_url_act';
@@ -124,6 +127,19 @@ export default function OrderDetail() {
       if (!window.confirm(`Удалить заявку ${order.order_number}?`)) return;
       await api.orders.delete(order.id);
       router.back();
+    }
+  };
+
+  const openLogs = async () => {
+    setLogsVisible(true);
+    setLogsLoading(true);
+    try {
+      const data = await api.orders.logs(id!);
+      setLogs(data);
+    } catch {
+      setLogs([]);
+    } finally {
+      setLogsLoading(false);
     }
   };
 
@@ -299,10 +315,49 @@ export default function OrderDetail() {
           </TouchableOpacity>
         )}
 
+        <TouchableOpacity onPress={openLogs} style={styles.logsBtn} activeOpacity={0.8}>
+          <History size={15} color={theme.colors.textSecondary} strokeWidth={1.8} />
+          <Text style={styles.logsBtnText}>История изменений</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity testID="save-btn" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8}>
           {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveText}>Сохранить</Text>}
         </TouchableOpacity>
       </ScrollView>
+
+      <Modal visible={logsVisible} transparent animationType="slide" onRequestClose={() => setLogsVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setLogsVisible(false)} />
+          <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>История изменений</Text>
+              <TouchableOpacity onPress={() => setLogsVisible(false)} style={{ padding: 4 }}>
+                <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+              </TouchableOpacity>
+            </View>
+            {logsLoading ? (
+              <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
+            ) : logs.length === 0 ? (
+              <Text style={styles.emptyLogs}>Изменений нет</Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                {logs.map((log, i) => (
+                  <View key={log.id || i} style={[styles.logRow, i === logs.length - 1 && { borderBottomWidth: 0 }]}>
+                    <Text style={styles.logDate}>{log.timestamp ? new Date(log.timestamp).toLocaleString('ru-RU') : '—'}</Text>
+                    <Text style={styles.logField}>{log.field}</Text>
+                    <View style={styles.logValues}>
+                      <Text style={styles.logOld} numberOfLines={2}>{log.old_value || '—'}</Text>
+                      <Text style={styles.logArrow}>→</Text>
+                      <Text style={styles.logNew} numberOfLines={2}>{log.new_value || '—'}</Text>
+                    </View>
+                    <Text style={styles.logUser}>{log.user}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -384,8 +439,37 @@ const styles = StyleSheet.create({
   toggleDate: { fontSize: 11, color: theme.colors.textTertiary },
   toggleAmt: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
 
-  saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 24 },
+  logsBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 13, paddingHorizontal: 14,
+    backgroundColor: theme.colors.surface, borderRadius: 10,
+    borderWidth: 1, borderColor: theme.colors.border, marginTop: 16,
+  },
+  logsBtnText: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' },
+
+  saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 12 },
   saveText: { color: '#000', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
+
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+  modalSheet: {
+    backgroundColor: theme.colors.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingTop: 20, paddingHorizontal: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16,
+  },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary },
+  emptyLogs: { textAlign: 'center', color: theme.colors.textTertiary, paddingVertical: 32, fontSize: 14 },
+  logRow: {
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border,
+  },
+  logDate: { fontSize: 11, color: theme.colors.textTertiary, marginBottom: 4 },
+  logField: { fontSize: 13, fontWeight: '700', color: theme.colors.textPrimary, marginBottom: 4 },
+  logValues: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  logOld: { flex: 1, fontSize: 12, color: theme.colors.loss, fontWeight: '500' },
+  logArrow: { fontSize: 12, color: theme.colors.textTertiary },
+  logNew: { flex: 1, fontSize: 12, color: theme.colors.profit, fontWeight: '500' },
+  logUser: { fontSize: 11, color: theme.colors.textTertiary },
 
   calBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 13, paddingHorizontal: 14, backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.accent + '50', marginBottom: 8, marginTop: 4 },
   calBtnText: { color: theme.colors.accent, fontSize: 13, fontWeight: '600' },

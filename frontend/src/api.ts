@@ -1,10 +1,25 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import { TOKEN_KEY, USER_KEY } from './auth';
+
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 
 async function req(path: string, opts: RequestInit = {}) {
-  const res = await fetch(`${BASE}/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
-  });
+  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(opts.headers as Record<string, string> || {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  const res = await fetch(`${BASE}/api${path}`, { ...opts, headers });
+
+  if (res.status === 401) {
+    await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
+    router.replace('/login' as any);
+    throw new Error('Unauthorized');
+  }
+
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API ${res.status}: ${text}`);
@@ -22,6 +37,7 @@ export const api = {
     create: (data: any) => req('/orders', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => req(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/orders/${id}`, { method: 'DELETE' }),
+    logs: (id: string) => req(`/orders/${id}/logs`),
     generateDoc: (id: string, kind: 'client' | 'carrier' | 'act', regenerate = false) =>
       req(`/orders/${id}/docs/${kind}${regenerate ? '?regenerate=true' : ''}`, { method: 'POST' }),
   },
@@ -68,6 +84,16 @@ export const api = {
     googleStart: () => req('/auth/google/start'),
     googleStatus: () => req('/auth/google/status'),
     googleDisconnect: () => req('/auth/google', { method: 'DELETE' }),
+    login: (login: string, password: string) =>
+      req('/auth/login', { method: 'POST', body: JSON.stringify({ login, password }) }),
+    me: () => req('/auth/me'),
+  },
+  users: {
+    list: () => req('/users'),
+    create: (data: { name: string; login: string; password: string; role?: string }) =>
+      req('/users', { method: 'POST', body: JSON.stringify(data) }),
+    delete: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
+    stats: (id: string) => req(`/users/${id}/stats`),
   },
   finance: {
     withdrawals: {
