@@ -4,14 +4,12 @@ import {
   ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL ?? '';
 
 export default function Login() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -58,7 +56,7 @@ export default function Login() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <View style={[styles.inner, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 40 }]}>
+      <View style={[styles.inner, { paddingTop: 60, paddingBottom: 40 }]}>
         <View style={styles.header}>
           <Text style={styles.title}>CRM</Text>
           <Text style={styles.subtitle}>Войдите чтобы продолжить</Text>
