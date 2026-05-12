@@ -169,14 +169,6 @@ async def _bg_delete_client(name: str):
     except Exception as e:
         logging.getLogger(__name__).error(f"delete_client bg failed: {e}", exc_info=True)
 
-async def _bg_delete_client(name: str):
-    if not name or _sw_delete_client is None:
-        return
-    try:
-        await _sw_delete_client(name)
-    except Exception as e:
-        logging.getLogger(__name__).error(f"delete_client bg failed: {e}", exc_info=True)
-
 
 async def _bg_trigger_apps_script(order_number: str):
     url = os.environ.get("GOOGLE_APPS_SCRIPT_URL")
@@ -431,6 +423,7 @@ class Order(BaseModel):
     calendar_event_id: Optional[str] = ""
     calendar_event_url: Optional[str] = ""
     assigned_to: Optional[str] = ""
+    created_by: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -564,7 +557,9 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
     async def list_items(current_user: Optional[dict] = Depends(_get_user_from_token)):
         filter_q: dict = {}
         if user_filter and current_user and current_user.get("role") == "manager":
-            filter_q["assigned_to"] = current_user["id"]
+            perms = current_user.get("permissions") or {}
+            if not perms.get("can_view_all_leads"):
+                filter_q["assigned_to"] = current_user["id"]
         docs = await db[collection].find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(50000)
         return [ModelCls(**d) for d in docs]
 
@@ -805,7 +800,9 @@ async def delete_task(task_id: str, background_tasks: BackgroundTasks):
 async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_token)):
     filter_q: dict = {}
     if current_user and current_user.get("role") == "manager":
-        filter_q["assigned_to"] = current_user["id"]
+        perms = current_user.get("permissions") or {}
+        if not perms.get("can_view_all_orders"):
+            filter_q["assigned_to"] = current_user["id"]
     docs = await db.orders.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return [Order(**d) for d in docs]
 
@@ -834,8 +831,12 @@ async def next_order_number():
 
 
 @api_router.post("/orders", response_model=Order)
-async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks):
-    obj = Order(**payload.dict())
+async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks,
+                       current_user: Optional[dict] = Depends(_get_user_from_token)):
+    order_data = payload.dict()
+    if current_user:
+        order_data["created_by"] = current_user["id"]
+    obj = Order(**order_data)
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())
     background_tasks.add_task(_bg_trigger_apps_script, obj.order_number)
@@ -1025,6 +1026,7 @@ class _CreateUserPayload(BaseModel):
     login: str
     password: str
     role: str = "manager"
+    permissions: Optional[dict] = None
 
 
 @api_router.post("/auth/login")
@@ -1063,6 +1065,7 @@ async def create_user(payload: _CreateUserPayload, current_user: dict = Depends(
         "login": payload.login,
         "password_hash": _hash_password(payload.password),
         "role": payload.role,
+        "permissions": payload.permissions or {},
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
@@ -1077,6 +1080,79 @@ async def delete_user(user_id: str, current_user: dict = Depends(_require_user))
         raise HTTPException(400, "Нельзя удалить себя")
     await db.users.delete_one({"id": user_id})
     return {"ok": True}
+
+
+class _UpdateUserPayload(BaseModel):
+    name: Optional[str] = None
+    login: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    permissions: Optional[dict] = None
+
+
+@api_router.put("/users/{user_id}")
+async def update_user(user_id: str, payload: _UpdateUserPayload, current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    update_data: dict = {}
+    if payload.name is not None:
+        update_data["name"] = payload.name
+    if payload.login is not None:
+        existing = await db.users.find_one({"login": payload.login, "id": {"$ne": user_id}})
+        if existing:
+            raise HTTPException(400, "Логин уже занят")
+        update_data["login"] = payload.login
+    if payload.password:
+        update_data["password_hash"] = _hash_password(payload.password)
+    if payload.role is not None:
+        update_data["role"] = payload.role
+    if payload.permissions is not None:
+        update_data["permissions"] = payload.permissions
+    if update_data:
+        await db.users.update_one({"id": user_id}, {"$set": update_data})
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    return user
+
+
+@api_router.get("/users/{user_id}/activity")
+async def get_user_activity(user_id: str, current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    now_dt = datetime.now(timezone.utc)
+    month_start = f"{now_dt.year}-{now_dt.month:02d}-01"
+    orders_month = await db.orders.count_documents({
+        "created_by": user_id,
+        "created_at": {"$gte": month_start},
+    })
+    leads = await db.leads.find({"assigned_to": user_id}, {"_id": 0, "id": 1, "status": 1}).to_list(10000)
+    lead_ids = [l["id"] for l in leads]
+    won_leads = sum(1 for l in leads if l.get("status") == "won")
+    total_leads = len(leads)
+    conversion = round(won_leads / total_leads * 100) if total_leads else 0
+    start_30 = (now_dt - timedelta(days=29)).strftime("%Y-%m-%d")
+    if lead_ids:
+        activity_docs = await db.lead_activity.find(
+            {"lead_id": {"$in": lead_ids}, "date": {"$gte": start_30}}, {"_id": 0}
+        ).to_list(10000)
+    else:
+        activity_docs = []
+    calls_by_day: dict = {}
+    for doc in activity_docs:
+        dt = doc.get("date", "")
+        if dt:
+            calls_by_day[dt] = calls_by_day.get(dt, 0) + 1
+    calls_total = sum(calls_by_day.values())
+    activity_chart = [{"date": k, "count": v} for k, v in sorted(calls_by_day.items())]
+    return {
+        "orders_month": orders_month,
+        "calls_total": calls_total,
+        "total_leads": total_leads,
+        "won_leads": won_leads,
+        "conversion": conversion,
+        "activity_chart": activity_chart,
+    }
 
 
 @api_router.get("/users/{user_id}/stats")
@@ -1537,19 +1613,6 @@ logger = logging.getLogger(__name__)
 
 
 
-# Keep-alive endpoint
-@api_router.get("/ping")
-async def ping():
-    return {"ok": True}
-
-
-# Keep-alive endpoint
-@api_router.get("/ping")
-async def ping():
-    return {"ok": True}
-
-
-# Keep-alive endpoint
 @api_router.get("/ping")
 async def ping():
     return {"ok": True}

@@ -618,6 +618,10 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
   const [newLogin, setNewLogin] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [creating, setCreating] = useState(false);
+  const [newRole, setNewRole] = useState<'manager' | 'director'>('manager');
+  const [newPermissions, setNewPermissions] = useState({ can_view_finance: false, can_view_all_orders: false, can_view_all_clients: false, can_view_all_leads: false, can_create_orders: true });
+  const [editingUser, setEditingUser] = useState<any>(null);
+  const [activityData, setActivityData] = useState<any>(null);
 
   useEffect(() => {
     // Load role from AsyncStorage('user_role')
@@ -635,10 +639,15 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
   const openManagerStats = async (mgr: any) => {
     setStatsModalUser(mgr);
     setStatsData(null);
+    setActivityData(null);
     setStatsLoading(true);
     try {
-      const s = await api.users.stats(mgr.id);
+      const [s, a] = await Promise.all([
+        api.users.stats(mgr.id),
+        api.users.activity(mgr.id).catch(() => null),
+      ]);
       setStatsData(s);
+      setActivityData(a);
     } catch {
       setStatsData(null);
     } finally {
@@ -646,19 +655,47 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
     }
   };
 
-  const createManager = async () => {
-    if (!newName.trim() || !newLogin.trim() || !newPassword.trim()) {
-      Alert.alert('Заполните все поля');
+  const openEditUser = (mgr: any) => {
+    setEditingUser(mgr);
+    setNewName(mgr.name);
+    setNewLogin(mgr.login);
+    setNewPassword('');
+    setNewRole(mgr.role === 'director' ? 'director' : 'manager');
+    setNewPermissions({
+      can_view_finance: !!(mgr.permissions?.can_view_finance),
+      can_view_all_orders: !!(mgr.permissions?.can_view_all_orders),
+      can_view_all_clients: !!(mgr.permissions?.can_view_all_clients),
+      can_view_all_leads: !!(mgr.permissions?.can_view_all_leads),
+      can_create_orders: mgr.permissions?.can_create_orders !== false,
+    });
+    setAddModalVisible(true);
+  };
+
+  const saveUser = async () => {
+    if (!newName.trim() || !newLogin.trim() || (!editingUser && !newPassword.trim())) {
+      Alert.alert('Заполните обязательные поля');
       return;
     }
     setCreating(true);
     try {
-      const mgr = await api.users.create({ name: newName.trim(), login: newLogin.trim(), password: newPassword });
-      setManagers(prev => [...prev, mgr]);
+      if (editingUser) {
+        const updated = await api.users.update(editingUser.id, {
+          name: newName.trim(), login: newLogin.trim(),
+          ...(newPassword ? { password: newPassword } : {}),
+          role: newRole, permissions: newPermissions,
+        });
+        setManagers(prev => prev.map(m => m.id === editingUser.id ? updated : m));
+      } else {
+        const mgr = await api.users.create({ name: newName.trim(), login: newLogin.trim(), password: newPassword, role: newRole, permissions: newPermissions });
+        setManagers(prev => [...prev, mgr]);
+      }
       setAddModalVisible(false);
+      setEditingUser(null);
       setNewName(''); setNewLogin(''); setNewPassword('');
+      setNewRole('manager');
+      setNewPermissions({ can_view_finance: false, can_view_all_orders: false, can_view_all_clients: false, can_view_all_leads: false, can_create_orders: true });
     } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось создать менеджера');
+      Alert.alert('Ошибка', e?.message || 'Не удалось сохранить');
     } finally {
       setCreating(false);
     }
@@ -825,8 +862,11 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={mStyles.leadName}>{mgr.name}</Text>
-                    <Text style={mStyles.leadMeta}>{mgr.role === 'admin' ? 'Администратор' : 'Менеджер'} · {mgr.login}</Text>
+                    <Text style={mStyles.leadMeta}>{mgr.role === 'admin' ? 'Администратор' : mgr.role === 'director' ? 'Директор' : 'Менеджер'} · {mgr.login}</Text>
                   </View>
+                  <TouchableOpacity onPress={() => openEditUser(mgr)} style={mStyles.editBtn} activeOpacity={0.7}>
+                    <Text style={mStyles.editBtnText}>Ред.</Text>
+                  </TouchableOpacity>
                   <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
                 </TouchableOpacity>
               ))}
@@ -836,33 +876,68 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
       )}
 
       {/* Add Manager Modal */}
-      <Modal visible={addModalVisible} transparent animationType="slide" onRequestClose={() => setAddModalVisible(false)}>
+      <Modal visible={addModalVisible} transparent animationType="slide" onRequestClose={() => { setAddModalVisible(false); setEditingUser(null); }}>
         <View style={mStyles.modalOverlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setAddModalVisible(false)} />
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => { setAddModalVisible(false); setEditingUser(null); }} />
           <View style={[mStyles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
             <View style={mStyles.modalHeaderRow}>
-              <Text style={mStyles.modalTitle}>Новый менеджер</Text>
-              <TouchableOpacity onPress={() => setAddModalVisible(false)} style={{ padding: 4 }}>
+              <Text style={mStyles.modalTitle}>{editingUser ? 'Редактировать' : 'Новый менеджер'}</Text>
+              <TouchableOpacity onPress={() => { setAddModalVisible(false); setEditingUser(null); }} style={{ padding: 4 }}>
                 <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
               </TouchableOpacity>
             </View>
-            <View style={{ gap: 12 }}>
-              <View style={mStyles.inputWrap}>
-                <Text style={mStyles.inputLabel}>ИМЯ</Text>
-                <TextInput style={mStyles.input} value={newName} onChangeText={setNewName} placeholder="Иван Иванов" placeholderTextColor={theme.colors.textTertiary} />
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={{ gap: 12 }}>
+                <View style={mStyles.inputWrap}>
+                  <Text style={mStyles.inputLabel}>ИМЯ</Text>
+                  <TextInput style={mStyles.input} value={newName} onChangeText={setNewName} placeholder="Иван Иванов" placeholderTextColor={theme.colors.textTertiary} />
+                </View>
+                <View style={mStyles.inputWrap}>
+                  <Text style={mStyles.inputLabel}>ЛОГИН</Text>
+                  <TextInput style={mStyles.input} value={newLogin} onChangeText={setNewLogin} autoCapitalize="none" placeholder="ivanov" placeholderTextColor={theme.colors.textTertiary} />
+                </View>
+                <View style={mStyles.inputWrap}>
+                  <Text style={mStyles.inputLabel}>{editingUser ? 'НОВЫЙ ПАРОЛЬ (необязательно)' : 'ПАРОЛЬ'}</Text>
+                  <TextInput style={mStyles.input} value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="••••••••" placeholderTextColor={theme.colors.textTertiary} />
+                </View>
+                <View style={mStyles.inputWrap}>
+                  <Text style={mStyles.inputLabel}>РОЛЬ</Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {(['manager', 'director'] as const).map(r => (
+                      <TouchableOpacity key={r} onPress={() => setNewRole(r)} activeOpacity={0.7}
+                        style={[mStyles.roleBtn, newRole === r && mStyles.roleBtnActive]}>
+                        <Text style={[mStyles.roleBtnText, newRole === r && mStyles.roleBtnTextActive]}>
+                          {r === 'manager' ? 'Менеджер' : 'Директор'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+                <View style={mStyles.inputWrap}>
+                  <Text style={mStyles.inputLabel}>ПРАВА ДОСТУПА</Text>
+                  {([
+                    { key: 'can_view_finance', label: 'Видеть финансы' },
+                    { key: 'can_view_all_orders', label: 'Видеть все заявки' },
+                    { key: 'can_view_all_clients', label: 'Видеть всех клиентов' },
+                    { key: 'can_view_all_leads', label: 'Видеть все лиды' },
+                    { key: 'can_create_orders', label: 'Создавать заявки' },
+                  ] as { key: keyof typeof newPermissions; label: string }[]).map(p => (
+                    <View key={p.key} style={mStyles.permRow}>
+                      <Text style={mStyles.permLabel}>{p.label}</Text>
+                      <Switch
+                        value={newPermissions[p.key]}
+                        onValueChange={v => setNewPermissions(prev => ({ ...prev, [p.key]: v }))}
+                        trackColor={{ false: theme.colors.surfaceElevated, true: theme.colors.accent + '60' }}
+                        thumbColor={newPermissions[p.key] ? theme.colors.accent : '#ccc'}
+                      />
+                    </View>
+                  ))}
+                </View>
+                <TouchableOpacity onPress={saveUser} disabled={creating} style={[mStyles.createBtn, creating && { opacity: 0.6 }]} activeOpacity={0.8}>
+                  {creating ? <ActivityIndicator color="#000" /> : <Text style={mStyles.createBtnText}>{editingUser ? 'Сохранить' : 'Создать'}</Text>}
+                </TouchableOpacity>
               </View>
-              <View style={mStyles.inputWrap}>
-                <Text style={mStyles.inputLabel}>ЛОГИН</Text>
-                <TextInput style={mStyles.input} value={newLogin} onChangeText={setNewLogin} autoCapitalize="none" placeholder="ivanov" placeholderTextColor={theme.colors.textTertiary} />
-              </View>
-              <View style={mStyles.inputWrap}>
-                <Text style={mStyles.inputLabel}>ПАРОЛЬ</Text>
-                <TextInput style={mStyles.input} value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="••••••••" placeholderTextColor={theme.colors.textTertiary} />
-              </View>
-              <TouchableOpacity onPress={createManager} disabled={creating} style={[mStyles.createBtn, creating && { opacity: 0.6 }]} activeOpacity={0.8}>
-                {creating ? <ActivityIndicator color="#000" /> : <Text style={mStyles.createBtnText}>Создать</Text>}
-              </TouchableOpacity>
-            </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -881,24 +956,42 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
             {statsLoading ? (
               <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
             ) : statsData ? (
-              <View style={mStyles.statsGrid}>
-                <View style={mStyles.statCard}>
-                  <Text style={mStyles.statCardLabel}>ЗАЯВКИ</Text>
-                  <Text style={mStyles.statCardValue}>{statsData.orders_count}</Text>
+              <>
+                <View style={mStyles.statsGrid}>
+                  <View style={mStyles.statCard}>
+                    <Text style={mStyles.statCardLabel}>ЗАЯВКИ МЕС.</Text>
+                    <Text style={mStyles.statCardValue}>{activityData?.orders_month ?? '—'}</Text>
+                  </View>
+                  <View style={mStyles.statCard}>
+                    <Text style={mStyles.statCardLabel}>ЗВОНКИ (30 дн.)</Text>
+                    <Text style={mStyles.statCardValue}>{activityData?.calls_total ?? '—'}</Text>
+                  </View>
+                  <View style={mStyles.statCard}>
+                    <Text style={mStyles.statCardLabel}>КОНВЕРСИЯ</Text>
+                    <Text style={[mStyles.statCardValue, { color: theme.colors.profit }]}>{activityData?.conversion ?? statsData.conversion}%</Text>
+                  </View>
+                  <View style={mStyles.statCard}>
+                    <Text style={mStyles.statCardLabel}>ВЫРУЧКА МЕС.</Text>
+                    <Text style={[mStyles.statCardValue, { color: theme.colors.accent, fontSize: 16 }]}>{formatMoney(statsData.revenue_month)}</Text>
+                  </View>
                 </View>
-                <View style={mStyles.statCard}>
-                  <Text style={mStyles.statCardLabel}>ЛИДЫ</Text>
-                  <Text style={mStyles.statCardValue}>{statsData.leads_count}</Text>
-                </View>
-                <View style={mStyles.statCard}>
-                  <Text style={mStyles.statCardLabel}>КОНВЕРСИЯ</Text>
-                  <Text style={[mStyles.statCardValue, { color: theme.colors.profit }]}>{statsData.conversion}%</Text>
-                </View>
-                <View style={mStyles.statCard}>
-                  <Text style={mStyles.statCardLabel}>ВЫРУЧКА МЕС.</Text>
-                  <Text style={[mStyles.statCardValue, { color: theme.colors.accent, fontSize: 16 }]}>{formatMoney(statsData.revenue_month)}</Text>
-                </View>
-              </View>
+                {activityData?.activity_chart?.length > 0 && (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={mStyles.statCardLabel}>АКТИВНОСТЬ ПО ДНЯМ</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 4, marginTop: 8, height: 40 }}>
+                      {activityData.activity_chart.slice(-14).map((item: any) => {
+                        const maxC = Math.max(...activityData.activity_chart.map((x: any) => x.count), 1);
+                        const h = Math.max(4, (item.count / maxC) * 36);
+                        return (
+                          <View key={item.date} style={{ flex: 1, alignItems: 'center' }}>
+                            <View style={{ width: '100%', height: h, backgroundColor: theme.colors.accent, borderRadius: 2 }} />
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                )}
+              </>
             ) : (
               <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
             )}
@@ -972,6 +1065,17 @@ const mStyles = StyleSheet.create({
   statCard: { flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' },
   statCardLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 },
   statCardValue: { fontSize: 22, fontWeight: '700', color: theme.colors.textPrimary },
+
+  editBtn: { paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.accent + '15', borderRadius: 7, borderWidth: 1, borderColor: theme.colors.accent + '40', marginRight: 6 },
+  editBtnText: { color: theme.colors.accent, fontSize: 11, fontWeight: '700' },
+
+  roleBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 10, backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border },
+  roleBtnActive: { backgroundColor: theme.colors.accent + '15', borderColor: theme.colors.accent },
+  roleBtnText: { fontSize: 13, fontWeight: '600', color: theme.colors.textTertiary },
+  roleBtnTextActive: { color: theme.colors.accent, fontWeight: '700' },
+
+  permRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  permLabel: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '500', flex: 1 },
 });
 
 const cStyles = StyleSheet.create({

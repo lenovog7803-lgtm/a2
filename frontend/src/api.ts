@@ -98,10 +98,13 @@ export const api = {
   },
   users: {
     list: () => req('/users'),
-    create: (data: { name: string; login: string; password: string; role?: string }) =>
+    create: (data: { name: string; login: string; password: string; role?: string; permissions?: any }) =>
       req('/users', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: { name?: string; login?: string; password?: string; role?: string; permissions?: any }) =>
+      req(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
     stats: (id: string) => req(`/users/${id}/stats`),
+    activity: (id: string) => req(`/users/${id}/activity`),
   },
   finance: {
     withdrawals: {
