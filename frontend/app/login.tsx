@@ -6,7 +6,6 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { theme } from '../src/theme';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL ?? '';
 
@@ -42,7 +41,6 @@ export default function Login() {
       }
 
       const data = await res.json();
-      // Сохраняем токен и роль в AsyncStorage
       await AsyncStorage.setItem('jwt_token', data.token);
       await AsyncStorage.setItem('user_role', data.user?.role ?? 'manager');
       await AsyncStorage.setItem('user_data', JSON.stringify(data.user));
@@ -58,7 +56,7 @@ export default function Login() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1, backgroundColor: "#F5F1EB" }}
+      style={styles.container}
     >
       <View style={[styles.inner, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 40 }]}>
         <View style={styles.header}>
@@ -76,7 +74,7 @@ export default function Login() {
               autoCapitalize="none"
               autoCorrect={false}
               placeholder="admin"
-              placeholderTextColor={theme.colors.textTertiary}
+              placeholderTextColor="#999999"
             />
           </View>
 
@@ -88,7 +86,7 @@ export default function Login() {
               onChangeText={v => { setPassword(v); setError(''); }}
               secureTextEntry
               placeholder="••••••••"
-              placeholderTextColor={theme.colors.textTertiary}
+              placeholderTextColor="#999999"
               onSubmitEditing={handleLogin}
               returnKeyType="done"
             />
@@ -115,28 +113,28 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#F5F1EB' },
   inner: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
   header: { marginBottom: 40, alignItems: 'center' },
-  title: { fontSize: 32, fontWeight: '800', color: theme.colors.accent, letterSpacing: -1 },
-  subtitle: { fontSize: 14, color: theme.colors.textTertiary, marginTop: 6 },
+  title: { fontSize: 32, fontWeight: '800', color: '#B8840A', letterSpacing: -1 },
+  subtitle: { fontSize: 14, color: '#999999', marginTop: 6 },
   form: { gap: 14 },
   fieldWrap: { gap: 6 },
-  fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary },
+  fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: '#999999' },
   input: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1, borderColor: '#E5E0D8',
     borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
-    color: theme.colors.textPrimary, fontSize: 15,
+    color: '#1A1A1A', fontSize: 15,
   },
   error: {
-    color: theme.colors.loss,
+    color: '#E53935',
     fontSize: 13,
     fontWeight: '500',
     textAlign: 'center',
   },
   btn: {
-    backgroundColor: theme.colors.accent, paddingVertical: 16,
+    backgroundColor: '#B8840A', paddingVertical: 16,
     borderRadius: 12, alignItems: 'center', marginTop: 4,
   },
   btnText: { color: '#000', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },

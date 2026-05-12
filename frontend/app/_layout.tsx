@@ -102,7 +102,7 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: theme.colors.bg,
+    backgroundColor: '#F5F1EB',
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -1,25 +1,8 @@
-import { useEffect } from 'react';
-import { useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { View, ActivityIndicator } from 'react-native';
-import { theme } from '../src/theme';
+import React from 'react';
+import { View } from 'react-native';
 
+// Navigation is handled by _layout.tsx auth check.
+// This screen renders briefly while the overlay is visible.
 export default function Index() {
-  const router = useRouter();
-
-  useEffect(() => {
-    AsyncStorage.getItem('jwt_token').then(token => {
-      if (token) {
-        router.replace('/(tabs)/dashboard' as any);
-      } else {
-        router.replace('/login' as any);
-      }
-    });
-  }, []);
-
-  return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator color={theme.colors.accent} size="large" />
-    </View>
-  );
+  return <View style={{ flex: 1, backgroundColor: '#F5F1EB' }} />;
 }
