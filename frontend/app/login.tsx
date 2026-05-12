@@ -28,7 +28,8 @@ export default function Login() {
       router.replace('/(tabs)/dashboard' as any);
     } catch (e: any) {
       const msg = e?.message || '';
-      Alert.alert('Ошибка входа', msg.includes('401') ? 'Неверный логин или пароль' : msg);
+      const isCreds = msg === 'Unauthorized' || msg.includes('401');
+      Alert.alert('Ошибка входа', isCreds ? 'Неверный логин или пароль' : msg);
     } finally {
       setLoading(false);
     }

@@ -1,27 +1,15 @@
-import React, { useEffect } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import React from 'react';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { View, Platform } from 'react-native';
+import { View } from 'react-native';
 import { ThemeProvider } from '../src/themeContext';
-import { theme, applyTheme, bootstrapTheme } from '../src/theme';
-import { getToken } from '../src/auth';
+import { theme, bootstrapTheme } from '../src/theme';
 
 bootstrapTheme();
 
 export default function RootLayout() {
-  const router = useRouter();
-
-  useEffect(() => {
-    (async () => {
-      const token = await getToken();
-      if (!token) {
-        router.replace('/login' as any);
-      }
-    })();
-  }, []);
-
   return (
     <ThemeProvider>
       {(mode) => (
@@ -36,8 +24,9 @@ export default function RootLayout() {
                   animation: 'slide_from_right',
                 }}
               >
+                <Stack.Screen name="index" options={{ animation: 'none' }} />
                 <Stack.Screen name="(tabs)" />
-                <Stack.Screen name="login" options={{ presentation: 'card', animation: 'fade' }} />
+                <Stack.Screen name="login" options={{ animation: 'fade', gestureEnabled: false }} />
                 <Stack.Screen name="order/[id]" options={{ presentation: 'card', animation: 'slide_from_bottom' }} />
                 <Stack.Screen name="order/new" options={{ presentation: 'card', animation: 'slide_from_bottom' }} />
                 <Stack.Screen name="client/new" options={{ presentation: 'card', animation: 'slide_from_bottom' }} />
