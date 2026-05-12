@@ -203,13 +203,6 @@ export default function Dashboard() {
               ) : (
                 <Moon size={16} color={theme.colors.accent} strokeWidth={1.6} />
               )}
-              <Switch
-                value={mode === 'light'}
-                onValueChange={() => toggleTheme()}
-                trackColor={{ false: theme.colors.surfaceElevated, true: theme.colors.accent + '60' }}
-                thumbColor={theme.colors.accent}
-                ios_backgroundColor={theme.colors.surfaceElevated}
-              />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => logout(router)}
