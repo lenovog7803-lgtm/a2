@@ -9,7 +9,9 @@ import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
 import { Linking } from 'react-native';
-import { getUser, clearAuth } from '../../src/auth';
+import { getRole, clearAuth } from '../../src/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ROLE_KEY } from '../../src/auth';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
@@ -37,7 +39,6 @@ export default function Dashboard() {
   const [dashView, setDashView] = useState<'dashboard' | 'manager'>('dashboard');
   const [leads, setLeads] = useState<any[]>([]);
   const [activityStats, setActivityStats] = useState<any[]>([]);
-  const [currentUser, setCurrentUser] = useState<any>(null);
 
   // Sheets import state
   const [syncing, setSyncing] = useState(false);
@@ -69,7 +70,6 @@ export default function Dashboard() {
   useEffect(() => {
     api.sync.importStatus().then(setImportStatus).catch(() => {});
     api.auth.googleStatus().then(setAuthStatus).catch(() => {});
-    getUser().then(setCurrentUser).catch(() => {});
   }, []);
 
   const connectGoogle = async () => {
@@ -324,7 +324,7 @@ export default function Dashboard() {
 
         <ProfitChart chartOrders={d.chart_orders || []} period={period} />
         </>) : (
-          <ManagerView leads={leads} activityStats={activityStats} currentUser={currentUser} />
+          <ManagerView leads={leads} activityStats={activityStats} />
         )}
       </View>
     </ScrollView>
@@ -590,10 +590,11 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
 
 // ─── Manager View ─────────────────────────────────────────────────────────────
 
-function ManagerView({ leads, activityStats, currentUser }: { leads: any[]; activityStats: any[]; currentUser: any }) {
+function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: any[] }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const today = new Date().toISOString().slice(0, 10);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [managers, setManagers] = useState<any[]>([]);
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [statsModalUser, setStatsModalUser] = useState<any>(null);
@@ -604,13 +605,18 @@ function ManagerView({ leads, activityStats, currentUser }: { leads: any[]; acti
   const [newPassword, setNewPassword] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const isAdmin = currentUser?.role === 'admin';
-
   useEffect(() => {
-    if (isAdmin) {
-      api.users.list().then(setManagers).catch(() => {});
-    }
-  }, [isAdmin]);
+    // Load role from AsyncStorage('user_role')
+    AsyncStorage.getItem(ROLE_KEY)
+      .then(role => {
+        const admin = role === 'admin';
+        setIsAdmin(admin);
+        if (admin) {
+          api.users.list().then(setManagers).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const openManagerStats = async (mgr: any) => {
     setStatsModalUser(mgr);

@@ -5,8 +5,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../src/api';
-import { saveAuth } from '../src/auth';
+import { TOKEN_KEY, ROLE_KEY, USER_KEY } from '../src/auth';
 import { theme } from '../src/theme';
 
 export default function Login() {
@@ -24,12 +25,15 @@ export default function Login() {
     setLoading(true);
     try {
       const result = await api.auth.login(login.trim(), password);
-      await saveAuth(result.token, result.user);
+      // Save token, role and full user separately
+      await AsyncStorage.setItem(TOKEN_KEY, result.token);
+      await AsyncStorage.setItem(ROLE_KEY, result.user?.role ?? 'manager');
+      await AsyncStorage.setItem(USER_KEY, JSON.stringify(result.user));
       router.replace('/(tabs)/dashboard' as any);
     } catch (e: any) {
-      const msg = e?.message || '';
-      const isCreds = msg === 'Unauthorized' || msg.includes('401');
-      Alert.alert('Ошибка входа', isCreds ? 'Неверный логин или пароль' : msg);
+      const msg = e?.message ?? '';
+      const isBadCreds = msg === 'Unauthorized' || msg.includes('401');
+      Alert.alert('Ошибка входа', isBadCreds ? 'Неверный логин или пароль' : (msg || 'Ошибка сервера'));
     } finally {
       setLoading(false);
     }
@@ -100,10 +104,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 14, color: theme.colors.textTertiary, marginTop: 6 },
   form: { gap: 16 },
   fieldWrap: { gap: 6 },
-  fieldLabel: {
-    fontSize: 10, fontWeight: '700', letterSpacing: 1.5,
-    color: theme.colors.textTertiary,
-  },
+  fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary },
   input: {
     backgroundColor: theme.colors.surface,
     borderWidth: 1, borderColor: theme.colors.border,

@@ -1,13 +1,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { TOKEN_KEY, USER_KEY } from './auth';
+import { router } from 'expo-router';
+import { TOKEN_KEY, USER_KEY, ROLE_KEY } from './auth';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 
+// Paths that must not trigger a /login redirect on 401
+const NO_REDIRECT_PATHS = ['/auth/login', '/auth/me'];
+
 async function handleUnauthorized() {
   try {
-    await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
-    // Dynamic import to avoid circular dep and to only pull in router when navigation is ready
-    const { router } = await import('expo-router');
+    await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY, ROLE_KEY]);
     router.replace('/login' as any);
   } catch {}
 }
@@ -27,8 +29,8 @@ async function req(path: string, opts: RequestInit = {}) {
   const res = await fetch(`${BASE}/api${path}`, { ...opts, headers });
 
   if (res.status === 401) {
-    // Don't redirect to login when the login call itself fails (wrong credentials)
-    if (!path.endsWith('/auth/login')) {
+    const skip = NO_REDIRECT_PATHS.some(p => path.endsWith(p));
+    if (!skip) {
       handleUnauthorized();
     }
     throw new Error('Unauthorized');
