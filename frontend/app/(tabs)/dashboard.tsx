@@ -454,7 +454,7 @@ export default function Dashboard() {
               return (
                 <TouchableOpacity key={ym} onPress={() => setTeamStatsPeriod(ym)} activeOpacity={0.7}
                   style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: active ? theme.colors.accent : theme.colors.surfaceElevated, borderWidth: 1, borderColor: active ? theme.colors.accent : theme.colors.border }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: active ? '#000' : theme.colors.textSecondary }}>{lbl}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: active ? theme.colors.bg : theme.colors.textSecondary }}>{lbl}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -1051,7 +1051,7 @@ function ManagerView({ leads, activityStats, managers, setManagers, isAdmin, cur
                 </View>
                 )}
                 <TouchableOpacity onPress={saveUser} disabled={creating} style={[mStyles.createBtn, creating && { opacity: 0.6 }]} activeOpacity={0.8}>
-                  {creating ? <ActivityIndicator color="#000" /> : <Text style={mStyles.createBtnText}>{editingUser ? 'Сохранить' : 'Создать'}</Text>}
+                  {creating ? <ActivityIndicator color={theme.colors.bg} /> : <Text style={mStyles.createBtnText}>{editingUser ? 'Сохранить' : 'Создать'}</Text>}
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1177,7 +1177,7 @@ const mStyles = StyleSheet.create({
   inputLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary },
   input: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, color: theme.colors.textPrimary, fontSize: 14 },
   createBtn: { backgroundColor: theme.colors.accent, paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 4 },
-  createBtnText: { color: '#000', fontSize: 14, fontWeight: '700' },
+  createBtnText: { color: theme.colors.bg, fontSize: 14, fontWeight: '700' },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 8 },
   statCard: { flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' },
   statCardLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 },
