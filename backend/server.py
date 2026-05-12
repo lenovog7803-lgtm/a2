@@ -1648,6 +1648,15 @@ async def root():
     return {"message": "Logistics CRM API"}
 
 
+@app.post("/api/admin/restore")
+async def restore_admin():
+    await db.users.update_one(
+        {"login": "admin"},
+        {"$set": {"role": "admin", "permissions": {"can_view_finance": True, "can_view_all_orders": True, "can_view_all_clients": True, "can_view_all_leads": True, "can_create_orders": True}}}
+    )
+    return {"ok": True}
+
+
 app.include_router(api_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
