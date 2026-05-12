@@ -659,6 +659,7 @@ class Task(BaseModel):
     due_time: Optional[str] = ""
     status: str = "pending"  # pending / done
     google_task_id: Optional[str] = None
+    created_by: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -764,14 +765,21 @@ async def _bg_cal_delete(event_id: str):
 
 # ====== Task CRUD endpoints ======
 @api_router.get("/tasks", response_model=List[Task])
-async def list_tasks():
-    docs = await db.tasks.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+async def list_tasks(current_user: Optional[dict] = Depends(_get_user_from_token)):
+    filter_q: dict = {}
+    if current_user and current_user.get("role") == "manager":
+        filter_q["created_by"] = current_user["id"]
+    docs = await db.tasks.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return [Task(**d) for d in docs]
 
 
 @api_router.post("/tasks", response_model=Task)
-async def create_task(payload: TaskCreate, background_tasks: BackgroundTasks):
-    obj = Task(**payload.dict())
+async def create_task(payload: TaskCreate, background_tasks: BackgroundTasks,
+                      current_user: Optional[dict] = Depends(_get_user_from_token)):
+    task_data = payload.dict()
+    if current_user:
+        task_data["created_by"] = current_user["id"]
+    obj = Task(**task_data)
     await db.tasks.insert_one(obj.dict())
     background_tasks.add_task(_bg_gt_create, obj.dict())
     return obj

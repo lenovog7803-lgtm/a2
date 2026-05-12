@@ -1,10 +1,20 @@
+import React, { useState, useEffect } from 'react';
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { Platform, StyleSheet, View } from 'react-native';
 import { LayoutDashboard, Package, Users, Truck, CheckSquare, Phone, DollarSign } from 'lucide-react-native';
 import { theme } from '../../src/theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function TabsLayout() {
+  const [role, setRole] = useState<string>('');
+
+  useEffect(() => {
+    AsyncStorage.getItem('user_role').then(r => setRole(r || '')).catch(() => {});
+  }, []);
+
+  const isManager = role === 'manager';
+
   return (
     <Tabs
       screenOptions={{
@@ -33,6 +43,7 @@ export default function TabsLayout() {
         name="finance"
         options={{
           title: 'Финансы',
+          href: isManager ? null : undefined,
           tabBarIcon: ({ color }) => <DollarSign size={20} color={color} strokeWidth={1.6} />,
         }}
       />

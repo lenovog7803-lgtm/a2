@@ -41,7 +41,7 @@ const orderInPeriod = (o: any, p: string) => {
   return ud.startsWith(p);
 };
 
-export default function Finance() {
+function FinanceInner() {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabType>('orders');
   const [accPeriod, setAccPeriod] = useState<string>(currentMonth()); // 'all' | YYYY-MM | 'qN'
@@ -815,3 +815,19 @@ const styles = StyleSheet.create({
   mSaveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginTop: 4 },
   mSaveTxt: { color: '#000', fontSize: 15, fontWeight: '700' },
 });
+
+export default function Finance() {
+  const [role, setRole] = useState('');
+  useEffect(() => {
+    AsyncStorage.getItem('user_role').then(r => setRole(r || '')).catch(() => {});
+  }, []);
+  if (role === 'manager') {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.bg, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: theme.colors.textTertiary, fontSize: 16, fontWeight: '600' }}>Нет доступа</Text>
+        <Text style={{ color: theme.colors.textTertiary, fontSize: 13, marginTop: 8 }}>Финансы доступны только администратору</Text>
+      </View>
+    );
+  }
+  return <FinanceInner />;
+}

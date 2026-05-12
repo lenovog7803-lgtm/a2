@@ -5,6 +5,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Plus, Phone, Mail, Search } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function Clients() {
   const insets = useSafeAreaInsets();
@@ -15,8 +16,15 @@ export default function Clients() {
 
   const load = useCallback(async () => {
     try {
+      const r = await AsyncStorage.getItem('user_role').catch(() => null);
+      const isManager = r === 'manager';
+      let myClientNames: Set<string> | null = null;
+      if (isManager) {
+        const orders = await api.orders.list().catch(() => []);
+        myClientNames = new Set(orders.map((o: any) => o.client_name).filter(Boolean));
+      }
       const c = await api.clients.list();
-      setClients(c);
+      setClients(isManager && myClientNames ? c.filter((cl: any) => myClientNames!.has(cl.name)) : c);
     } finally {
       setLoading(false);
     }

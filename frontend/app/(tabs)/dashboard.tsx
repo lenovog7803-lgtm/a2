@@ -232,6 +232,7 @@ export default function Dashboard() {
           searchable={false}
         />
 
+        {currentUserRole !== 'manager' && (<>
         {/* Hero: Маржа */}
         <View style={styles.heroCard}>
           <Text style={styles.metricLabel}>МАРЖА · {period === 'all' ? 'ВСЕГО' : monthLabel(period).toUpperCase()}</Text>
@@ -277,6 +278,7 @@ export default function Dashboard() {
             <Text style={[styles.bentoValue, { color: theme.colors.loss }]}>{formatMoney(d.owed_to_carriers)}</Text>
           </View>
         </View>
+        </>)}
 
         <View style={styles.statsGrid}>
           <StatTile icon={<Briefcase size={16} color={theme.colors.accent} strokeWidth={1.6} />} label="Активных" value={String(d.active_orders || 0)} />
@@ -286,7 +288,7 @@ export default function Dashboard() {
         </View>
 
         {/* Должники */}
-        {(d.debtors || []).length > 0 && (
+        {currentUserRole !== 'manager' && (d.debtors || []).length > 0 && (
           <>
             <Text style={styles.sectionLabel}>ДОЛЖНИКИ — КЛИЕНТЫ</Text>
             <View style={styles.listCard}>
@@ -304,7 +306,7 @@ export default function Dashboard() {
         )}
 
         {/* Кому должен */}
-        {(d.creditors || []).length > 0 && (
+        {currentUserRole !== 'manager' && (d.creditors || []).length > 0 && (
           <>
             <Text style={styles.sectionLabel}>ДОЛЖЕН ПЕРЕВОЗЧИКАМ</Text>
             <View style={styles.listCard}>
@@ -329,7 +331,7 @@ export default function Dashboard() {
           <StatusBar label="Отменено" value={d.status_breakdown?.cancelled || 0} total={d.total_orders || 1} color={theme.colors.loss} />
         </View>
 
-        {(d.top_clients || []).length > 0 && (
+        {currentUserRole !== 'manager' && (d.top_clients || []).length > 0 && (
           <>
             <Text style={styles.sectionLabel}>ТОП КЛИЕНТОВ</Text>
             <View style={styles.listCard}>
@@ -351,9 +353,9 @@ export default function Dashboard() {
           </>
         )}
 
-        <ProfitChart chartOrders={d.chart_orders || []} period={period} />
+        {currentUserRole !== 'manager' && <ProfitChart chartOrders={d.chart_orders || []} period={period} />}
 
-        {teamManagers.length > 0 && (
+        {currentUserRole !== 'manager' && teamManagers.length > 0 && (
           <TeamBlock managers={teamManagers} onPress={async (mgr: any) => {
             setTeamStatsUser(mgr);
             setTeamStatsData(null);
