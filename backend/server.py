@@ -584,7 +584,8 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
         return ModelCls(**doc)
 
     @api_router.put(f"/{prefix}/{{item_id}}", response_model=ModelCls)
-    async def update_item(item_id: str, payload: PayloadCls, background_tasks: BackgroundTasks):
+    async def update_item(item_id: str, payload: PayloadCls, background_tasks: BackgroundTasks,
+                          current_user: Optional[dict] = Depends(_get_user_from_token)):
         old_status = None
         if collection == "leads":
             old_doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
@@ -599,6 +600,7 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
                 await db.lead_activity.insert_one({
                     "id": str(uuid.uuid4()),
                     "lead_id": item_id,
+                    "user_id": (current_user or {}).get("id", ""),
                     "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                     "old_status": old_status,
                     "new_status": new_status,
@@ -1207,22 +1209,38 @@ async def get_user_activity(user_id: str, current_user: dict = Depends(_require_
 
 
 @api_router.get("/users/{user_id}/stats")
-async def get_user_stats(user_id: str, current_user: dict = Depends(_require_user)):
+async def get_user_stats(user_id: str, period: Optional[str] = None, current_user: dict = Depends(_require_user)):
     if current_user.get("role") != "admin":
         raise HTTPException(403, "Только для администратора")
     now_dt = datetime.now(timezone.utc)
-    month_start = f"{now_dt.year}-{now_dt.month:02d}-01"
-    orders = await db.orders.find({"assigned_to": user_id}, {"_id": 0}).to_list(10000)
-    leads = await db.leads.find({"assigned_to": user_id}, {"_id": 0}).to_list(10000)
-    month_orders = [o for o in orders if (o.get("created_at") or "")[:10] >= month_start]
-    revenue_month = sum(o.get("client_rate", 0) for o in month_orders)
-    won_leads = len([l for l in leads if l.get("status") == "won"])
-    conversion = round(won_leads / len(leads) * 100) if leads else 0
+    if period and len(period) == 7:
+        y, m = int(period[:4]), int(period[5:7])
+        month_start = f"{y}-{m:02d}-01"
+        month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
+    else:
+        y, m = now_dt.year, now_dt.month
+        month_start = f"{y}-{m:02d}-01"
+        month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
+    orders_in_month = await db.orders.find(
+        {"created_by": user_id, "created_at": {"$gte": month_start, "$lt": month_end}},
+        {"_id": 0, "client_rate": 1},
+    ).to_list(10000)
+    orders_created = len(orders_in_month)
+    revenue_month = sum(o.get("client_rate", 0) for o in orders_in_month)
+    calls_made = await db.lead_activity.count_documents(
+        {"user_id": user_id, "date": {"$gte": month_start, "$lt": month_end}}
+    )
+    leads = await db.leads.find({"assigned_to": user_id}, {"_id": 0, "status": 1}).to_list(10000)
+    won = sum(1 for l in leads if l.get("status") == "won")
+    total = len(leads)
+    conversion = round(won / total * 100) if total else 0
     return {
-        "orders_count": len(orders),
-        "leads_count": len(leads),
+        "orders_created": orders_created,
+        "calls_made": calls_made,
         "conversion": conversion,
         "revenue_month": revenue_month,
+        "total_leads": total,
+        "won_leads": won,
     }
 
 

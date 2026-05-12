@@ -103,7 +103,7 @@ export const api = {
     update: (id: string, data: { name?: string; login?: string; password?: string; role?: string; permissions?: any }) =>
       req(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
-    stats: (id: string) => req(`/users/${id}/stats`),
+    stats: (id: string, period?: string) => req(`/users/${id}/stats${period ? `?period=${encodeURIComponent(period)}` : ''}`),
     activity: (id: string) => req(`/users/${id}/activity`),
     activitySummary: () => req('/users/activity_summary'),
   },

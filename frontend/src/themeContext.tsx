@@ -44,7 +44,7 @@ export function ThemeProvider({ children }: { children: (mode: ThemeMode) => Rea
 
   return (
     <ThemeContext.Provider value={{ mode, toggle, setMode, ready }}>
-      {ready ? children(mode) : null}
+      {ready ? <React.Fragment key={mode}>{children(mode)}</React.Fragment> : null}
     </ThemeContext.Provider>
   );
 }

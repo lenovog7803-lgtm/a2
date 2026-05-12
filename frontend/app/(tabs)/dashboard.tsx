@@ -48,7 +48,7 @@ export default function Dashboard() {
   const [currentUserId, setCurrentUserId] = useState('');
   const [teamStatsUser, setTeamStatsUser] = useState<any>(null);
   const [teamStatsData, setTeamStatsData] = useState<any>(null);
-  const [teamStatsActivity, setTeamStatsActivity] = useState<any>(null);
+  const [teamStatsPeriod, setTeamStatsPeriod] = useState<string>(currentMonth());
   const [teamStatsLoading, setTeamStatsLoading] = useState(false);
 
   // Sheets import state
@@ -90,6 +90,16 @@ export default function Dashboard() {
     api.sync.importStatus().then(setImportStatus).catch(() => {});
     api.auth.googleStatus().then(setAuthStatus).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!teamStatsUser) return;
+    setTeamStatsLoading(true);
+    setTeamStatsData(null);
+    api.users.stats(teamStatsUser.id, teamStatsPeriod)
+      .then(setTeamStatsData)
+      .catch(() => setTeamStatsData(null))
+      .finally(() => setTeamStatsLoading(false));
+  }, [teamStatsUser, teamStatsPeriod]);
 
   const connectGoogle = async () => {
     try {
@@ -356,19 +366,9 @@ export default function Dashboard() {
         {currentUserRole !== 'manager' && <ProfitChart chartOrders={d.chart_orders || []} period={period} />}
 
         {currentUserRole !== 'manager' && teamManagers.length > 0 && (
-          <TeamBlock managers={teamManagers} onPress={async (mgr: any) => {
+          <TeamBlock managers={teamManagers} onPress={(mgr: any) => {
+            setTeamStatsPeriod(currentMonth());
             setTeamStatsUser(mgr);
-            setTeamStatsData(null);
-            setTeamStatsActivity(null);
-            setTeamStatsLoading(true);
-            try {
-              const [s, a] = await Promise.all([
-                api.users.stats(mgr.id),
-                api.users.activity(mgr.id).catch(() => null),
-              ]);
-              setTeamStatsData(s);
-              setTeamStatsActivity(a);
-            } catch { setTeamStatsData(null); } finally { setTeamStatsLoading(false); }
           }} />
         )}
         </>) : (
@@ -449,39 +449,39 @@ export default function Dashboard() {
               <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
             </TouchableOpacity>
           </View>
+          {/* Month picker */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }} contentContainerStyle={{ gap: 8, paddingBottom: 2 }}>
+            {Array.from({ length: 6 }, (_, i) => {
+              const d = new Date();
+              d.setDate(1);
+              d.setMonth(d.getMonth() - i);
+              const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+              const lbl = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+              const active = ym === teamStatsPeriod;
+              return (
+                <TouchableOpacity key={ym} onPress={() => setTeamStatsPeriod(ym)} activeOpacity={0.7}
+                  style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: active ? theme.colors.accent : theme.colors.surfaceElevated, borderWidth: 1, borderColor: active ? theme.colors.accent : theme.colors.border }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: active ? '#000' : theme.colors.textSecondary }}>{lbl}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
           {teamStatsLoading ? (
             <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
           ) : teamStatsData ? (
-            <>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 8 }}>
-                {[
-                  { label: 'ЗАЯВКИ МЕС.', value: teamStatsActivity?.orders_month ?? '—', color: theme.colors.accent },
-                  { label: 'ЗВОНКИ (30 дн.)', value: teamStatsActivity?.calls_total ?? '—', color: theme.colors.info },
-                  { label: 'КОНВЕРСИЯ', value: `${teamStatsActivity?.conversion ?? teamStatsData.conversion}%`, color: theme.colors.profit },
-                  { label: 'ВЫРУЧКА МЕС.', value: formatMoney(teamStatsData.revenue_month), color: theme.colors.accent },
-                ].map(card => (
-                  <View key={card.label} style={{ flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 }}>{card.label}</Text>
-                    <Text style={{ fontSize: 20, fontWeight: '700', color: card.color }}>{card.value}</Text>
-                  </View>
-                ))}
-              </View>
-              {teamStatsActivity?.activity_chart?.length > 0 && (
-                <View style={{ marginTop: 12 }}>
-                  <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 8 }}>АКТИВНОСТЬ ПО ДНЯМ</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 4, height: 40 }}>
-                    {teamStatsActivity.activity_chart.slice(-14).map((item: any) => {
-                      const maxC = Math.max(...teamStatsActivity.activity_chart.map((x: any) => x.count), 1);
-                      return (
-                        <View key={item.date} style={{ flex: 1, alignItems: 'center' }}>
-                          <View style={{ width: '100%', height: Math.max(4, (item.count / maxC) * 36), backgroundColor: theme.colors.accent, borderRadius: 2 }} />
-                        </View>
-                      );
-                    })}
-                  </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 8 }}>
+              {[
+                { label: 'ЗАЯВКИ', value: teamStatsData.orders_created ?? '—', color: theme.colors.accent },
+                { label: 'ЗВОНКИ', value: teamStatsData.calls_made ?? '—', color: theme.colors.info },
+                { label: 'КОНВЕРСИЯ', value: `${teamStatsData.conversion ?? 0}%`, color: theme.colors.profit },
+                { label: 'ВЫРУЧКА', value: formatMoney(teamStatsData.revenue_month ?? 0), color: theme.colors.accent },
+              ].map(card => (
+                <View key={card.label} style={{ flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 }}>{card.label}</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '700', color: card.color }}>{card.value}</Text>
                 </View>
-              )}
-            </>
+              ))}
+            </View>
           ) : (
             <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
           )}
