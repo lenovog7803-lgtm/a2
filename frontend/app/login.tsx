@@ -58,7 +58,7 @@ export default function Login() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={[styles.container, { backgroundColor: theme.colors.bg }]}
+      style={{ flex: 1, backgroundColor: "#F5F1EB" }}
     >
       <View style={[styles.inner, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 40 }]}>
         <View style={styles.header}>
