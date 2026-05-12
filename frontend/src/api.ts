@@ -105,6 +105,7 @@ export const api = {
     delete: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
     stats: (id: string) => req(`/users/${id}/stats`),
     activity: (id: string) => req(`/users/${id}/activity`),
+    activitySummary: () => req('/users/activity_summary'),
   },
   finance: {
     withdrawals: {

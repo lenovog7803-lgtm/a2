@@ -43,11 +43,25 @@ export default function Dashboard() {
   const [dashView, setDashView] = useState<'dashboard' | 'manager'>('dashboard');
   const [leads, setLeads] = useState<any[]>([]);
   const [activityStats, setActivityStats] = useState<any[]>([]);
+  const [teamManagers, setTeamManagers] = useState<any[]>([]);
+  const [currentUserRole, setCurrentUserRole] = useState('');
+  const [currentUserId, setCurrentUserId] = useState('');
+  const [teamStatsUser, setTeamStatsUser] = useState<any>(null);
+  const [teamStatsData, setTeamStatsData] = useState<any>(null);
+  const [teamStatsActivity, setTeamStatsActivity] = useState<any>(null);
+  const [teamStatsLoading, setTeamStatsLoading] = useState(false);
 
   // Sheets import state
   const [syncing, setSyncing] = useState(false);
   const [importStatus, setImportStatus] = useState<any>(null);
   const [authStatus, setAuthStatus] = useState<any>({ connected: false });
+
+  useEffect(() => {
+    AsyncStorage.getItem(ROLE_KEY).then(r => setCurrentUserRole(r || '')).catch(() => {});
+    AsyncStorage.getItem('user_data').then(raw => {
+      try { const u = JSON.parse(raw || '{}'); setCurrentUserId(u.id || ''); } catch {}
+    }).catch(() => {});
+  }, []);
 
   const load = useCallback(async (p: string) => {
     try {
@@ -61,6 +75,7 @@ export default function Dashboard() {
       setAllOrders(orders);
       setLeads(leadsData);
       setActivityStats(statsData);
+      api.users.activitySummary().then(setTeamManagers).catch(() => {});
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -337,8 +352,32 @@ export default function Dashboard() {
         )}
 
         <ProfitChart chartOrders={d.chart_orders || []} period={period} />
+
+        {teamManagers.length > 0 && (
+          <TeamBlock managers={teamManagers} onPress={async (mgr: any) => {
+            setTeamStatsUser(mgr);
+            setTeamStatsData(null);
+            setTeamStatsActivity(null);
+            setTeamStatsLoading(true);
+            try {
+              const [s, a] = await Promise.all([
+                api.users.stats(mgr.id),
+                api.users.activity(mgr.id).catch(() => null),
+              ]);
+              setTeamStatsData(s);
+              setTeamStatsActivity(a);
+            } catch { setTeamStatsData(null); } finally { setTeamStatsLoading(false); }
+          }} />
+        )}
         </>) : (
-          <ManagerView leads={leads} activityStats={activityStats} />
+          <ManagerView
+            leads={leads}
+            activityStats={activityStats}
+            managers={teamManagers}
+            setManagers={setTeamManagers}
+            isAdmin={currentUserRole === 'admin'}
+            currentUserId={currentUserId}
+          />
         )}
       </View>
     </ScrollView>
@@ -393,6 +432,60 @@ export default function Dashboard() {
         </View>
       </View>
     </Modal>
+
+    {/* Team stats modal */}
+    <Modal visible={!!teamStatsUser} transparent animationType="slide" onRequestClose={() => setTeamStatsUser(null)}>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setTeamStatsUser(null)} />
+        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalTitle}>{teamStatsUser?.name}</Text>
+              <Text style={styles.modalSub}>{teamStatsUser?.role === 'admin' ? 'Администратор' : teamStatsUser?.role === 'director' ? 'Директор' : 'Менеджер'}</Text>
+            </View>
+            <TouchableOpacity onPress={() => setTeamStatsUser(null)} style={{ padding: 4 }}>
+              <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+            </TouchableOpacity>
+          </View>
+          {teamStatsLoading ? (
+            <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
+          ) : teamStatsData ? (
+            <>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 8 }}>
+                {[
+                  { label: 'ЗАЯВКИ МЕС.', value: teamStatsActivity?.orders_month ?? '—', color: theme.colors.accent },
+                  { label: 'ЗВОНКИ (30 дн.)', value: teamStatsActivity?.calls_total ?? '—', color: theme.colors.info },
+                  { label: 'КОНВЕРСИЯ', value: `${teamStatsActivity?.conversion ?? teamStatsData.conversion}%`, color: theme.colors.profit },
+                  { label: 'ВЫРУЧКА МЕС.', value: formatMoney(teamStatsData.revenue_month), color: theme.colors.accent },
+                ].map(card => (
+                  <View key={card.label} style={{ flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 }}>{card.label}</Text>
+                    <Text style={{ fontSize: 20, fontWeight: '700', color: card.color }}>{card.value}</Text>
+                  </View>
+                ))}
+              </View>
+              {teamStatsActivity?.activity_chart?.length > 0 && (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 8 }}>АКТИВНОСТЬ ПО ДНЯМ</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 4, height: 40 }}>
+                    {teamStatsActivity.activity_chart.slice(-14).map((item: any) => {
+                      const maxC = Math.max(...teamStatsActivity.activity_chart.map((x: any) => x.count), 1);
+                      return (
+                        <View key={item.date} style={{ flex: 1, alignItems: 'center' }}>
+                          <View style={{ width: '100%', height: Math.max(4, (item.count / maxC) * 36), backgroundColor: theme.colors.accent, borderRadius: 2 }} />
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+            </>
+          ) : (
+            <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
+          )}
+        </View>
+      </View>
+    </Modal>
     </>
   );
 }
@@ -431,6 +524,35 @@ function StatusBar({ label, value, total, color }: any) {
       </View>
       <View style={styles.bgBar}><View style={[styles.bgFill, { width: `${pct}%`, backgroundColor: color }]} /></View>
     </View>
+  );
+}
+
+function TeamBlock({ managers, onPress }: { managers: any[]; onPress: (mgr: any) => void }) {
+  const visible = managers.filter(m => m.role !== 'admin' || managers.length <= 3);
+  if (!visible.length) return null;
+  return (
+    <>
+      <Text style={styles.sectionLabel}>КОМАНДА</Text>
+      <View style={styles.listCard}>
+        {managers.map((mgr, i) => (
+          <TouchableOpacity key={mgr.id} onPress={() => onPress(mgr)} activeOpacity={0.7}
+            style={[styles.debtRow, i === managers.length - 1 && { borderBottomWidth: 0 }]}>
+            <View style={mStyles.mgrAvatar}>
+              <Text style={mStyles.mgrAvatarText}>{mgr.name[0]?.toUpperCase() || '?'}</Text>
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.debtName} numberOfLines={1}>{mgr.name}</Text>
+              <Text style={styles.debtMeta}>{mgr.role === 'admin' ? 'Администратор' : mgr.role === 'director' ? 'Директор' : 'Менеджер'}</Text>
+            </View>
+            <View style={{ alignItems: 'flex-end', gap: 2 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.accent }}>{mgr.orders_month} зая.</Text>
+              <Text style={{ fontSize: 11, color: theme.colors.textTertiary }}>{mgr.calls_month} зв.</Text>
+            </View>
+            <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} style={{ marginLeft: 6 }} />
+          </TouchableOpacity>
+        ))}
+      </View>
+    </>
   );
 }
 
@@ -604,12 +726,14 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
 
 // ─── Manager View ─────────────────────────────────────────────────────────────
 
-function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: any[] }) {
+function ManagerView({ leads, activityStats, managers, setManagers, isAdmin, currentUserId }: {
+  leads: any[]; activityStats: any[];
+  managers: any[]; setManagers: (v: any[]) => void;
+  isAdmin: boolean; currentUserId: string;
+}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const today = new Date().toISOString().slice(0, 10);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [managers, setManagers] = useState<any[]>([]);
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [statsModalUser, setStatsModalUser] = useState<any>(null);
   const [statsData, setStatsData] = useState<any>(null);
@@ -623,18 +747,11 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
   const [editingUser, setEditingUser] = useState<any>(null);
   const [activityData, setActivityData] = useState<any>(null);
 
-  useEffect(() => {
-    // Load role from AsyncStorage('user_role')
-    AsyncStorage.getItem(ROLE_KEY)
-      .then(role => {
-        const admin = role === 'admin';
-        setIsAdmin(admin);
-        if (admin) {
-          api.users.list().then(setManagers).catch(() => {});
-        }
-      })
-      .catch(() => {});
-  }, []);
+  useFocusEffect(useCallback(() => {
+    if (isAdmin) {
+      api.users.activitySummary().then(setManagers).catch(() => {});
+    }
+  }, [isAdmin]));
 
   const openManagerStats = async (mgr: any) => {
     setStatsModalUser(mgr);
@@ -679,12 +796,13 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
     setCreating(true);
     try {
       if (editingUser) {
-        const updated = await api.users.update(editingUser.id, {
+        await api.users.update(editingUser.id, {
           name: newName.trim(), login: newLogin.trim(),
           ...(newPassword ? { password: newPassword } : {}),
-          role: newRole, permissions: newPermissions,
+          ...(editingUser.id !== currentUserId ? { role: newRole, permissions: newPermissions } : {}),
         });
-        setManagers(prev => prev.map(m => m.id === editingUser.id ? updated : m));
+        const refreshed = await api.users.activitySummary();
+        setManagers(refreshed);
       } else {
         const mgr = await api.users.create({ name: newName.trim(), login: newLogin.trim(), password: newPassword, role: newRole, permissions: newPermissions });
         setManagers(prev => [...prev, mgr]);
@@ -900,6 +1018,7 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
                   <Text style={mStyles.inputLabel}>{editingUser ? 'НОВЫЙ ПАРОЛЬ (необязательно)' : 'ПАРОЛЬ'}</Text>
                   <TextInput style={mStyles.input} value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="••••••••" placeholderTextColor={theme.colors.textTertiary} />
                 </View>
+                {(!editingUser || editingUser.id !== currentUserId) && (
                 <View style={mStyles.inputWrap}>
                   <Text style={mStyles.inputLabel}>РОЛЬ</Text>
                   <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -913,6 +1032,8 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
                     ))}
                   </View>
                 </View>
+                )}
+                {(!editingUser || editingUser.id !== currentUserId) && (
                 <View style={mStyles.inputWrap}>
                   <Text style={mStyles.inputLabel}>ПРАВА ДОСТУПА</Text>
                   {([
@@ -933,6 +1054,7 @@ function ManagerView({ leads, activityStats }: { leads: any[]; activityStats: an
                     </View>
                   ))}
                 </View>
+                )}
                 <TouchableOpacity onPress={saveUser} disabled={creating} style={[mStyles.createBtn, creating && { opacity: 0.6 }]} activeOpacity={0.8}>
                   {creating ? <ActivityIndicator color="#000" /> : <Text style={mStyles.createBtnText}>{editingUser ? 'Сохранить' : 'Создать'}</Text>}
                 </TouchableOpacity>

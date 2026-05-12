@@ -212,7 +212,7 @@ async def _auto_sync_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(_auto_sync_loop())
-    count = await db.users.count_documents({})
+    count = await db.users.count_documents({"role": "admin"})
     if count == 0:
         admin = {
             "id": str(uuid.uuid4()),
@@ -1078,8 +1078,47 @@ async def delete_user(user_id: str, current_user: dict = Depends(_require_user))
         raise HTTPException(403, "Только для администратора")
     if user_id == current_user.get("id"):
         raise HTTPException(400, "Нельзя удалить себя")
+    target = await db.users.find_one({"id": user_id})
+    if target and target.get("role") == "admin":
+        admin_count = await db.users.count_documents({"role": "admin"})
+        if admin_count <= 1:
+            raise HTTPException(400, "Нельзя удалить последнего администратора")
     await db.users.delete_one({"id": user_id})
     return {"ok": True}
+
+
+@api_router.get("/users/activity_summary")
+async def get_users_activity_summary(current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    now_dt = datetime.now(timezone.utc)
+    month_start = f"{now_dt.year}-{now_dt.month:02d}-01"
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    orders_agg = await db.orders.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}}},
+        {"$group": {"_id": "$created_by", "count": {"$sum": 1}}},
+    ]).to_list(1000)
+    orders_by_user = {item["_id"]: item["count"] for item in orders_agg}
+    leads_agg = await db.leads.aggregate([
+        {"$group": {"_id": "$assigned_to", "lead_ids": {"$push": "$id"}}},
+    ]).to_list(1000)
+    leads_by_user = {item["_id"]: item["lead_ids"] for item in leads_agg}
+    start_30 = (now_dt - timedelta(days=29)).strftime("%Y-%m-%d")
+    activity_docs = await db.lead_activity.find(
+        {"date": {"$gte": start_30}}, {"_id": 0, "lead_id": 1}
+    ).to_list(50000)
+    activity_by_lead: dict = {}
+    for doc in activity_docs:
+        lid = doc.get("lead_id")
+        if lid:
+            activity_by_lead[lid] = activity_by_lead.get(lid, 0) + 1
+    result = []
+    for u in users:
+        uid = u["id"]
+        user_leads = leads_by_user.get(uid, [])
+        calls = sum(activity_by_lead.get(lid, 0) for lid in user_leads)
+        result.append({**u, "orders_month": orders_by_user.get(uid, 0), "calls_month": calls})
+    return result
 
 
 class _UpdateUserPayload(BaseModel):
@@ -1105,8 +1144,12 @@ async def update_user(user_id: str, payload: _UpdateUserPayload, current_user: d
     if payload.password:
         update_data["password_hash"] = _hash_password(payload.password)
     if payload.role is not None:
+        if user_id == current_user.get("id"):
+            raise HTTPException(400, "Нельзя изменить свою роль")
         update_data["role"] = payload.role
     if payload.permissions is not None:
+        if user_id == current_user.get("id"):
+            raise HTTPException(400, "Нельзя изменить свои права")
         update_data["permissions"] = payload.permissions
     if update_data:
         await db.users.update_one({"id": user_id}, {"$set": update_data})
