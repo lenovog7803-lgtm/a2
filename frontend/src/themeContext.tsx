@@ -6,14 +6,14 @@ const STORAGE_KEY = 'theme_mode';
 
 type Ctx = {
   mode: ThemeMode;
-  toggle: () => void;
+  toggleTheme: () => void;
   setMode: (m: ThemeMode) => void;
   ready: boolean;
 };
 
 const ThemeContext = createContext<Ctx>({
   mode: 'dark',
-  toggle: () => {},
+  toggleTheme: () => {},
   setMode: () => {},
   ready: false,
 });
@@ -40,10 +40,10 @@ export function ThemeProvider({ children }: { children: (mode: ThemeMode) => Rea
     AsyncStorage.setItem(STORAGE_KEY, m).catch(() => {});
   };
 
-  const toggle = () => setMode(mode === 'dark' ? 'light' : 'dark');
+  const toggleTheme = () => setMode(mode === 'dark' ? 'light' : 'dark');
 
   return (
-    <ThemeContext.Provider value={{ mode, toggle, setMode, ready }}>
+    <ThemeContext.Provider value={{ mode, toggleTheme, setMode, ready }}>
       {ready ? <React.Fragment key={mode}>{children(mode)}</React.Fragment> : null}
     </ThemeContext.Provider>
   );

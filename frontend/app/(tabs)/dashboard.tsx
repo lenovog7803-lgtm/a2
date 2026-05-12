@@ -33,7 +33,7 @@ async function logout(router: any) {
 export default function Dashboard() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { mode, toggle } = useTheme();
+  const { mode, toggleTheme } = useTheme();
   const [data, setData] = useState<any>(null);
   const [allOrders, setAllOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -197,7 +197,7 @@ export default function Dashboard() {
             <Text style={styles.title}>Дашборд</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TouchableOpacity onPress={toggle} activeOpacity={0.7} style={styles.themeBtn} testID="theme-toggle">
+            <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.7} style={styles.themeBtn} testID="theme-toggle">
               {mode === 'dark' ? (
                 <Sun size={16} color={theme.colors.accent} strokeWidth={1.6} />
               ) : (
@@ -205,7 +205,7 @@ export default function Dashboard() {
               )}
               <Switch
                 value={mode === 'light'}
-                onValueChange={toggle}
+                onValueChange={() => toggleTheme()}
                 trackColor={{ false: theme.colors.surfaceElevated, true: theme.colors.accent + '60' }}
                 thumbColor={theme.colors.accent}
                 ios_backgroundColor={theme.colors.surfaceElevated}
