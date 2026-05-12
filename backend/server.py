@@ -1659,3 +1659,22 @@ logger = logging.getLogger(__name__)
 @api_router.get("/ping")
 async def ping():
     return {"ok": True}
+
+
+@api_router.post("/admin/restore")
+async def admin_restore():
+    all_perms = {
+        "can_view_finance": True,
+        "can_view_all_orders": True,
+        "can_view_all_clients": True,
+        "can_view_all_leads": True,
+        "can_create_orders": True,
+    }
+    result = await db.users.update_one(
+        {"login": "admin"},
+        {"$set": {"role": "admin", "permissions": all_perms}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Пользователь admin не найден")
+    user = await db.users.find_one({"login": "admin"}, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "user": user}
