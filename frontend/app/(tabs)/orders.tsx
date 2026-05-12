@@ -129,7 +129,7 @@ export default function Orders() {
               {activeFilters > 0 && <View style={styles.dot}><Text style={styles.dotText}>{activeFilters}</Text></View>}
             </TouchableOpacity>
             <TouchableOpacity testID="add-order-btn" onPress={() => router.push('/order/new')} style={styles.fab} activeOpacity={0.8}>
-              <Plus size={20} color="#000" strokeWidth={2.2} />
+              <Plus size={20} color={theme.colors.bg} strokeWidth={2.2} />
             </TouchableOpacity>
           </View>
         </View>
@@ -238,7 +238,7 @@ function OrderCard({ order, onPress, testID }: any) {
     <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.7} style={[styles.card, overdue && styles.cardOverdue]}>
       {overdue && (
         <View style={styles.overdueBanner}>
-          <AlertTriangle size={12} color="#fff" strokeWidth={2} />
+          <AlertTriangle size={12} color={theme.colors.bg} strokeWidth={2} />
           <Text style={styles.overdueText}>ПРОСРОЧКА · {days} ДН. БЕЗ ОПЛАТЫ ОТ КЛИЕНТА</Text>
         </View>
       )}
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
   fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
   iconBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' },
   dot: { position: 'absolute', top: 4, right: 4, minWidth: 16, height: 16, paddingHorizontal: 4, borderRadius: 8, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
-  dotText: { color: '#000', fontSize: 9, fontWeight: '700' },
+  dotText: { color: theme.colors.bg, fontSize: 9, fontWeight: '700' },
 
   chip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 999 },
   chipActive: { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent },
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16, overflow: 'hidden' },
   cardOverdue: { borderColor: theme.colors.loss + '60' },
   overdueBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.loss, marginHorizontal: -16, marginTop: -16, marginBottom: 12, paddingVertical: 6, paddingHorizontal: 12 },
-  overdueText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  overdueText: { color: theme.colors.bg, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
 
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   orderNum: { color: theme.colors.accent, fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },

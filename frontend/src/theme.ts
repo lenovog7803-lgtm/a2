@@ -17,6 +17,7 @@ const DARK = {
   info: '#60A5FA',
   border: 'rgba(255,255,255,0.08)',
   borderStrong: 'rgba(255,255,255,0.16)',
+  overlay: 'rgba(0,0,0,0.5)',
 };
 
 const LIGHT = {
@@ -35,6 +36,7 @@ const LIGHT = {
   info: '#1E5BB5',
   border: 'rgba(14,14,16,0.10)',
   borderStrong: 'rgba(14,14,16,0.20)',
+  overlay: 'rgba(0,0,0,0.5)',
 };
 
 export type ThemeMode = 'dark' | 'light';

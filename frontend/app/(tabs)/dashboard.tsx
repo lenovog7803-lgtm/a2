@@ -673,7 +673,7 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
       <View style={cStyles.legend}>
         <View style={[cStyles.dot, { backgroundColor: theme.colors.accent }]} />
         <Text style={cStyles.legendTxt}>Текущий</Text>
-        <View style={[cStyles.dot, { backgroundColor: '#888' }]} />
+        <View style={[cStyles.dot, { backgroundColor: theme.colors.textSecondary }]} />
         <Text style={cStyles.legendTxt}>Прошлый</Text>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -684,7 +684,7 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
             return (
               <React.Fragment key={day}>
                 <View style={{ position: 'absolute', left: i * slotW + padL, bottom: LABEL_H, width: barHalf, height: ch, backgroundColor: theme.colors.accent, borderRadius: 3 }} />
-                <View style={{ position: 'absolute', left: i * slotW + padL + barHalf + INNER_GAP, bottom: LABEL_H, width: barHalf, height: ph, backgroundColor: '#888', borderRadius: 3 }} />
+                <View style={{ position: 'absolute', left: i * slotW + padL + barHalf + INNER_GAP, bottom: LABEL_H, width: barHalf, height: ph, backgroundColor: theme.colors.textSecondary, borderRadius: 3 }} />
                 <Text style={{ position: 'absolute', left: i * slotW, bottom: 0, width: slotW - OUTER_GAP, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{day}</Text>
               </React.Fragment>
             );
@@ -694,7 +694,7 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
               <Polyline points={currPts.map(p => `${p.x},${p.y}`).join(' ')} stroke={theme.colors.accent} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
             )}
             {prevPts.length >= 2 && (
-              <Polyline points={prevPts.map(p => `${p.x},${p.y}`).join(' ')} stroke="#888" strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+              <Polyline points={prevPts.map(p => `${p.x},${p.y}`).join(' ')} stroke={theme.colors.textSecondary} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
             )}
             {currPts.map((p, i) => (
               <G key={`c${i}`}>
@@ -706,8 +706,8 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
             ))}
             {prevPts.map((p, i) => (
               <G key={`p${i}`}>
-                <Circle cx={p.x} cy={p.y} r={3} fill="#888" />
-                <SvgText x={p.x} y={p.y - 5} textAnchor="middle" fontSize={8} fill="#888" fontWeight="600">
+                <Circle cx={p.x} cy={p.y} r={3} fill={theme.colors.textSecondary} />
+                <SvgText x={p.x} y={p.y - 5} textAnchor="middle" fontSize={8} fill={theme.colors.textSecondary} fontWeight="600">
                   {p.val > 0 ? formatShort(p.val) : ''}
                 </SvgText>
               </G>
@@ -1044,7 +1044,7 @@ function ManagerView({ leads, activityStats, managers, setManagers, isAdmin, cur
                         value={newPermissions[p.key]}
                         onValueChange={v => setNewPermissions(prev => ({ ...prev, [p.key]: v }))}
                         trackColor={{ false: theme.colors.surfaceElevated, true: theme.colors.accent + '60' }}
-                        thumbColor={newPermissions[p.key] ? theme.colors.accent : '#ccc'}
+                        thumbColor={newPermissions[p.key] ? theme.colors.accent : theme.colors.textTertiary}
                       />
                     </View>
                   ))}
@@ -1169,7 +1169,7 @@ const mStyles = StyleSheet.create({
   mgrAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.accent + '20', alignItems: 'center', justifyContent: 'center' },
   mgrAvatarText: { color: theme.colors.accent, fontSize: 16, fontWeight: '700' },
 
-  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: theme.colors.overlay },
   modalSheet: { backgroundColor: theme.colors.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 20, paddingHorizontal: 20 },
   modalHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
   modalTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary },
@@ -1291,7 +1291,7 @@ const styles = StyleSheet.create({
   topName: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '500', marginBottom: 6 },
   topRevenue: { color: theme.colors.accent, fontSize: 13, fontWeight: '700', minWidth: 70, textAlign: 'right' },
 
-  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: theme.colors.overlay },
   modalSheet: {
     backgroundColor: theme.colors.surface,
     borderTopLeftRadius: 20, borderTopRightRadius: 20,
