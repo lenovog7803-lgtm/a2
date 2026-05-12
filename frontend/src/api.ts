@@ -1,24 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
-import { TOKEN_KEY, USER_KEY, ROLE_KEY } from './auth';
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-// Paths that must not trigger a /login redirect on 401
-const NO_REDIRECT_PATHS = ['/auth/login', '/auth/me'];
-
-async function handleUnauthorized() {
-  try {
-    await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY, ROLE_KEY]);
-    router.replace('/login' as any);
-  } catch {}
-}
+const BASE = process.env.EXPO_PUBLIC_BACKEND_URL ?? '';
 
 async function req(path: string, opts: RequestInit = {}) {
+  // Берём токен из AsyncStorage перед каждым запросом
   let token: string | null = null;
-  try {
-    token = await AsyncStorage.getItem(TOKEN_KEY);
-  } catch {}
+  try { token = await AsyncStorage.getItem('jwt_token'); } catch {}
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -29,10 +16,15 @@ async function req(path: string, opts: RequestInit = {}) {
   const res = await fetch(`${BASE}/api${path}`, { ...opts, headers });
 
   if (res.status === 401) {
-    const skip = NO_REDIRECT_PATHS.some(p => path.endsWith(p));
-    if (!skip) {
-      handleUnauthorized();
-    }
+    // Очищаем токен и редиректим на логин
+    try {
+      await AsyncStorage.multiRemove(['jwt_token', 'user_role', 'user_data']);
+      // Avoid redirect loop for the login/me endpoints themselves
+      if (!path.endsWith('/auth/login') && !path.endsWith('/auth/me')) {
+        const { router } = require('expo-router');
+        router.replace('/login');
+      }
+    } catch {}
     throw new Error('Unauthorized');
   }
 

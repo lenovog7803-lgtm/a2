@@ -9,7 +9,6 @@ import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
 import { Linking } from 'react-native';
-import { getRole, clearAuth } from '../../src/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ROLE_KEY } from '../../src/auth';
 
@@ -25,6 +24,11 @@ const currentMonth = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
+
+async function logout(router: any) {
+  await AsyncStorage.multiRemove(['jwt_token', 'user_role', 'user_data']).catch(() => {});
+  router.replace('/login' as any);
+}
 
 export default function Dashboard() {
   const insets = useSafeAreaInsets();
@@ -167,20 +171,30 @@ export default function Dashboard() {
             <Text style={styles.label}>ОБЗОР</Text>
             <Text style={styles.title}>Дашборд</Text>
           </View>
-          <TouchableOpacity onPress={toggle} activeOpacity={0.7} style={styles.themeBtn} testID="theme-toggle">
-            {mode === 'dark' ? (
-              <Sun size={16} color={theme.colors.accent} strokeWidth={1.6} />
-            ) : (
-              <Moon size={16} color={theme.colors.accent} strokeWidth={1.6} />
-            )}
-            <Switch
-              value={mode === 'light'}
-              onValueChange={toggle}
-              trackColor={{ false: theme.colors.surfaceElevated, true: theme.colors.accent + '60' }}
-              thumbColor={theme.colors.accent}
-              ios_backgroundColor={theme.colors.surfaceElevated}
-            />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity onPress={toggle} activeOpacity={0.7} style={styles.themeBtn} testID="theme-toggle">
+              {mode === 'dark' ? (
+                <Sun size={16} color={theme.colors.accent} strokeWidth={1.6} />
+              ) : (
+                <Moon size={16} color={theme.colors.accent} strokeWidth={1.6} />
+              )}
+              <Switch
+                value={mode === 'light'}
+                onValueChange={toggle}
+                trackColor={{ false: theme.colors.surfaceElevated, true: theme.colors.accent + '60' }}
+                thumbColor={theme.colors.accent}
+                ios_backgroundColor={theme.colors.surfaceElevated}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => logout(router)}
+              activeOpacity={0.7}
+              style={styles.logoutBtn}
+              testID="logout-btn"
+            >
+              <LogOut size={16} color={theme.colors.loss} strokeWidth={1.6} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.modeToggle}>
@@ -989,6 +1003,12 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surface,
     borderWidth: 1, borderColor: theme.colors.border,
     borderRadius: 999,
+  },
+  logoutBtn: {
+    width: 34, height: 34, borderRadius: 17,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1, borderColor: theme.colors.border,
   },
   label: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 6 },
   title: { fontSize: 34, fontWeight: '300', letterSpacing: -1, color: theme.colors.textPrimary, marginBottom: 16 },
