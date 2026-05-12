@@ -19,6 +19,7 @@ export default function RootLayout() {
           <Stack.Screen name="lead/new" />
           <Stack.Screen name="lead/[id]" />
           <Stack.Screen name="task/[id]" />
+          <Stack.Screen name="trash" />
         </Stack>
       )}
     </ThemeProvider>

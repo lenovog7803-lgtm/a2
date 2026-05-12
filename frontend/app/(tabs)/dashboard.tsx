@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, 
 import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2 } from 'lucide-react-native';
 import { theme, formatMoney, formatShort, leadStatusColors, leadStatusLabels } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
@@ -204,6 +204,9 @@ export default function Dashboard() {
                 <Moon size={16} color={theme.colors.accent} strokeWidth={1.6} />
               )}
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/trash')} activeOpacity={0.7} style={styles.themeBtn} testID="trash-btn">
+              <Trash2 size={16} color={theme.colors.textSecondary} strokeWidth={1.6} />
+            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => logout(router)}
               activeOpacity={0.7}
@@ -352,6 +355,35 @@ export default function Dashboard() {
                   </View>
                 );
               })}
+            </View>
+          </>
+        )}
+
+        {currentUserRole !== 'manager' && (d.top_clients_margin || []).length > 0 && (
+          <>
+            <Text style={styles.sectionLabel}>ТОП КЛИЕНТОВ ПО МАРЖЕ</Text>
+            <View style={styles.listCard}>
+              {(d.top_clients_margin || []).map((c: any, i: number) => (
+                <View key={c.name} style={[styles.topRow, i === (d.top_clients_margin.length - 1) && { borderBottomWidth: 0 }]}>
+                  <View style={styles.topRankCircle}><Text style={styles.topRank}>{i + 1}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.topName} numberOfLines={1}>{c.name}</Text>
+                    <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 1 }}>
+                      {c.orders_count} заявок · выручка {formatShort(c.revenue)} Br
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end', gap: 2 }}>
+                    <Text style={[styles.topRevenue, { color: c.margin >= 0 ? theme.colors.profit : theme.colors.loss }]}>
+                      {formatShort(c.margin)} Br
+                    </Text>
+                    <View style={[styles.marginBadge, { backgroundColor: (c.margin_percent >= 20 ? theme.colors.profit : c.margin_percent >= 10 ? theme.colors.warning : theme.colors.loss) + '20' }]}>
+                      <Text style={[styles.marginBadgeTxt, { color: c.margin_percent >= 20 ? theme.colors.profit : c.margin_percent >= 10 ? theme.colors.warning : theme.colors.loss }]}>
+                        {c.margin_percent}%
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ))}
             </View>
           </>
         )}
@@ -1288,8 +1320,10 @@ const styles = StyleSheet.create({
   topRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   topRankCircle: { width: 28, height: 28, borderRadius: 14, backgroundColor: theme.colors.accent + '20', borderWidth: 1, borderColor: theme.colors.accent + '40', alignItems: 'center', justifyContent: 'center' },
   topRank: { color: theme.colors.accent, fontSize: 12, fontWeight: '700' },
-  topName: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '500', marginBottom: 6 },
+  topName: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '500', marginBottom: 2 },
   topRevenue: { color: theme.colors.accent, fontSize: 13, fontWeight: '700', minWidth: 70, textAlign: 'right' },
+  marginBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignItems: 'center' },
+  marginBadgeTxt: { fontSize: 10, fontWeight: '800' },
 
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: theme.colors.overlay },
   modalSheet: {

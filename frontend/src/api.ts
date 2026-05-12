@@ -119,5 +119,15 @@ export const api = {
       delete: (id: string) => req(`/finance/transactions/${id}`, { method: 'DELETE' }),
     },
   },
+  trash: {
+    list: () => req('/trash'),
+    restore: (collection: string, id: string) => req(`/trash/restore/${collection}/${id}`, { method: 'POST' }),
+    purge: () => req('/trash/purge', { method: 'POST' }),
+  },
+  backup: {
+    list: () => req('/backup/list'),
+    create: () => req('/backup/create', { method: 'POST' }),
+    restore: (id: string) => req(`/backup/restore/${id}`, { method: 'POST' }),
+  },
   seed: () => req('/seed', { method: 'POST' }),
 };

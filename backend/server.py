@@ -209,9 +209,68 @@ async def _auto_sync_loop():
             logging.getLogger(__name__).error(f"auto sync failed: {e}")
 
 
+# ====== Backup helpers ======
+_BACKUP_COLLECTIONS = ["orders", "clients", "carriers", "leads", "tasks", "users"]
+_TRASH_COLLECTIONS = ["orders", "clients", "carriers", "leads"]
+
+
+async def _create_backup():
+    snapshot: dict = {}
+    for cname in _BACKUP_COLLECTIONS:
+        docs = await db[cname].find({}, {"_id": 0}).to_list(100000)
+        snapshot[cname] = docs
+    backup_doc = {
+        "id": str(uuid.uuid4()),
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "created_at": now_iso(),
+        "collections": snapshot,
+    }
+    await db.backups.insert_one(backup_doc)
+    # Keep only last 30 backups
+    all_bk = await db.backups.find({}, {"_id": 1, "created_at": 1}).sort("created_at", -1).to_list(100)
+    if len(all_bk) > 30:
+        await db.backups.delete_many({"_id": {"$in": [b["_id"] for b in all_bk[30:]]}})
+    logging.getLogger(__name__).info(f"Backup created: {backup_doc['id']}")
+
+
+async def _purge_old_trash():
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    for cname in _TRASH_COLLECTIONS:
+        await db[cname].delete_many({"deleted": True, "deleted_at": {"$lt": cutoff}})
+    logging.getLogger(__name__).info("Trash auto-purge completed")
+
+
+async def _backup_loop():
+    last_date = None
+    while True:
+        now = datetime.now(timezone.utc)
+        if now.hour == 23 and now.minute == 0 and last_date != now.date():
+            last_date = now.date()
+            try:
+                await _create_backup()
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Nightly backup failed: {e}")
+        await asyncio.sleep(60)
+
+
+async def _trash_purge_loop():
+    last_date = None
+    while True:
+        now = datetime.now(timezone.utc)
+        if now.hour == 0 and now.minute == 5 and last_date != now.date():
+            last_date = now.date()
+            try:
+                await _purge_old_trash()
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Trash purge failed: {e}")
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(_auto_sync_loop())
+    asyncio.create_task(_backup_loop())
+    asyncio.create_task(_trash_purge_loop())
     count = await db.users.count_documents({"role": "admin"})
     if count == 0:
         admin = {
@@ -552,10 +611,12 @@ class LeadUpdate(BaseModel):
 
 
 # ===== CRUD helper =====
-def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets: bool = False, user_filter: bool = False):
+def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets: bool = False, user_filter: bool = False, soft_delete: bool = False):
     @api_router.get(f"/{prefix}", response_model=List[ModelCls])
     async def list_items(current_user: Optional[dict] = Depends(_get_user_from_token)):
         filter_q: dict = {}
+        if soft_delete:
+            filter_q["deleted"] = {"$ne": True}
         if user_filter and current_user and current_user.get("role") == "manager":
             perms = current_user.get("permissions") or {}
             if not perms.get("can_view_all_leads"):
@@ -578,7 +639,10 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
 
     @api_router.get(f"/{prefix}/{{item_id}}", response_model=ModelCls)
     async def get_item(item_id: str):
-        doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
+        q: dict = {"id": item_id}
+        if soft_delete:
+            q["deleted"] = {"$ne": True}
+        doc = await db[collection].find_one(q, {"_id": 0})
         if not doc:
             raise HTTPException(404, "Not found")
         return ModelCls(**doc)
@@ -617,20 +681,26 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
 
     @api_router.delete(f"/{prefix}/{{item_id}}")
     async def delete_item(item_id: str, background_tasks: BackgroundTasks):
-        if sync_to_sheets and collection == "leads":
-            doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
+        doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
+        if soft_delete:
             if doc:
+                if sync_to_sheets and collection == "leads":
+                    background_tasks.add_task(_bg_delete_lead, doc.get("name", ""))
+                if sync_to_sheets and collection == "clients":
+                    background_tasks.add_task(_bg_delete_client, doc.get("name", ""))
+                await db[collection].update_one({"id": item_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
+            return {"ok": True}
+        if doc:
+            if sync_to_sheets and collection == "leads":
                 background_tasks.add_task(_bg_delete_lead, doc.get("name", ""))
-        if sync_to_sheets and collection == "clients":
-            doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
-            if doc:
+            if sync_to_sheets and collection == "clients":
                 background_tasks.add_task(_bg_delete_client, doc.get("name", ""))
         await db[collection].delete_one({"id": item_id})
         return {"ok": True}
 
 
-make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True)
-make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True)
+make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True, soft_delete=True)
+make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True, soft_delete=True)
 
 
 
@@ -648,7 +718,7 @@ async def leads_activity_stats():
     return [{"date": k, "count": v} for k, v in sorted(counts.items())]
 
 
-make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True)
+make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)
 
 
 # ====== Task models ======
@@ -808,7 +878,7 @@ async def delete_task(task_id: str, background_tasks: BackgroundTasks):
 
 @api_router.get("/orders", response_model=List[Order])
 async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_token)):
-    filter_q: dict = {}
+    filter_q: dict = {"deleted": {"$ne": True}}
     if current_user and current_user.get("role") == "manager":
         perms = current_user.get("permissions") or {}
         if not perms.get("can_view_all_orders"):
@@ -856,7 +926,7 @@ async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks,
 
 @api_router.get("/orders/{order_id}", response_model=Order)
 async def get_order(order_id: str):
-    doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    doc = await db.orders.find_one({"id": order_id, "deleted": {"$ne": True}}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Order not found")
     return Order(**doc)
@@ -916,11 +986,13 @@ async def get_order_logs(order_id: str):
 
 @api_router.delete("/orders/{order_id}")
 async def delete_order(order_id: str, background_tasks: BackgroundTasks):
-    doc = await db.orders.find_one({"id": order_id}, {"_id": 0, "order_number": 1, "calendar_event_id": 1})
-    await db.orders.delete_one({"id": order_id})
-    if doc and doc.get("order_number"):
+    doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not doc:
+        return {"ok": True}
+    await db.orders.update_one({"id": order_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
+    if doc.get("order_number"):
         background_tasks.add_task(_bg_delete_order_row, doc["order_number"])
-    if doc and doc.get("calendar_event_id"):
+    if doc.get("calendar_event_id"):
         background_tasks.add_task(_bg_cal_delete, doc["calendar_event_id"])
     return {"ok": True}
 
@@ -1357,12 +1429,12 @@ def order_in_period(o: dict, period: str) -> bool:
 
 @api_router.get("/dashboard")
 async def dashboard(period: str = "all"):
-    all_orders = await db.orders.find({}, {"_id": 0}).to_list(5000)
+    all_orders = await db.orders.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
     orders = [o for o in all_orders if order_in_period(o, period)]
 
-    clients_count = await db.clients.count_documents({})
-    carriers_count = await db.carriers.count_documents({})
-    leads_count = await db.leads.count_documents({})
+    clients_count = await db.clients.count_documents({"deleted": {"$ne": True}})
+    carriers_count = await db.carriers.count_documents({"deleted": {"$ne": True}})
+    leads_count = await db.leads.count_documents({"deleted": {"$ne": True}})
 
     total_revenue = sum(o.get("client_rate", 0) for o in orders)
     total_cost = sum(o.get("carrier_rate", 0) for o in orders)
@@ -1405,6 +1477,21 @@ async def dashboard(period: str = "all"):
         client_totals[n] = client_totals.get(n, 0) + o.get("client_rate", 0)
     top_clients = sorted([{"name": k, "revenue": v} for k, v in client_totals.items()],
                          key=lambda x: x["revenue"], reverse=True)[:5]
+
+    client_margin_map: dict = {}
+    for o in orders:
+        n = o.get("client_name") or "—"
+        if n not in client_margin_map:
+            client_margin_map[n] = {"name": n, "orders_count": 0, "revenue": 0.0, "cost": 0.0}
+        client_margin_map[n]["orders_count"] += 1
+        client_margin_map[n]["revenue"] += o.get("client_rate", 0)
+        client_margin_map[n]["cost"] += o.get("carrier_rate", 0)
+    top_clients_margin = []
+    for item in client_margin_map.values():
+        margin = item["revenue"] - item["cost"]
+        pct = round(margin / item["revenue"] * 100, 1) if item["revenue"] else 0
+        top_clients_margin.append({**item, "margin": margin, "margin_percent": pct})
+    top_clients_margin = sorted(top_clients_margin, key=lambda x: x["margin_percent"], reverse=True)[:10]
 
     status_breakdown = {
         "new": len([o for o in orders if o.get("status") == "new"]),
@@ -1463,6 +1550,7 @@ async def dashboard(period: str = "all"):
         "carriers_count": carriers_count,
         "leads_count": leads_count,
         "top_clients": top_clients,
+        "top_clients_margin": top_clients_margin,
         "debtors": debtors,
         "creditors": creditors,
         "status_breakdown": status_breakdown,
@@ -1667,6 +1755,92 @@ async def create_note(payload: NotePayload):
 async def delete_note(note_id: str):
     await db.notes.delete_one({"id": note_id})
     return {"ok": True}
+
+
+# ====== Trash ======
+_TRASH_LABELS = {
+    "orders": "Заявка",
+    "clients": "Клиент",
+    "carriers": "Перевозчик",
+    "leads": "Лид",
+}
+
+
+@api_router.get("/trash")
+async def list_trash(current_user: dict = Depends(_require_user)):
+    result = []
+    for cname, type_label in _TRASH_LABELS.items():
+        docs = await db[cname].find({"deleted": True}, {"_id": 0}).sort("deleted_at", -1).to_list(1000)
+        for d in docs:
+            label = d.get("order_number") or d.get("name") or d.get("company_name") or d.get("id", "")
+            result.append({
+                "id": d.get("id"),
+                "collection": cname,
+                "type": type_label,
+                "label": label,
+                "deleted_at": d.get("deleted_at"),
+            })
+    result.sort(key=lambda x: x.get("deleted_at") or "", reverse=True)
+    return result
+
+
+@api_router.post("/trash/restore/{collection}/{item_id}")
+async def restore_trash(collection: str, item_id: str, current_user: dict = Depends(_require_user)):
+    if collection not in _TRASH_LABELS:
+        raise HTTPException(400, "Неизвестная коллекция")
+    result = await db[collection].update_one(
+        {"id": item_id, "deleted": True},
+        {"$unset": {"deleted": "", "deleted_at": ""}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Запись не найдена в корзине")
+    return {"ok": True}
+
+
+@api_router.post("/trash/purge")
+async def purge_trash(current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    total = 0
+    for cname in _TRASH_LABELS:
+        r = await db[cname].delete_many({"deleted": True, "deleted_at": {"$lt": cutoff}})
+        total += r.deleted_count
+    return {"ok": True, "deleted_count": total}
+
+
+# ====== Backup ======
+@api_router.get("/backup/list")
+async def list_backups(current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    docs = await db.backups.find({}, {"_id": 0, "collections": 0}).sort("created_at", -1).to_list(50)
+    return docs
+
+
+@api_router.post("/backup/create")
+async def create_backup_manual(current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    await _create_backup()
+    return {"ok": True}
+
+
+@api_router.post("/backup/restore/{backup_id}")
+async def restore_backup(backup_id: str, current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    doc = await db.backups.find_one({"id": backup_id})
+    if not doc:
+        raise HTTPException(404, "Бэкап не найден")
+    snapshot = doc.get("collections", {})
+    for cname, docs_list in snapshot.items():
+        if not isinstance(docs_list, list):
+            continue
+        await db[cname].delete_many({})
+        if docs_list:
+            await db[cname].insert_many(docs_list)
+    return {"ok": True, "restored_at": now_iso()}
 
 
 @api_router.get("/")
