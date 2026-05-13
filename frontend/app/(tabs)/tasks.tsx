@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, TextInput, Modal } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, TextInput, Modal, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Plus, X, Search } from 'lucide-react-native';
@@ -29,6 +29,11 @@ export default function Tasks() {
   const [noteTitle, setNoteTitle] = useState('');
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
+  const [selectedNote, setSelectedNote] = useState<any>(null);
+  const [editingNote, setEditingNote] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editText, setEditText] = useState('');
+  const [savingEditNote, setSavingEditNote] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -93,6 +98,35 @@ export default function Tasks() {
     } finally {
       setSavingNote(false);
     }
+  };
+
+  const saveEditNote = async () => {
+    if (!editTitle.trim() || !selectedNote) return;
+    setSavingEditNote(true);
+    try {
+      const created = await api.notes.create({ title: editTitle.trim(), text: editText.trim() });
+      await api.notes.delete(selectedNote.id);
+      setNotes(ns => [created, ...ns.filter(n => n.id !== selectedNote.id)]);
+      setSelectedNote(null);
+      setEditingNote(false);
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message);
+    } finally {
+      setSavingEditNote(false);
+    }
+  };
+
+  const deleteSelectedNote = () => {
+    Alert.alert('Удалить заметку?', selectedNote?.title || '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        const id = selectedNote.id;
+        setSelectedNote(null);
+        setEditingNote(false);
+        setNotes(ns => ns.filter(n => n.id !== id));
+        await api.notes.delete(id).catch(() => {});
+      }},
+    ]);
   };
 
   const q = searchQuery.trim().toLowerCase();
@@ -210,10 +244,102 @@ export default function Tasks() {
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           ListEmptyComponent={<Text style={styles.empty}>Нет заметок. Нажмите + чтобы добавить.</Text>}
           renderItem={({ item }) => (
-            <NoteCard note={item} onDelete={() => removeNote(item.id)} />
+            <NoteCard note={item} onPress={() => setSelectedNote(item)} onDelete={() => removeNote(item.id)} />
           )}
         />
       )}
+
+      {/* Note detail modal */}
+      <Modal
+        visible={!!selectedNote}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { setSelectedNote(null); setEditingNote(false); }}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => { setSelectedNote(null); setEditingNote(false); }} />
+          <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24), maxHeight: '85%' }]}>
+            {editingNote ? (
+              <>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Редактировать</Text>
+                  <TouchableOpacity onPress={() => setEditingNote(false)} style={{ padding: 4 }}>
+                    <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={styles.noteField}
+                  value={editTitle}
+                  onChangeText={setEditTitle}
+                  placeholder="Заголовок *"
+                  placeholderTextColor={theme.colors.textTertiary}
+                  autoFocus
+                />
+                <TextInput
+                  style={[styles.noteField, styles.noteFieldMulti]}
+                  value={editText}
+                  onChangeText={setEditText}
+                  placeholder="Текст заметки..."
+                  placeholderTextColor={theme.colors.textTertiary}
+                  multiline
+                />
+                <TouchableOpacity
+                  onPress={saveEditNote}
+                  disabled={savingEditNote || !editTitle.trim()}
+                  style={[styles.saveNoteBtn, (!editTitle.trim() || savingEditNote) && { opacity: 0.5 }]}
+                  activeOpacity={0.8}
+                >
+                  {savingEditNote
+                    ? <ActivityIndicator color="#000" />
+                    : <Text style={styles.saveNoteBtnText}>Сохранить</Text>}
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { flex: 1, paddingRight: 8 }]} numberOfLines={2}>{selectedNote?.title}</Text>
+                  <TouchableOpacity onPress={() => { setSelectedNote(null); setEditingNote(false); }} style={{ padding: 4 }}>
+                    <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginBottom: 14 }}>
+                  {selectedNote?.created_at
+                    ? new Date(selectedNote.created_at).toLocaleString('ru-RU', {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit',
+                      })
+                    : ''}
+                </Text>
+                <ScrollView style={{ flex: 1, marginBottom: 16 }} showsVerticalScrollIndicator={false}>
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14, lineHeight: 22 }}>
+                    {selectedNote?.text || ''}
+                  </Text>
+                </ScrollView>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setEditTitle(selectedNote.title);
+                      setEditText(selectedNote.text || '');
+                      setEditingNote(true);
+                    }}
+                    style={[styles.saveNoteBtn, { flex: 1, backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border }]}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.saveNoteBtnText, { color: theme.colors.textPrimary }]}>Редактировать</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={deleteSelectedNote}
+                    style={[styles.saveNoteBtn, { flex: 1, backgroundColor: theme.colors.loss + '15', borderWidth: 1, borderColor: theme.colors.loss + '40' }]}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.saveNoteBtnText, { color: theme.colors.loss }]}>Удалить</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={showAddNote} transparent animationType="slide" onRequestClose={() => setShowAddNote(false)}>
         <View style={styles.modalOverlay}>
@@ -258,7 +384,7 @@ export default function Tasks() {
   );
 }
 
-function NoteCard({ note, onDelete }: { note: any; onDelete: () => void }) {
+function NoteCard({ note, onPress, onDelete }: { note: any; onPress: () => void; onDelete: () => void }) {
   const date = note.created_at
     ? new Date(note.created_at).toLocaleString('ru-RU', {
         day: '2-digit', month: '2-digit', year: 'numeric',
@@ -266,7 +392,7 @@ function NoteCard({ note, onDelete }: { note: any; onDelete: () => void }) {
       })
     : '';
   return (
-    <View style={styles.noteCard}>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={styles.noteCard}>
       <View style={styles.noteCardHead}>
         <View style={{ flex: 1 }}>
           <Text style={styles.noteTitle} numberOfLines={2}>{note.title}</Text>
@@ -276,8 +402,8 @@ function NoteCard({ note, onDelete }: { note: any; onDelete: () => void }) {
           <X size={15} color={theme.colors.textTertiary} strokeWidth={1.6} />
         </TouchableOpacity>
       </View>
-      {!!note.text && <Text style={styles.noteText} numberOfLines={5}>{note.text}</Text>}
-    </View>
+      {!!note.text && <Text style={styles.noteText} numberOfLines={3}>{note.text}</Text>}
+    </TouchableOpacity>
   );
 }
 
