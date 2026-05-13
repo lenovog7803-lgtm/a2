@@ -658,18 +658,25 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
         doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
         if not doc:
             raise HTTPException(404, "Not found")
-        if collection == "leads" and old_status is not None:
+        if collection == "leads":
             new_status = doc.get("status")
-            if new_status and new_status != old_status:
-                await db.lead_activity.insert_one({
-                    "id": str(uuid.uuid4()),
-                    "lead_id": item_id,
-                    "user_id": (current_user or {}).get("id", ""),
-                    "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                    "old_status": old_status,
-                    "new_status": new_status,
-                    "timestamp": now_iso(),
-                })
+            p_dict = payload.dict(exclude_none=True)
+            if new_status != old_status:
+                action = "status_change"
+            elif any(k in p_dict for k in ("call_notes", "last_contact", "next_call")):
+                action = "call"
+            else:
+                action = "update"
+            await db.lead_activity.insert_one({
+                "id": str(uuid.uuid4()),
+                "lead_id": item_id,
+                "user_id": (current_user or {}).get("id", ""),
+                "action": action,
+                "old_status": old_status,
+                "new_status": new_status,
+                "timestamp": datetime.now(timezone.utc),
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            })
         if sync_to_sheets:
             if collection == "clients":
                 background_tasks.add_task(_bg_push_client, doc)
@@ -706,15 +713,14 @@ make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True, 
 
 @api_router.get("/leads/activity/stats")
 async def leads_activity_stats():
-    from datetime import timedelta
     today = datetime.now(timezone.utc)
-    start = (today - timedelta(days=29)).strftime("%Y-%m-%d")
-    docs = await db.lead_activity.find({"date": {"$gte": start}}, {"_id": 0}).to_list(10000)
-    counts: dict = {}
-    for d in docs:
-        dt = d.get("date", "")
-        if dt:
-            counts[dt] = counts.get(dt, 0) + 1
+    days = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+    docs = await db.lead_activity.find({"date": {"$gte": days[0]}}, {"_id": 0}).to_list(10000)
+    counts: dict = {d: 0 for d in days}
+    for doc in docs:
+        dt = doc.get("date", "")
+        if dt in counts:
+            counts[dt] += 1
     return [{"date": k, "count": v} for k, v in sorted(counts.items())]
 
 
