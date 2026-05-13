@@ -1281,20 +1281,18 @@ async def get_user_activity(user_id: str, current_user: dict = Depends(_require_
 
 
 @api_router.get("/users/{user_id}/stats")
-async def get_user_stats(user_id: str, period: Optional[str] = None, current_user: dict = Depends(_require_user)):
+async def get_user_stats(user_id: str, month: Optional[str] = None, current_user: dict = Depends(_require_user)):
     if current_user.get("role") != "admin":
         raise HTTPException(403, "Только для администратора")
     now_dt = datetime.now(timezone.utc)
-    if period and len(period) == 7:
-        y, m = int(period[:4]), int(period[5:7])
-        month_start = f"{y}-{m:02d}-01"
-        month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
+    if month and len(month) == 7:
+        y, m = int(month[:4]), int(month[5:7])
     else:
         y, m = now_dt.year, now_dt.month
-        month_start = f"{y}-{m:02d}-01"
-        month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
+    month_start = f"{y}-{m:02d}-01"
+    month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
     orders_in_month = await db.orders.find(
-        {"created_by": user_id, "created_at": {"$gte": month_start, "$lt": month_end}},
+        {"created_by": user_id, "created_at": {"$gte": month_start, "$lt": month_end}, "deleted": {"$ne": True}},
         {"_id": 0, "client_rate": 1},
     ).to_list(10000)
     orders_created = len(orders_in_month)
@@ -1302,7 +1300,7 @@ async def get_user_stats(user_id: str, period: Optional[str] = None, current_use
     calls_made = await db.lead_activity.count_documents(
         {"user_id": user_id, "date": {"$gte": month_start, "$lt": month_end}}
     )
-    leads = await db.leads.find({"assigned_to": user_id}, {"_id": 0, "status": 1}).to_list(10000)
+    leads = await db.leads.find({"assigned_to": user_id, "deleted": {"$ne": True}}, {"_id": 0, "status": 1}).to_list(10000)
     won = sum(1 for l in leads if l.get("status") == "won")
     total = len(leads)
     conversion = round(won / total * 100) if total else 0
@@ -1314,6 +1312,35 @@ async def get_user_stats(user_id: str, period: Optional[str] = None, current_use
         "total_leads": total,
         "won_leads": won,
     }
+
+
+@api_router.get("/users/{user_id}/orders")
+async def get_user_orders(user_id: str, month: Optional[str] = None, current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    now_dt = datetime.now(timezone.utc)
+    if month and len(month) == 7:
+        y, m = int(month[:4]), int(month[5:7])
+    else:
+        y, m = now_dt.year, now_dt.month
+    month_start = f"{y}-{m:02d}-01"
+    month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
+    orders = await db.orders.find(
+        {"created_by": user_id, "created_at": {"$gte": month_start, "$lt": month_end}, "deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "order_number": 1, "client_name": 1, "route_from": 1, "route_to": 1, "client_rate": 1, "status": 1},
+    ).sort("created_at", -1).to_list(10000)
+    return orders
+
+
+@api_router.get("/users/{user_id}/leads")
+async def get_user_leads(user_id: str, current_user: dict = Depends(_require_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Только для администратора")
+    leads = await db.leads.find(
+        {"assigned_to": user_id, "deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "name": 1, "company": 1, "status": 1, "last_contact": 1, "phone": 1},
+    ).sort("last_contact", -1).to_list(10000)
+    return leads
 
 
 # ====== Documents generation ======

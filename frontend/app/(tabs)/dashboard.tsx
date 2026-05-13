@@ -14,6 +14,13 @@ import { ROLE_KEY } from '../../src/auth';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  new: 'Новая',
+  in_progress: 'В работе',
+  delivered: 'Доставлено',
+  cancelled: 'Отменено',
+};
+
 const monthLabel = (ym: string) => {
   if (!ym) return ym;
   const [y, m] = ym.split('-');
@@ -50,6 +57,8 @@ export default function Dashboard() {
   const [teamStatsData, setTeamStatsData] = useState<any>(null);
   const [teamStatsPeriod, setTeamStatsPeriod] = useState<string>(currentMonth());
   const [teamStatsLoading, setTeamStatsLoading] = useState(false);
+  const [teamStatsOrders, setTeamStatsOrders] = useState<any[]>([]);
+  const [teamStatsLeads, setTeamStatsLeads] = useState<any[]>([]);
 
   // Sheets import state
   const [syncing, setSyncing] = useState(false);
@@ -95,8 +104,18 @@ export default function Dashboard() {
     if (!teamStatsUser) return;
     setTeamStatsLoading(true);
     setTeamStatsData(null);
-    api.users.stats(teamStatsUser.id, teamStatsPeriod)
-      .then(setTeamStatsData)
+    setTeamStatsOrders([]);
+    setTeamStatsLeads([]);
+    Promise.all([
+      api.users.stats(teamStatsUser.id, teamStatsPeriod),
+      api.users.orders(teamStatsUser.id, teamStatsPeriod).catch(() => []),
+      api.users.leads(teamStatsUser.id).catch(() => []),
+    ])
+      .then(([stats, orders, leads]) => {
+        setTeamStatsData(stats);
+        setTeamStatsOrders(orders as any[]);
+        setTeamStatsLeads(leads as any[]);
+      })
       .catch(() => setTeamStatsData(null))
       .finally(() => setTeamStatsLoading(false));
   }, [teamStatsUser, teamStatsPeriod]);
@@ -464,7 +483,7 @@ export default function Dashboard() {
     <Modal visible={!!teamStatsUser} transparent animationType="slide" onRequestClose={() => setTeamStatsUser(null)}>
       <View style={styles.modalOverlay}>
         <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setTeamStatsUser(null)} />
-        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24), maxHeight: '90%' }]}>
           <View style={styles.modalHeader}>
             <View style={{ flex: 1 }}>
               <Text style={styles.modalTitle}>{teamStatsUser?.name}</Text>
@@ -493,22 +512,72 @@ export default function Dashboard() {
           </ScrollView>
           {teamStatsLoading ? (
             <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
-          ) : teamStatsData ? (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 8 }}>
-              {[
-                { label: 'ЗАЯВКИ', value: teamStatsData.orders_created ?? '—', color: theme.colors.accent },
-                { label: 'ЗВОНКИ', value: teamStatsData.calls_made ?? '—', color: theme.colors.info },
-                { label: 'КОНВЕРСИЯ', value: `${teamStatsData.conversion ?? 0}%`, color: theme.colors.profit },
-                { label: 'ВЫРУЧКА', value: formatMoney(teamStatsData.revenue_month ?? 0), color: theme.colors.accent },
-              ].map(card => (
-                <View key={card.label} style={{ flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-                  <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 }}>{card.label}</Text>
-                  <Text style={{ fontSize: 20, fontWeight: '700', color: card.color }}>{card.value}</Text>
-                </View>
-              ))}
-            </View>
           ) : (
-            <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {teamStatsData ? (
+                <>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 12 }}>
+                    {[
+                      { label: 'ЗАЯВКИ', value: teamStatsData.orders_created ?? '—', color: theme.colors.accent },
+                      { label: 'ЗВОНКИ', value: teamStatsData.calls_made ?? '—', color: theme.colors.info },
+                      { label: 'ЛИДЫ', value: teamStatsData.total_leads ?? '—', color: theme.colors.info },
+                      { label: 'КОНВЕРСИЯ', value: `${teamStatsData.conversion ?? 0}%`, color: theme.colors.profit },
+                      { label: 'ВЫРУЧКА', value: formatMoney(teamStatsData.revenue_month ?? 0), color: theme.colors.accent },
+                    ].map(card => (
+                      <View key={card.label} style={{ flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 }}>{card.label}</Text>
+                        <Text style={{ fontSize: 20, fontWeight: '700', color: card.color }}>{card.value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  {teamStatsOrders.length > 0 && (
+                    <>
+                      <Text style={[styles.sectionLabel, { marginTop: 8 }]}>ЗАЯВКИ ЗА МЕСЯЦ</Text>
+                      <View style={styles.listCard}>
+                        {teamStatsOrders.map((o: any, i: number) => (
+                          <TouchableOpacity key={o.id} activeOpacity={0.7}
+                            onPress={() => { setTeamStatsUser(null); router.push(`/order/${o.id}` as any); }}
+                            style={[styles.modalOrderRow, i === teamStatsOrders.length - 1 && { borderBottomWidth: 0 }]}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.modalOrderNum}>{o.order_number}</Text>
+                              <Text style={styles.modalOrderRoute} numberOfLines={1}>{o.client_name}</Text>
+                              <Text style={styles.modalOrderDate} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
+                            </View>
+                            <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                              <Text style={[styles.modalOrderAmt, { color: theme.colors.accent }]}>{formatMoney(o.client_rate)}</Text>
+                              <Text style={{ fontSize: 10, color: theme.colors.textTertiary }}>{ORDER_STATUS_LABELS[o.status] || o.status}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
+                  {teamStatsLeads.length > 0 && (
+                    <>
+                      <Text style={[styles.sectionLabel, { marginTop: 8 }]}>ЛИДЫ</Text>
+                      <View style={styles.listCard}>
+                        {teamStatsLeads.map((l: any, i: number) => (
+                          <TouchableOpacity key={l.id} activeOpacity={0.7}
+                            onPress={() => { setTeamStatsUser(null); router.push(`/lead/${l.id}` as any); }}
+                            style={[styles.debtRow, i === teamStatsLeads.length - 1 && { borderBottomWidth: 0 }]}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.debtName} numberOfLines={1}>{l.name}</Text>
+                              {!!l.company && <Text style={styles.debtMeta} numberOfLines={1}>{l.company}</Text>}
+                              {!!l.last_contact && <Text style={styles.debtMeta}>{l.last_contact}</Text>}
+                            </View>
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: leadStatusColors[l.status] || theme.colors.textTertiary }}>
+                              {leadStatusLabels[l.status] || l.status}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
+                </>
+              ) : (
+                <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
+              )}
+            </ScrollView>
           )}
         </View>
       </View>
@@ -765,6 +834,9 @@ function ManagerView({ leads, activityStats, managers, setManagers, isAdmin, cur
   const [statsModalUser, setStatsModalUser] = useState<any>(null);
   const [statsData, setStatsData] = useState<any>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [statsMonth, setStatsMonth] = useState<string>(currentMonth());
+  const [statsOrders, setStatsOrders] = useState<any[]>([]);
+  const [statsLeads, setStatsLeads] = useState<any[]>([]);
   const [newName, setNewName] = useState('');
   const [newLogin, setNewLogin] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -780,24 +852,33 @@ function ManagerView({ leads, activityStats, managers, setManagers, isAdmin, cur
     }
   }, [isAdmin]));
 
-  const openManagerStats = async (mgr: any) => {
+  const openManagerStats = (mgr: any) => {
+    setStatsMonth(currentMonth());
     setStatsModalUser(mgr);
+  };
+
+  useEffect(() => {
+    if (!statsModalUser) return;
+    setStatsLoading(true);
     setStatsData(null);
     setActivityData(null);
-    setStatsLoading(true);
-    try {
-      const [s, a] = await Promise.all([
-        api.users.stats(mgr.id),
-        api.users.activity(mgr.id).catch(() => null),
-      ]);
-      setStatsData(s);
-      setActivityData(a);
-    } catch {
-      setStatsData(null);
-    } finally {
-      setStatsLoading(false);
-    }
-  };
+    setStatsOrders([]);
+    setStatsLeads([]);
+    Promise.all([
+      api.users.stats(statsModalUser.id, statsMonth),
+      api.users.activity(statsModalUser.id).catch(() => null),
+      api.users.orders(statsModalUser.id, statsMonth).catch(() => []),
+      api.users.leads(statsModalUser.id).catch(() => []),
+    ])
+      .then(([s, a, orders, leads]) => {
+        setStatsData(s);
+        setActivityData(a);
+        setStatsOrders(orders as any[]);
+        setStatsLeads(leads as any[]);
+      })
+      .catch(() => setStatsData(null))
+      .finally(() => setStatsLoading(false));
+  }, [statsModalUser, statsMonth]);
 
   const openEditUser = (mgr: any) => {
     setEditingUser(mgr);
@@ -1095,52 +1176,100 @@ function ManagerView({ leads, activityStats, managers, setManagers, isAdmin, cur
       <Modal visible={!!statsModalUser} transparent animationType="slide" onRequestClose={() => setStatsModalUser(null)}>
         <View style={mStyles.modalOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setStatsModalUser(null)} />
-          <View style={[mStyles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+          <View style={[mStyles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24), maxHeight: '90%' }]}>
             <View style={mStyles.modalHeaderRow}>
               <Text style={mStyles.modalTitle}>{statsModalUser?.name}</Text>
               <TouchableOpacity onPress={() => setStatsModalUser(null)} style={{ padding: 4 }}>
                 <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
               </TouchableOpacity>
             </View>
+            {/* Month selector */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }} contentContainerStyle={{ gap: 8, paddingBottom: 2 }}>
+              {Array.from({ length: 6 }, (_, i) => {
+                const dd = new Date();
+                dd.setDate(1);
+                dd.setMonth(dd.getMonth() - i);
+                const ym = `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, '0')}`;
+                const lbl = `${MONTHS[dd.getMonth()]} ${dd.getFullYear()}`;
+                const active = ym === statsMonth;
+                return (
+                  <TouchableOpacity key={ym} onPress={() => setStatsMonth(ym)} activeOpacity={0.7}
+                    style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: active ? theme.colors.accent : theme.colors.surfaceElevated, borderWidth: 1, borderColor: active ? theme.colors.accent : theme.colors.border }}>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: active ? theme.colors.bg : theme.colors.textSecondary }}>{lbl}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
             {statsLoading ? (
               <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
             ) : statsData ? (
-              <>
+              <ScrollView showsVerticalScrollIndicator={false}>
                 <View style={mStyles.statsGrid}>
                   <View style={mStyles.statCard}>
                     <Text style={mStyles.statCardLabel}>ЗАЯВКИ МЕС.</Text>
-                    <Text style={mStyles.statCardValue}>{activityData?.orders_month ?? '—'}</Text>
+                    <Text style={mStyles.statCardValue}>{statsData.orders_created ?? '—'}</Text>
                   </View>
                   <View style={mStyles.statCard}>
-                    <Text style={mStyles.statCardLabel}>ЗВОНКИ (30 дн.)</Text>
-                    <Text style={mStyles.statCardValue}>{activityData?.calls_total ?? '—'}</Text>
+                    <Text style={mStyles.statCardLabel}>ЗВОНКИ</Text>
+                    <Text style={mStyles.statCardValue}>{statsData.calls_made ?? '—'}</Text>
+                  </View>
+                  <View style={mStyles.statCard}>
+                    <Text style={mStyles.statCardLabel}>ЛИДЫ</Text>
+                    <Text style={mStyles.statCardValue}>{statsData.total_leads ?? '—'}</Text>
                   </View>
                   <View style={mStyles.statCard}>
                     <Text style={mStyles.statCardLabel}>КОНВЕРСИЯ</Text>
-                    <Text style={[mStyles.statCardValue, { color: theme.colors.profit }]}>{activityData?.conversion ?? statsData.conversion}%</Text>
+                    <Text style={[mStyles.statCardValue, { color: theme.colors.profit }]}>{statsData.conversion ?? 0}%</Text>
                   </View>
-                  <View style={mStyles.statCard}>
+                  <View style={[mStyles.statCard, { minWidth: '100%' }]}>
                     <Text style={mStyles.statCardLabel}>ВЫРУЧКА МЕС.</Text>
-                    <Text style={[mStyles.statCardValue, { color: theme.colors.accent, fontSize: 16 }]}>{formatMoney(statsData.revenue_month)}</Text>
+                    <Text style={[mStyles.statCardValue, { color: theme.colors.accent, fontSize: 20 }]}>{formatMoney(statsData.revenue_month)}</Text>
                   </View>
                 </View>
-                {activityData?.activity_chart?.length > 0 && (
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={mStyles.statCardLabel}>АКТИВНОСТЬ ПО ДНЯМ</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 4, marginTop: 8, height: 40 }}>
-                      {activityData.activity_chart.slice(-14).map((item: any) => {
-                        const maxC = Math.max(...activityData.activity_chart.map((x: any) => x.count), 1);
-                        const h = Math.max(4, (item.count / maxC) * 36);
-                        return (
-                          <View key={item.date} style={{ flex: 1, alignItems: 'center' }}>
-                            <View style={{ width: '100%', height: h, backgroundColor: theme.colors.accent, borderRadius: 2 }} />
+                {statsOrders.length > 0 && (
+                  <>
+                    <Text style={[mStyles.sectionLabel, { marginTop: 12 }]}>ЗАЯВКИ ЗА МЕСЯЦ</Text>
+                    <View style={mStyles.listCard}>
+                      {statsOrders.map((o: any, i: number) => (
+                        <TouchableOpacity key={o.id} activeOpacity={0.7}
+                          onPress={() => { setStatsModalUser(null); router.push(`/order/${o.id}` as any); }}
+                          style={[mStyles.leadRow, i === statsOrders.length - 1 && { borderBottomWidth: 0 }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[mStyles.leadName, { color: theme.colors.accent }]}>{o.order_number}</Text>
+                            <Text style={mStyles.leadMeta} numberOfLines={1}>{o.client_name}</Text>
+                            <Text style={mStyles.leadMeta} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
                           </View>
-                        );
-                      })}
+                          <View style={{ alignItems: 'flex-end', gap: 3 }}>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.accent }}>{formatMoney(o.client_rate)}</Text>
+                            <Text style={{ fontSize: 10, color: theme.colors.textTertiary }}>{ORDER_STATUS_LABELS[o.status] || o.status}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
                     </View>
-                  </View>
+                  </>
                 )}
-              </>
+                {statsLeads.length > 0 && (
+                  <>
+                    <Text style={[mStyles.sectionLabel, { marginTop: 4 }]}>ЛИДЫ</Text>
+                    <View style={mStyles.listCard}>
+                      {statsLeads.map((l: any, i: number) => (
+                        <TouchableOpacity key={l.id} activeOpacity={0.7}
+                          onPress={() => { setStatsModalUser(null); router.push(`/lead/${l.id}` as any); }}
+                          style={[mStyles.leadRow, i === statsLeads.length - 1 && { borderBottomWidth: 0 }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={mStyles.leadName} numberOfLines={1}>{l.name}</Text>
+                            {!!l.company && <Text style={mStyles.leadMeta} numberOfLines={1}>{l.company}</Text>}
+                            {!!l.last_contact && <Text style={mStyles.leadMeta}>{l.last_contact}</Text>}
+                          </View>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: leadStatusColors[l.status] || theme.colors.textTertiary }}>
+                            {leadStatusLabels[l.status] || l.status}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+              </ScrollView>
             ) : (
               <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
             )}

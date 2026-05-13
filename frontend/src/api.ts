@@ -103,9 +103,11 @@ export const api = {
     update: (id: string, data: { name?: string; login?: string; password?: string; role?: string; permissions?: any }) =>
       req(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
-    stats: (id: string, period?: string) => req(`/users/${id}/stats${period ? `?period=${encodeURIComponent(period)}` : ''}`),
+    stats: (id: string, month?: string) => req(`/users/${id}/stats${month ? `?month=${encodeURIComponent(month)}` : ''}`),
     activity: (id: string) => req(`/users/${id}/activity`),
     activitySummary: () => req('/users/activity_summary'),
+    orders: (id: string, month?: string) => req(`/users/${id}/orders${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+    leads: (id: string) => req(`/users/${id}/leads`),
   },
   finance: {
     withdrawals: {
