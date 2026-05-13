@@ -920,8 +920,7 @@ async def next_order_number():
 async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks,
                        current_user: Optional[dict] = Depends(_get_user_from_token)):
     order_data = payload.dict()
-    if current_user:
-        order_data["created_by"] = current_user["id"]
+    order_data["created_by"] = current_user["id"] if current_user else "admin"
     obj = Order(**order_data)
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())
@@ -1297,10 +1296,14 @@ async def get_user_stats(user_id: str, month: Optional[str] = None, current_user
         y, m = now_dt.year, now_dt.month
     month_start = f"{y}-{m:02d}-01"
     month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
-    orders_in_month = await db.orders.find(
-        {"created_by": user_id, "created_at": {"$gte": month_start, "$lt": month_end}, "deleted": {"$ne": True}},
-        {"_id": 0, "client_rate": 1},
+    all_user_orders = await db.orders.find(
+        {"created_by": str(user_id), "deleted": {"$ne": True}},
+        {"_id": 0, "client_rate": 1, "unload_date": 1, "created_at": 1},
     ).to_list(10000)
+    orders_in_month = [
+        o for o in all_user_orders
+        if month_start <= (o.get("unload_date") or o.get("created_at", ""))[:10] < month_end
+    ]
     orders_created = len(orders_in_month)
     revenue_month = sum(o.get("client_rate", 0) for o in orders_in_month)
     calls_made = await db.lead_activity.count_documents(
@@ -1331,10 +1334,16 @@ async def get_user_orders(user_id: str, month: Optional[str] = None, current_use
         y, m = now_dt.year, now_dt.month
     month_start = f"{y}-{m:02d}-01"
     month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
-    orders = await db.orders.find(
-        {"created_by": user_id, "created_at": {"$gte": month_start, "$lt": month_end}, "deleted": {"$ne": True}},
-        {"_id": 0, "id": 1, "order_number": 1, "client_name": 1, "route_from": 1, "route_to": 1, "client_rate": 1, "status": 1},
-    ).sort("created_at", -1).to_list(10000)
+    all_user_orders = await db.orders.find(
+        {"created_by": str(user_id), "deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "order_number": 1, "client_name": 1, "route_from": 1,
+         "route_to": 1, "client_rate": 1, "status": 1, "unload_date": 1, "created_at": 1},
+    ).to_list(10000)
+    orders = [
+        o for o in all_user_orders
+        if month_start <= (o.get("unload_date") or o.get("created_at", ""))[:10] < month_end
+    ]
+    orders.sort(key=lambda o: (o.get("unload_date") or o.get("created_at", "")), reverse=True)
     return orders
 
 
