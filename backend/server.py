@@ -472,6 +472,10 @@ class Order(BaseModel):
     docs_from_client_received: bool = False  # Документы от Клиента — получены
     docs_to_carrier_sent: bool = False       # Документы Перевозчику — отправлены/получены им
     docs_from_carrier_received: bool = False # Документы от Перевозчика — получены/они отправили
+    docs_to_client_date: Optional[str] = ""
+    docs_from_client_date: Optional[str] = ""
+    docs_to_carrier_date: Optional[str] = ""
+    docs_from_carrier_date: Optional[str] = ""
     cargo: Optional[str] = ""
     weight_tons: Optional[float] = 0
     notes: Optional[str] = ""
@@ -513,6 +517,10 @@ class OrderPayload(BaseModel):
     docs_from_client_received: bool = False
     docs_to_carrier_sent: bool = False
     docs_from_carrier_received: bool = False
+    docs_to_client_date: Optional[str] = ""
+    docs_from_client_date: Optional[str] = ""
+    docs_to_carrier_date: Optional[str] = ""
+    docs_from_carrier_date: Optional[str] = ""
     cargo: Optional[str] = ""
     weight_tons: Optional[float] = 0
     notes: Optional[str] = ""
@@ -549,6 +557,10 @@ class OrderUpdate(BaseModel):
     docs_from_client_received: Optional[bool] = None
     docs_to_carrier_sent: Optional[bool] = None
     docs_from_carrier_received: Optional[bool] = None
+    docs_to_client_date: Optional[str] = None
+    docs_from_client_date: Optional[str] = None
+    docs_to_carrier_date: Optional[str] = None
+    docs_from_carrier_date: Optional[str] = None
     cargo: Optional[str] = None
     weight_tons: Optional[float] = None
     notes: Optional[str] = None

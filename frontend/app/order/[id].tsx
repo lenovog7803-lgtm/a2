@@ -271,33 +271,49 @@ export default function OrderDetail() {
         <DocToggle
           label="Документы отправлены клиенту"
           value={order.docs_to_client_sent}
-          onToggle={() => update({ docs_to_client_sent: !order.docs_to_client_sent })}
+          onToggle={() => {
+            const next = !order.docs_to_client_sent;
+            update({ docs_to_client_sent: next, docs_to_client_date: next && !order.docs_to_client_date ? new Date().toISOString().slice(0, 10) : order.docs_to_client_date });
+          }}
           onText="Отправлены"
           offText="Не отправлены"
+          docDate={order.docs_to_client_date}
           testID="doc-to-client"
         />
         <DocToggle
           label="Документы получены от клиента"
           value={order.docs_from_client_received}
-          onToggle={() => update({ docs_from_client_received: !order.docs_from_client_received })}
+          onToggle={() => {
+            const next = !order.docs_from_client_received;
+            update({ docs_from_client_received: next, docs_from_client_date: next && !order.docs_from_client_date ? new Date().toISOString().slice(0, 10) : order.docs_from_client_date });
+          }}
           onText="Получены"
           offText="Не получены"
+          docDate={order.docs_from_client_date}
           testID="doc-from-client"
         />
         <DocToggle
           label="Документы отправлены перевозчику"
           value={order.docs_to_carrier_sent}
-          onToggle={() => update({ docs_to_carrier_sent: !order.docs_to_carrier_sent })}
+          onToggle={() => {
+            const next = !order.docs_to_carrier_sent;
+            update({ docs_to_carrier_sent: next, docs_to_carrier_date: next && !order.docs_to_carrier_date ? new Date().toISOString().slice(0, 10) : order.docs_to_carrier_date });
+          }}
           onText="Отправлены"
           offText="Не отправлены"
+          docDate={order.docs_to_carrier_date}
           testID="doc-to-carrier"
         />
         <DocToggle
           label="Документы получены от перевозчика"
           value={order.docs_from_carrier_received}
-          onToggle={() => update({ docs_from_carrier_received: !order.docs_from_carrier_received })}
+          onToggle={() => {
+            const next = !order.docs_from_carrier_received;
+            update({ docs_from_carrier_received: next, docs_from_carrier_date: next && !order.docs_from_carrier_date ? new Date().toISOString().slice(0, 10) : order.docs_from_carrier_date });
+          }}
           onText="Получены"
           offText="Не получены"
+          docDate={order.docs_from_carrier_date}
           testID="doc-from-carrier"
         />
 
@@ -389,9 +405,10 @@ function DocGenButton({ label, url }: any) {
   );
 }
 
-function DocToggle({ label, value, onToggle, onText, offText, amount, paidDate, testID }: any) {
+function DocToggle({ label, value, onToggle, onText, offText, amount, paidDate, docDate, testID }: any) {
   const display = value ? (onText || 'Готово') : (offText || 'Ждём');
-  const formattedDate = paidDate ? paidDate.slice(0, 10).split('-').reverse().join('.') : null;
+  const formattedPaidDate = paidDate ? paidDate.slice(0, 10).split('-').reverse().join('.') : null;
+  const formattedDocDate = docDate ? docDate.slice(0, 10).split('-').reverse().join('.') : null;
   return (
     <TouchableOpacity testID={testID} onPress={onToggle} style={[styles.toggle, value && styles.toggleOn]} activeOpacity={0.7}>
       <View style={[styles.checkBox, value && { backgroundColor: theme.colors.profit, borderColor: theme.colors.profit }]}>
@@ -403,8 +420,11 @@ function DocToggle({ label, value, onToggle, onText, offText, amount, paidDate, 
       </View>
       <View style={{ alignItems: 'flex-end', gap: 2 }}>
         {!!amount && <Text style={styles.toggleAmt}>{amount}</Text>}
-        {value && !!formattedDate && (
-          <Text style={styles.toggleDate}>оплачено {formattedDate}</Text>
+        {value && !!formattedPaidDate && (
+          <Text style={styles.toggleDate}>оплачено {formattedPaidDate}</Text>
+        )}
+        {value && !!formattedDocDate && (
+          <Text style={styles.toggleDate}>{formattedDocDate}</Text>
         )}
       </View>
     </TouchableOpacity>
