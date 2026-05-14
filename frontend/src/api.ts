@@ -45,6 +45,7 @@ export const api = {
     create: (data: any) => req('/orders', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => req(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/orders/${id}`, { method: 'DELETE' }),
+    duplicate: (id: string) => req(`/orders/${id}/duplicate`, { method: 'POST' }),
     logs: (id: string) => req(`/orders/${id}/logs`),
     generateDoc: (id: string, kind: 'client' | 'carrier' | 'act', regenerate = false) =>
       req(`/orders/${id}/docs/${kind}${regenerate ? '?regenerate=true' : ''}`, { method: 'POST' }),
@@ -132,4 +133,5 @@ export const api = {
     restore: (id: string) => req(`/backup/restore/${id}`, { method: 'POST' }),
   },
   seed: () => req('/seed', { method: 'POST' }),
+  globalSearch: (q: string) => req(`/search?q=${encodeURIComponent(q)}`),
 };

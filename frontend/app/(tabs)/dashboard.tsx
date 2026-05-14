@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, 
 import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2 } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search } from 'lucide-react-native';
 import { theme, formatMoney, formatShort, leadStatusColors, leadStatusLabels } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
@@ -59,6 +59,23 @@ export default function Dashboard() {
   const [teamStatsLoading, setTeamStatsLoading] = useState(false);
   const [teamStatsOrders, setTeamStatsOrders] = useState<any[]>([]);
   const [teamStatsLeads, setTeamStatsLeads] = useState<any[]>([]);
+
+  // Global search state
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  useEffect(() => {
+    if (searchQuery.length < 2) { setSearchResults(null); return; }
+    const timer = setTimeout(async () => {
+      setSearchLoading(true);
+      try { setSearchResults(await api.globalSearch(searchQuery)); }
+      catch { setSearchResults(null); }
+      finally { setSearchLoading(false); }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Sheets import state
   const [syncing, setSyncing] = useState(false);
@@ -216,6 +233,9 @@ export default function Dashboard() {
             <Text style={styles.title}>Дашборд</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchVisible(true); }} activeOpacity={0.7} style={styles.logoutBtn} testID="search-btn">
+              <Search size={16} color={theme.colors.textSecondary} strokeWidth={1.6} />
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.7} style={styles.themeBtn} testID="theme-toggle">
               {mode === 'dark' ? (
                 <Sun size={16} color={theme.colors.accent} strokeWidth={1.6} />
@@ -427,6 +447,116 @@ export default function Dashboard() {
         )}
       </View>
     </ScrollView>
+
+    {/* Global search modal */}
+    <Modal visible={searchVisible} transparent animationType="slide" onRequestClose={() => setSearchVisible(false)}>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSearchVisible(false)} />
+        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24), maxHeight: '85%' }]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Поиск</Text>
+            <TouchableOpacity onPress={() => setSearchVisible(false)} style={{ padding: 4 }}>
+              <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+            </TouchableOpacity>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 14 }}>
+            <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+            <TextInput
+              autoFocus
+              style={{ flex: 1, color: theme.colors.textPrimary, fontSize: 14 }}
+              placeholder="Поиск по заявкам, клиентам, перевозчикам, лидам"
+              placeholderTextColor={theme.colors.textTertiary}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              clearButtonMode="while-editing"
+            />
+          </View>
+          {searchLoading ? (
+            <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 24 }} />
+          ) : searchResults ? (
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {searchResults.orders?.length > 0 && (
+                <>
+                  <Text style={styles.sectionLabel}>ЗАЯВКИ</Text>
+                  <View style={styles.listCard}>
+                    {searchResults.orders.map((o: any, i: number) => (
+                      <TouchableOpacity key={o.id} activeOpacity={0.7}
+                        onPress={() => { setSearchVisible(false); router.push(`/order/${o.id}` as any); }}
+                        style={[styles.debtRow, i === searchResults.orders.length - 1 && { borderBottomWidth: 0 }]}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.debtName, { color: theme.colors.accent }]}>{o.order_number}</Text>
+                          <Text style={styles.debtMeta} numberOfLines={1}>{o.client_name}{o.carrier_name ? ` · ${o.carrier_name}` : ''}</Text>
+                        </View>
+                        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+              {searchResults.clients?.length > 0 && (
+                <>
+                  <Text style={styles.sectionLabel}>КЛИЕНТЫ</Text>
+                  <View style={styles.listCard}>
+                    {searchResults.clients.map((c: any, i: number) => (
+                      <TouchableOpacity key={c.id} activeOpacity={0.7}
+                        onPress={() => { setSearchVisible(false); router.push(`/client/${c.id}` as any); }}
+                        style={[styles.debtRow, i === searchResults.clients.length - 1 && { borderBottomWidth: 0 }]}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.debtName} numberOfLines={1}>{c.name}</Text>
+                          <Text style={styles.debtMeta} numberOfLines={1}>{[c.phone, c.city].filter(Boolean).join(' · ')}</Text>
+                        </View>
+                        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+              {searchResults.carriers?.length > 0 && (
+                <>
+                  <Text style={styles.sectionLabel}>ПЕРЕВОЗЧИКИ</Text>
+                  <View style={styles.listCard}>
+                    {searchResults.carriers.map((c: any, i: number) => (
+                      <TouchableOpacity key={c.id} activeOpacity={0.7}
+                        onPress={() => { setSearchVisible(false); router.push(`/carrier/${c.id}` as any); }}
+                        style={[styles.debtRow, i === searchResults.carriers.length - 1 && { borderBottomWidth: 0 }]}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.debtName} numberOfLines={1}>{c.company_name}</Text>
+                          <Text style={styles.debtMeta} numberOfLines={1}>{[c.phone, c.city].filter(Boolean).join(' · ')}</Text>
+                        </View>
+                        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+              {searchResults.leads?.length > 0 && (
+                <>
+                  <Text style={styles.sectionLabel}>ЛИДЫ</Text>
+                  <View style={styles.listCard}>
+                    {searchResults.leads.map((l: any, i: number) => (
+                      <TouchableOpacity key={l.id} activeOpacity={0.7}
+                        onPress={() => { setSearchVisible(false); router.push(`/lead/${l.id}` as any); }}
+                        style={[styles.debtRow, i === searchResults.leads.length - 1 && { borderBottomWidth: 0 }]}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.debtName} numberOfLines={1}>{l.name}</Text>
+                          <Text style={styles.debtMeta} numberOfLines={1}>{[l.company, l.phone].filter(Boolean).join(' · ')}</Text>
+                        </View>
+                        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+              {!searchResults.orders?.length && !searchResults.clients?.length && !searchResults.carriers?.length && !searchResults.leads?.length && (
+                <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32, fontSize: 14 }}>Ничего не найдено</Text>
+              )}
+            </ScrollView>
+          ) : searchQuery.length > 0 && searchQuery.length < 2 ? (
+            <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 24, fontSize: 13 }}>Введите минимум 2 символа</Text>
+          ) : null}
+        </View>
+      </View>
+    </Modal>
 
     {/* Debtor orders modal */}
     <Modal
@@ -641,7 +771,12 @@ function TeamBlock({ managers, onPress }: { managers: any[]; onPress: (mgr: any)
               <Text style={styles.debtMeta}>{mgr.role === 'admin' ? 'Администратор' : mgr.role === 'director' ? 'Директор' : 'Менеджер'}</Text>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 2 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.accent }}>{mgr.orders_month} зая.</Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.accent }}>{mgr.orders_total ?? mgr.orders_month} зая.</Text>
+              {(mgr.orders_created !== undefined || mgr.orders_assigned !== undefined) && (
+                <Text style={{ fontSize: 10, color: theme.colors.textTertiary }}>
+                  созд. {mgr.orders_created ?? 0} / назн. {mgr.orders_assigned ?? 0}
+                </Text>
+              )}
               <Text style={{ fontSize: 11, color: theme.colors.textTertiary }}>{mgr.calls_month} зв.</Text>
             </View>
             <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} style={{ marginLeft: 6 }} />

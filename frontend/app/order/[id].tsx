@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X, Trash2, Check, AlertTriangle, FileText, ExternalLink, RefreshCw, Calendar, History } from 'lucide-react-native';
+import { X, Trash2, Copy, Check, AlertTriangle, FileText, ExternalLink, RefreshCw, Calendar, History } from 'lucide-react-native';
 import { theme, formatMoney, statusLabels } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
@@ -130,6 +130,18 @@ export default function OrderDetail() {
     }
   };
 
+  const duplicateOrder = async () => {
+    try {
+      const newOrder = await api.orders.duplicate(id!);
+      Alert.alert('Заявка продублирована', `Создана заявка ${newOrder.order_number}`, [
+        { text: 'Открыть', onPress: () => router.push(`/order/${newOrder.id}` as any) },
+        { text: 'Закрыть', style: 'cancel' },
+      ]);
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message);
+    }
+  };
+
   const openLogs = async () => {
     setLogsVisible(true);
     setLogsLoading(true);
@@ -167,9 +179,14 @@ export default function OrderDetail() {
           <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
         </TouchableOpacity>
         <Text style={styles.topTitle}>{order.order_number}</Text>
-        <TouchableOpacity testID="delete-btn" onPress={remove} style={styles.iconBtn}>
-          <Trash2 size={18} color={theme.colors.loss} strokeWidth={1.6} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 4 }}>
+          <TouchableOpacity testID="duplicate-btn" onPress={duplicateOrder} style={styles.iconBtn}>
+            <Copy size={18} color={theme.colors.accent} strokeWidth={1.6} />
+          </TouchableOpacity>
+          <TouchableOpacity testID="delete-btn" onPress={remove} style={styles.iconBtn}>
+            <Trash2 size={18} color={theme.colors.loss} strokeWidth={1.6} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}>

@@ -235,7 +235,7 @@ function OrderCard({ order, onPress, testID }: any) {
   const days = daysSince(order.load_date);
 
   return (
-    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.7} style={[styles.card, overdue && styles.cardOverdue]}>
+    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.7} style={[styles.card, overdue && styles.cardOverdue, order.is_overdue && styles.cardDeliveryOverdue]}>
       {overdue && (
         <View style={styles.overdueBanner}>
           <AlertTriangle size={12} color={theme.colors.bg} strokeWidth={2} />
@@ -303,6 +303,7 @@ const styles = StyleSheet.create({
 
   card: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16, overflow: 'hidden' },
   cardOverdue: { borderColor: theme.colors.loss + '60' },
+  cardDeliveryOverdue: { borderLeftWidth: 4, borderLeftColor: '#FF3B30' },
   overdueBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.loss, marginHorizontal: -16, marginTop: -16, marginBottom: 12, paddingVertical: 6, paddingHorizontal: 12 },
   overdueText: { color: theme.colors.bg, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
 

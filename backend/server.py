@@ -488,6 +488,7 @@ class Order(BaseModel):
     assigned_to: Optional[str] = ""
     created_by: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
+    is_overdue: Optional[bool] = False
 
 
 class OrderPayload(BaseModel):
@@ -902,7 +903,14 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
         if not perms.get("can_view_all_orders"):
             filter_q["assigned_to"] = current_user["id"]
     docs = await db.orders.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(2000)
-    return [Order(**d) for d in docs]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    result = []
+    for d in docs:
+        unload = (d.get("unload_date") or "")[:10]
+        status = d.get("status", "")
+        d["is_overdue"] = bool(unload and unload < today and status not in ("delivered", "cancelled"))
+        result.append(Order(**d))
+    return result
 
 
 @api_router.get("/orders/next_number")
@@ -1012,6 +1020,46 @@ async def delete_order(order_id: str, background_tasks: BackgroundTasks):
     if doc.get("calendar_event_id"):
         background_tasks.add_task(_bg_cal_delete, doc["calendar_event_id"])
     return {"ok": True}
+
+
+@api_router.post("/orders/{order_id}/duplicate", response_model=Order)
+async def duplicate_order(order_id: str, background_tasks: BackgroundTasks,
+                           current_user: dict = Depends(_require_user)):
+    doc = await db.orders.find_one({"id": order_id, "deleted": {"$ne": True}}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Order not found")
+    import re as _re
+    year = datetime.now(timezone.utc).year
+    all_docs = await db.orders.find({}, {"_id": 0, "order_number": 1}).to_list(5000)
+    pattern = _re.compile(r"[ЗЗз3]\s*[-–—]\s*(\d+)\s*/\s*(\d{4})", _re.IGNORECASE)
+    max_num = 0
+    for d in all_docs:
+        m = pattern.search(d.get("order_number", "") or "")
+        if not m:
+            continue
+        n, y = int(m.group(1)), int(m.group(2))
+        if y == year and n > max_num:
+            max_num = n
+    next_number = f"З-{max_num + 1:03d}/{year}"
+    exclude = {"_id", "order_number", "created_at", "status", "client_paid", "carrier_paid",
+               "client_paid_date", "carrier_paid_date", "calendar_event_id",
+               "letter_to_client_sent", "letter_from_client_received", "is_overdue"}
+    new_data = {k: v for k, v in doc.items() if k not in exclude}
+    new_data["id"] = str(uuid.uuid4())
+    new_data["order_number"] = next_number
+    new_data["status"] = "new"
+    new_data["client_paid"] = False
+    new_data["carrier_paid"] = False
+    new_data["client_paid_date"] = ""
+    new_data["carrier_paid_date"] = ""
+    new_data["calendar_event_id"] = ""
+    new_data["created_at"] = now_iso()
+    new_data["created_by"] = current_user["id"]
+    obj = Order(**new_data)
+    await db.orders.insert_one(obj.dict())
+    background_tasks.add_task(_bg_push_order, obj.dict())
+    background_tasks.add_task(_bg_cal_create, obj.dict())
+    return obj
 
 
 # ====== OAuth Google (для генерации Docs от имени пользователя) ======
@@ -1193,11 +1241,27 @@ async def get_users_activity_summary(current_user: dict = Depends(_require_user)
     now_dt = datetime.now(timezone.utc)
     month_start = f"{now_dt.year}-{now_dt.month:02d}-01"
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
-    orders_agg = await db.orders.aggregate([
-        {"$match": {"created_at": {"$gte": month_start}}},
+    # Count orders_created per user
+    created_agg = await db.orders.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}, "deleted": {"$ne": True}}},
         {"$group": {"_id": "$created_by", "count": {"$sum": 1}}},
     ]).to_list(1000)
-    orders_by_user = {item["_id"]: item["count"] for item in orders_agg}
+    orders_created_by_user = {item["_id"]: item["count"] for item in created_agg}
+    # Count orders_assigned per user
+    assigned_agg = await db.orders.aggregate([
+        {"$match": {"created_at": {"$gte": month_start}, "deleted": {"$ne": True}}},
+        {"$group": {"_id": "$assigned_to", "count": {"$sum": 1}}},
+    ]).to_list(1000)
+    orders_assigned_by_user = {item["_id"]: item["count"] for item in assigned_agg}
+    # Count orders_total (created_by OR assigned_to, unique per user)
+    all_month_orders = await db.orders.find(
+        {"created_at": {"$gte": month_start}, "deleted": {"$ne": True}},
+        {"_id": 0, "created_by": 1, "assigned_to": 1},
+    ).to_list(10000)
+    orders_total_by_user: dict = {}
+    for o in all_month_orders:
+        for uid in set(filter(None, [o.get("created_by"), o.get("assigned_to")])):
+            orders_total_by_user[uid] = orders_total_by_user.get(uid, 0) + 1
     leads_agg = await db.leads.aggregate([
         {"$group": {"_id": "$assigned_to", "lead_ids": {"$push": "$id"}}},
     ]).to_list(1000)
@@ -1216,7 +1280,17 @@ async def get_users_activity_summary(current_user: dict = Depends(_require_user)
         uid = u["id"]
         user_leads = leads_by_user.get(uid, [])
         calls = sum(activity_by_lead.get(lid, 0) for lid in user_leads)
-        result.append({**u, "orders_month": orders_by_user.get(uid, 0), "calls_month": calls})
+        orders_created = orders_created_by_user.get(uid, 0)
+        orders_assigned = orders_assigned_by_user.get(uid, 0)
+        orders_total = orders_total_by_user.get(uid, 0)
+        result.append({
+            **u,
+            "orders_month": orders_total,
+            "orders_created": orders_created,
+            "orders_assigned": orders_assigned,
+            "orders_total": orders_total,
+            "calls_month": calls,
+        })
     return result
 
 
@@ -1309,7 +1383,7 @@ async def get_user_stats(user_id: str, month: Optional[str] = None, current_user
     month_start = f"{y}-{m:02d}-01"
     month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
     all_user_orders = await db.orders.find(
-        {"created_by": str(user_id), "deleted": {"$ne": True}},
+        {"$or": [{"created_by": str(user_id)}, {"assigned_to": str(user_id)}], "deleted": {"$ne": True}},
         {"_id": 0, "client_rate": 1, "unload_date": 1, "created_at": 1},
     ).to_list(10000)
     orders_in_month = [
@@ -1347,7 +1421,7 @@ async def get_user_orders(user_id: str, month: Optional[str] = None, current_use
     month_start = f"{y}-{m:02d}-01"
     month_end = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
     all_user_orders = await db.orders.find(
-        {"created_by": str(user_id), "deleted": {"$ne": True}},
+        {"$or": [{"created_by": str(user_id)}, {"assigned_to": str(user_id)}], "deleted": {"$ne": True}},
         {"_id": 0, "id": 1, "order_number": 1, "client_name": 1, "route_from": 1,
          "route_to": 1, "client_rate": 1, "status": 1, "unload_date": 1, "created_at": 1},
     ).to_list(10000)
@@ -1614,6 +1688,43 @@ async def dashboard(period: str = "all"):
             if o.get("unload_date") or o.get("load_date")
         ],
     }
+
+
+# ====== Global Search ======
+@api_router.get("/search")
+async def global_search(q: str = "", current_user: dict = Depends(_require_user)):
+    if len(q) < 2:
+        return {"orders": [], "clients": [], "carriers": [], "leads": []}
+    regex = {"$regex": q, "$options": "i"}
+
+    async def _search_orders():
+        return await db.orders.find(
+            {"deleted": {"$ne": True}, "$or": [{"order_number": regex}, {"client_name": regex}, {"carrier_name": regex}]},
+            {"_id": 0, "id": 1, "order_number": 1, "client_name": 1, "carrier_name": 1, "status": 1},
+        ).to_list(5)
+
+    async def _search_clients():
+        return await db.clients.find(
+            {"deleted": {"$ne": True}, "$or": [{"name": regex}, {"phone": regex}, {"city": regex}]},
+            {"_id": 0, "id": 1, "name": 1, "phone": 1, "city": 1},
+        ).to_list(5)
+
+    async def _search_carriers():
+        return await db.carriers.find(
+            {"deleted": {"$ne": True}, "$or": [{"company_name": regex}, {"phone": regex}, {"city": regex}]},
+            {"_id": 0, "id": 1, "company_name": 1, "phone": 1, "city": 1},
+        ).to_list(5)
+
+    async def _search_leads():
+        return await db.leads.find(
+            {"deleted": {"$ne": True}, "$or": [{"name": regex}, {"company": regex}, {"phone": regex}]},
+            {"_id": 0, "id": 1, "name": 1, "company": 1, "phone": 1, "status": 1},
+        ).to_list(5)
+
+    orders_r, clients_r, carriers_r, leads_r = await asyncio.gather(
+        _search_orders(), _search_clients(), _search_carriers(), _search_leads()
+    )
+    return {"orders": orders_r, "clients": clients_r, "carriers": carriers_r, "leads": leads_r}
 
 
 # ====== Seed ======
