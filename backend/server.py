@@ -1688,6 +1688,46 @@ async def dashboard(period: str = "all"):
     }
 
 
+# ====== App Settings ======
+_DEFAULT_RATE_MINIMUMS = [
+    {"route": "Москва↔Минск",       "cost": 720,  "current": 50,  "threshold": 865,  "status": "red"},
+    {"route": "СПб↔Минск",          "cost": 406,  "current": 75,  "threshold": 487,  "status": "red"},
+    {"route": "Минск↔Москва",       "cost": 492,  "current": 150, "threshold": 590,  "status": "red"},
+    {"route": "Жодино↔Москва",      "cost": 543,  "current": 250, "threshold": 651,  "status": "yellow"},
+    {"route": "Ульяновск–Минск",    "cost": 1328, "current": 900, "threshold": 1594, "status": "yellow"},
+    {"route": "Минск–Минск (лок.)", "cost": 130,  "current": 0,   "threshold": 200,  "status": "red"},
+    {"route": "Смоленск–Минск",     "cost": 335,  "current": 160, "threshold": 402,  "status": "yellow"},
+]
+
+_DEFAULT_GOALS = {
+    "margin_goal": 10000,
+    "new_clients_goal": 9,
+    "trips_goal": 45,
+    "avg_margin_goal": 230,
+}
+
+
+@api_router.get("/settings")
+async def get_settings(current_user: dict = Depends(_require_user)):
+    doc = await db.app_settings.find_one({"_id": "main"})
+    if not doc:
+        return {**_DEFAULT_GOALS, "rate_minimums": _DEFAULT_RATE_MINIMUMS}
+    return {
+        "margin_goal": doc.get("margin_goal", _DEFAULT_GOALS["margin_goal"]),
+        "new_clients_goal": doc.get("new_clients_goal", _DEFAULT_GOALS["new_clients_goal"]),
+        "trips_goal": doc.get("trips_goal", _DEFAULT_GOALS["trips_goal"]),
+        "avg_margin_goal": doc.get("avg_margin_goal", _DEFAULT_GOALS["avg_margin_goal"]),
+        "rate_minimums": doc.get("rate_minimums", _DEFAULT_RATE_MINIMUMS),
+    }
+
+
+@api_router.put("/settings")
+async def update_settings(request: Request, current_user: dict = Depends(_require_user)):
+    payload = await request.json()
+    await db.app_settings.update_one({"_id": "main"}, {"$set": payload}, upsert=True)
+    return {"ok": True}
+
+
 # ====== Analytics ======
 MONTHS_RU = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
 

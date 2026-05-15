@@ -133,6 +133,10 @@ export const api = {
     restore: (id: string) => req(`/backup/restore/${id}`, { method: 'POST' }),
   },
   analytics: (month?: string) => req(`/analytics${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+  settings: {
+    get: () => req('/settings'),
+    update: (data: any) => req('/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  },
   seed: () => req('/seed', { method: 'POST' }),
   globalSearch: (q: string) => req(`/search?q=${encodeURIComponent(q)}`),
 };
