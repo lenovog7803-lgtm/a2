@@ -12,6 +12,7 @@ export default function Leads() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [leads, setLeads] = useState<any[]>([]);
+  const [activityStats, setActivityStats] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -19,8 +20,12 @@ export default function Leads() {
 
   const load = useCallback(async () => {
     try {
-      const l = await api.leads.list();
+      const [l, stats] = await Promise.all([
+        api.leads.list(),
+        api.leads.activityStats().catch(() => [] as any[]),
+      ]);
       setLeads(l);
+      setActivityStats(stats);
     } finally {
       setLoading(false);
     }
@@ -141,7 +146,7 @@ export default function Leads() {
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-          ListHeaderComponent={<LeadsStats leads={leads} />}
+          ListHeaderComponent={<LeadsStats leads={leads} activityStats={activityStats} />}
           renderItem={({ item, index }) => (
             <LeadCard
               lead={item}
@@ -167,7 +172,7 @@ export default function Leads() {
 
 // ─── Stats block ────────────────────────────────────────────────────────────
 
-function LeadsStats({ leads }: { leads: any[] }) {
+function LeadsStats({ leads, activityStats }: { leads: any[]; activityStats: any[] }) {
   const total = leads.length;
   if (total === 0) return null;
 
@@ -187,16 +192,16 @@ function LeadsStats({ leads }: { leads: any[] }) {
   const processed = leads.filter(l => l.status !== 'new').length;
   const convRate = pct(wonCount);
 
-  // Last 7 days activity by last_contact
-  const today = new Date();
+  // Last 7 days activity from lead_activity collection (server-side)
   const last7 = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(today);
+    const d = new Date();
     d.setDate(d.getDate() - 6 + i);
     return d.toISOString().slice(0, 10);
   });
+  const actMap = Object.fromEntries(activityStats.map((s: any) => [s.date, s.count]));
   const activity = last7.map(date => ({
     date,
-    count: leads.filter(l => l.last_contact === date).length,
+    count: actMap[date] || 0,
     day: parseInt(date.slice(8, 10), 10),
   }));
   const maxAct = Math.max(...activity.map(a => a.count), 1);

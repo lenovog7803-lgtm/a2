@@ -915,24 +915,24 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
 
 @api_router.get("/orders/next_number")
 async def next_order_number():
-    """Возвращает следующий номер заявки в формате 'З-NNN/YYYY'.
-    Берёт максимальный номер из существующих заявок текущего года и прибавляет 1.
-    Если года нет — начинает с 'З-001/YYYY'.
+    """Возвращает первый свободный номер заявки в формате 'З-NNN/YYYY'.
+    Ищет минимальный номер которого нет среди всех заявок текущего года (включая удалённые).
     """
     import re as _re
     year = datetime.now(timezone.utc).year
-    # ищем все номера типа "З-NNN/YYYY" или "3-NNN/YYYY"
     docs = await db.orders.find({}, {"_id": 0, "order_number": 1}).to_list(5000)
     pattern = _re.compile(r"[ЗЗз3]\s*[-–—]\s*(\d+)\s*/\s*(\d{4})", _re.IGNORECASE)
-    max_num = 0
+    existing_nums: set = set()
     for d in docs:
         m = pattern.search(d.get("order_number", "") or "")
         if not m:
             continue
         n, y = int(m.group(1)), int(m.group(2))
-        if y == year and n > max_num:
-            max_num = n
-    next_n = max_num + 1
+        if y == year:
+            existing_nums.add(n)
+    next_n = 1
+    while next_n in existing_nums:
+        next_n += 1
     return {"next_number": f"З-{next_n:03d}/{year}", "year": year, "n": next_n}
 
 
@@ -1032,15 +1032,18 @@ async def duplicate_order(order_id: str, background_tasks: BackgroundTasks,
     year = datetime.now(timezone.utc).year
     all_docs = await db.orders.find({}, {"_id": 0, "order_number": 1}).to_list(5000)
     pattern = _re.compile(r"[ЗЗз3]\s*[-–—]\s*(\d+)\s*/\s*(\d{4})", _re.IGNORECASE)
-    max_num = 0
+    existing_nums: set = set()
     for d in all_docs:
         m = pattern.search(d.get("order_number", "") or "")
         if not m:
             continue
         n, y = int(m.group(1)), int(m.group(2))
-        if y == year and n > max_num:
-            max_num = n
-    next_number = f"З-{max_num + 1:03d}/{year}"
+        if y == year:
+            existing_nums.add(n)
+    _next_n = 1
+    while _next_n in existing_nums:
+        _next_n += 1
+    next_number = f"З-{_next_n:03d}/{year}"
     exclude = {"_id", "order_number", "created_at", "status", "client_paid", "carrier_paid",
                "client_paid_date", "carrier_paid_date", "calendar_event_id",
                "letter_to_client_sent", "letter_from_client_received", "is_overdue"}
@@ -1966,10 +1969,9 @@ async def restore_trash(collection: str, item_id: str, current_user: dict = Depe
 async def purge_trash(current_user: dict = Depends(_require_user)):
     if current_user.get("role") != "admin":
         raise HTTPException(403, "Только для администратора")
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     total = 0
     for cname in _TRASH_LABELS:
-        r = await db[cname].delete_many({"deleted": True, "deleted_at": {"$lt": cutoff}})
+        r = await db[cname].delete_many({"deleted": True})
         total += r.deleted_count
     return {"ok": True, "deleted_count": total}
 

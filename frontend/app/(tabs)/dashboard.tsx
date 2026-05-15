@@ -772,11 +772,6 @@ function TeamBlock({ managers, onPress }: { managers: any[]; onPress: (mgr: any)
             </View>
             <View style={{ alignItems: 'flex-end', gap: 2 }}>
               <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.accent }}>{mgr.orders_total ?? mgr.orders_month} зая.</Text>
-              {(mgr.orders_created !== undefined || mgr.orders_assigned !== undefined) && (
-                <Text style={{ fontSize: 10, color: theme.colors.textTertiary }}>
-                  созд. {mgr.orders_created ?? 0} / назн. {mgr.orders_assigned ?? 0}
-                </Text>
-              )}
               <Text style={{ fontSize: 11, color: theme.colors.textTertiary }}>{mgr.calls_month} зв.</Text>
             </View>
             <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} style={{ marginLeft: 6 }} />

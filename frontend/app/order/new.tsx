@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { X } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
@@ -28,6 +28,7 @@ const EMPTY: any = {
 export default function NewOrder() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { duplicateFrom } = useLocalSearchParams<{ duplicateFrom?: string }>();
   const [clients, setClients] = useState<any[]>([]);
   const [carriers, setCarriers] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
@@ -44,6 +45,33 @@ export default function NewOrder() {
       ]);
       setClients(c);
       setCarriers(cr);
+
+      if (duplicateFrom) {
+        try {
+          const source = await api.orders.get(duplicateFrom);
+          const { id: _id, order_number: _on, created_at: _ca, status: _st,
+                  client_paid: _cp, carrier_paid: _cp2, client_paid_date: _cpd,
+                  carrier_paid_date: _cpd2, calendar_event_id: _cei,
+                  calendar_event_url: _ceu, doc_url_client: _duc,
+                  doc_url_carrier: _duca, doc_url_act: _dua,
+                  docs_to_client_sent: _dtcs, docs_from_client_received: _dfcr,
+                  docs_to_carrier_sent: _dtcas, docs_from_carrier_received: _dfcar,
+                  docs_to_client_date: _dtcd, docs_from_client_date: _dfcd,
+                  docs_to_carrier_date: _dtcad, docs_from_carrier_date: _dfcad,
+                  ...rest } = source;
+          setData({
+            ...EMPTY,
+            ...rest,
+            order_number: nn?.next_number || '',
+            status: 'new',
+            client_paid: false,
+            carrier_paid: false,
+          });
+        } catch {
+          if (nn?.next_number) setData((d: any) => ({ ...d, order_number: nn.next_number }));
+        }
+        return;
+      }
 
       // Check for draft
       const draft = await AsyncStorage.getItem(DRAFT_KEY);
@@ -120,7 +148,7 @@ export default function NewOrder() {
         <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
           <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
         </TouchableOpacity>
-        <Text style={styles.topTitle}>Новая заявка</Text>
+        <Text style={styles.topTitle}>{duplicateFrom ? 'Дублирование заявки' : 'Новая заявка'}</Text>
         <View style={{ width: 40 }} />
       </View>
 

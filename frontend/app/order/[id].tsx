@@ -130,16 +130,8 @@ export default function OrderDetail() {
     }
   };
 
-  const duplicateOrder = async () => {
-    try {
-      const newOrder = await api.orders.duplicate(id!);
-      Alert.alert('Заявка продублирована', `Создана заявка ${newOrder.order_number}`, [
-        { text: 'Открыть', onPress: () => router.push(`/order/${newOrder.id}` as any) },
-        { text: 'Закрыть', style: 'cancel' },
-      ]);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e.message);
-    }
+  const duplicateOrder = () => {
+    router.push({ pathname: '/order/new', params: { duplicateFrom: id } } as any);
   };
 
   const openLogs = async () => {

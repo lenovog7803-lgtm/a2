@@ -62,14 +62,13 @@ export default function TrashScreen() {
   };
 
   const handlePurge = () => {
-    const oldItems = items.filter(i => {
-      if (!i.deleted_at) return false;
-      const diff = Date.now() - new Date(i.deleted_at).getTime();
-      return diff > 30 * 24 * 60 * 60 * 1000;
-    });
+    if (items.length === 0) {
+      Alert.alert('Корзина пуста', 'Нечего удалять.');
+      return;
+    }
     Alert.alert(
       'Очистить корзину?',
-      `Будет удалено ${oldItems.length} записей старше 30 дней. Это действие необратимо.`,
+      `Будет безвозвратно удалено ${items.length} ${items.length === 1 ? 'запись' : items.length < 5 ? 'записи' : 'записей'}. Это действие необратимо.`,
       [
         { text: 'Отмена', style: 'cancel' },
         {
