@@ -12,7 +12,6 @@ import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ROLE_KEY } from '../../src/auth';
 import AnalyticsTab from '../../src/components/AnalyticsTab';
-import InstructionsTab from '../../src/components/InstructionsTab';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
@@ -49,7 +48,7 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState<string>(currentMonth());
   const [selectedDebtor, setSelectedDebtor] = useState<{ name: string; isCreditor: boolean } | null>(null);
-  const [dashView, setDashView] = useState<'dashboard' | 'manager' | 'analytics' | 'instructions'>('dashboard');
+  const [dashView, setDashView] = useState<'dashboard' | 'manager' | 'analytics'>('dashboard');
   const [leads, setLeads] = useState<any[]>([]);
   const [activityStats, setActivityStats] = useState<any[]>([]);
   const [teamManagers, setTeamManagers] = useState<any[]>([]);
@@ -269,9 +268,6 @@ export default function Dashboard() {
           <TouchableOpacity onPress={() => setDashView('analytics')} style={[styles.modeBtn, dashView === 'analytics' && styles.modeBtnActive]} activeOpacity={0.7}>
             <Text style={[styles.modeBtnText, dashView === 'analytics' && styles.modeBtnTextActive]}>Цели</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setDashView('instructions')} style={[styles.modeBtn, dashView === 'instructions' && styles.modeBtnActive]} activeOpacity={0.7}>
-            <Text style={[styles.modeBtnText, dashView === 'instructions' && styles.modeBtnTextActive]}>Инструкции</Text>
-          </TouchableOpacity>
         </View>
 
         {dashView === 'dashboard' ? (<>
@@ -452,10 +448,8 @@ export default function Dashboard() {
             isAdmin={currentUserRole === 'admin'}
             currentUserId={currentUserId}
           />
-        ) : dashView === 'analytics' ? (
-          <AnalyticsTab />
         ) : (
-          <InstructionsTab />
+          <AnalyticsTab />
         )}
       </View>
     </ScrollView>
@@ -1545,7 +1539,7 @@ const styles = StyleSheet.create({
   },
   modeBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
   modeBtnActive: { backgroundColor: theme.colors.surface },
-  modeBtnText: { color: theme.colors.textTertiary, fontSize: 11, fontWeight: '600' },
+  modeBtnText: { color: theme.colors.textTertiary, fontSize: 13, fontWeight: '600' },
   modeBtnTextActive: { color: theme.colors.textPrimary, fontWeight: '700' },
 
   heroCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 16, padding: 20, marginBottom: 12 },
