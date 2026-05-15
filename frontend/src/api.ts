@@ -132,6 +132,7 @@ export const api = {
     create: () => req('/backup/create', { method: 'POST' }),
     restore: (id: string) => req(`/backup/restore/${id}`, { method: 'POST' }),
   },
+  analytics: (month?: string) => req(`/analytics${month ? `?month=${encodeURIComponent(month)}` : ''}`),
   seed: () => req('/seed', { method: 'POST' }),
   globalSearch: (q: string) => req(`/search?q=${encodeURIComponent(q)}`),
 };

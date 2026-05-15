@@ -11,6 +11,7 @@ import { Picker } from '../../src/components/Picker';
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ROLE_KEY } from '../../src/auth';
+import AnalyticsTab from '../../src/components/AnalyticsTab';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
@@ -47,7 +48,7 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState<string>(currentMonth());
   const [selectedDebtor, setSelectedDebtor] = useState<{ name: string; isCreditor: boolean } | null>(null);
-  const [dashView, setDashView] = useState<'dashboard' | 'manager'>('dashboard');
+  const [dashView, setDashView] = useState<'dashboard' | 'manager' | 'analytics'>('dashboard');
   const [leads, setLeads] = useState<any[]>([]);
   const [activityStats, setActivityStats] = useState<any[]>([]);
   const [teamManagers, setTeamManagers] = useState<any[]>([]);
@@ -264,6 +265,9 @@ export default function Dashboard() {
           <TouchableOpacity onPress={() => setDashView('manager')} style={[styles.modeBtn, dashView === 'manager' && styles.modeBtnActive]} activeOpacity={0.7}>
             <Text style={[styles.modeBtnText, dashView === 'manager' && styles.modeBtnTextActive]}>Менеджер</Text>
           </TouchableOpacity>
+          <TouchableOpacity onPress={() => setDashView('analytics')} style={[styles.modeBtn, dashView === 'analytics' && styles.modeBtnActive]} activeOpacity={0.7}>
+            <Text style={[styles.modeBtnText, dashView === 'analytics' && styles.modeBtnTextActive]}>Аналитика</Text>
+          </TouchableOpacity>
         </View>
 
         {dashView === 'dashboard' ? (<>
@@ -435,7 +439,7 @@ export default function Dashboard() {
             setTeamStatsUser(mgr);
           }} />
         )}
-        </>) : (
+        </>) : dashView === 'manager' ? (
           <ManagerView
             leads={leads}
             activityStats={activityStats}
@@ -444,6 +448,8 @@ export default function Dashboard() {
             isAdmin={currentUserRole === 'admin'}
             currentUserId={currentUserId}
           />
+        ) : (
+          <AnalyticsTab />
         )}
       </View>
     </ScrollView>

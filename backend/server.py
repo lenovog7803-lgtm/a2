@@ -1688,6 +1688,127 @@ async def dashboard(period: str = "all"):
     }
 
 
+# ====== Analytics ======
+MONTHS_RU = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
+
+
+@api_router.get("/analytics")
+async def analytics(month: Optional[str] = None, current_user: dict = Depends(_require_user)):
+    all_orders = await db.orders.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
+
+    period = month or "all"
+    orders = [o for o in all_orders if order_in_period(o, period)]
+
+    def _margin(o: dict) -> float:
+        return o.get("client_rate", 0) - o.get("carrier_rate", 0)
+
+    revenue = sum(o.get("client_rate", 0) for o in orders)
+    expenses = sum(o.get("carrier_rate", 0) for o in orders)
+    margin = revenue - expenses
+    margin_pct = round(margin / revenue * 100, 1) if revenue else 0
+    trips_count = len(orders)
+    avg_margin = round(margin / trips_count, 1) if trips_count else 0
+
+    # Goals — всегда текущий месяц
+    cur_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    cur_orders = [o for o in all_orders if order_in_period(o, cur_ym)]
+    margin_fact = sum(_margin(o) for o in cur_orders)
+    trips_fact = len(cur_orders)
+    avg_margin_fact = round(margin_fact / trips_fact, 1) if trips_fact else 0
+    prev_clients = {o.get("client_name") or "" for o in all_orders
+                    if not order_in_period(o, cur_ym) and o.get("client_name")}
+    cur_clients = {o.get("client_name") or "" for o in cur_orders if o.get("client_name")}
+    new_clients_fact = len(cur_clients - prev_clients)
+
+    # Clients top-10
+    client_map: dict = {}
+    for o in orders:
+        n = o.get("client_name") or "—"
+        if n not in client_map:
+            client_map[n] = {"name": n, "trips": 0, "revenue": 0.0, "margin": 0.0}
+        client_map[n]["trips"] += 1
+        client_map[n]["revenue"] += o.get("client_rate", 0)
+        client_map[n]["margin"] += _margin(o)
+    clients_list = []
+    for it in client_map.values():
+        mp = round(it["margin"] / it["revenue"] * 100, 1) if it["revenue"] else 0
+        clients_list.append({**it, "margin_pct": mp})
+    clients_list = sorted(clients_list, key=lambda x: x["margin"], reverse=True)[:10]
+
+    # Routes top-8
+    route_map: dict = {}
+    for o in orders:
+        rf = (o.get("route_from") or "").strip()
+        rt = (o.get("route_to") or "").strip()
+        route = f"{rf}–{rt}" if rf and rt else rf or rt or "—"
+        if route not in route_map:
+            route_map[route] = {"route": route, "trips": 0, "total_margin": 0.0}
+        route_map[route]["trips"] += 1
+        route_map[route]["total_margin"] += _margin(o)
+    routes_list = []
+    for it in route_map.values():
+        avg_m = round(it["total_margin"] / it["trips"], 1) if it["trips"] else 0
+        routes_list.append({**it, "avg_margin": avg_m})
+    routes_list = sorted(routes_list, key=lambda x: x["total_margin"], reverse=True)[:8]
+
+    # Loss trips (маржа < 0)
+    loss_trips = []
+    for o in orders:
+        m = _margin(o)
+        if m < 0:
+            rf = (o.get("route_from") or "").strip()
+            rt = (o.get("route_to") or "").strip()
+            route = f"{rf}–{rt}" if rf and rt else rf or rt or "—"
+            loss_trips.append({
+                "number": o.get("order_number", ""),
+                "client": o.get("client_name") or "—",
+                "route": route,
+                "client_rate": o.get("client_rate", 0),
+                "carrier_rate": o.get("carrier_rate", 0),
+                "loss": m,
+            })
+    loss_trips = sorted(loss_trips, key=lambda x: x["loss"])
+
+    # Monthly breakdown (по всем заявкам, не по периоду)
+    monthly_map: dict = {}
+    for o in all_orders:
+        ym = (o.get("unload_date") or o.get("load_date") or o.get("created_at", ""))[:7]
+        if not ym or len(ym) < 7:
+            continue
+        if ym not in monthly_map:
+            monthly_map[ym] = {"month": ym, "revenue": 0.0, "expenses": 0.0, "margin": 0.0, "trips": 0}
+        monthly_map[ym]["revenue"] += o.get("client_rate", 0)
+        monthly_map[ym]["expenses"] += o.get("carrier_rate", 0)
+        monthly_map[ym]["margin"] += _margin(o)
+        monthly_map[ym]["trips"] += 1
+    monthly_list = []
+    for it in sorted(monthly_map.values(), key=lambda x: x["month"]):
+        try:
+            m_idx = int(it["month"][5:7]) - 1
+            label = MONTHS_RU[m_idx]
+        except Exception:
+            label = it["month"]
+        monthly_list.append({**it, "label": label})
+
+    return {
+        "period": period,
+        "summary": {
+            "revenue": revenue, "expenses": expenses, "margin": margin,
+            "margin_pct": margin_pct, "trips_count": trips_count, "avg_margin": avg_margin,
+        },
+        "goals": {
+            "margin_goal": 10000, "margin_fact": round(margin_fact, 1),
+            "new_clients_goal": 9, "new_clients_fact": new_clients_fact,
+            "trips_goal": 45, "trips_fact": trips_fact,
+            "avg_margin_goal": 230, "avg_margin_fact": avg_margin_fact,
+        },
+        "monthly": monthly_list,
+        "clients": clients_list,
+        "routes": routes_list,
+        "loss_trips": loss_trips,
+    }
+
+
 # ====== Global Search ======
 @api_router.get("/search")
 async def global_search(q: str = "", current_user: dict = Depends(_require_user)):
