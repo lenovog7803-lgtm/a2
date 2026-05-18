@@ -583,6 +583,7 @@ class Lead(BaseModel):
     industry: Optional[str] = ""
     status: str = "new"
     last_contact: Optional[str] = ""
+    last_call: Optional[str] = ""
     next_call: Optional[str] = ""
     notes: Optional[str] = ""
     directions: Optional[str] = ""
@@ -754,6 +755,84 @@ async def list_leads_filtered(industry: Optional[str] = None, current_user: Opti
         filter_q["industry"] = industry
     docs = await db.leads.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(50000)
     return [Lead(**d) for d in docs]
+
+
+STATUSES_WITH_CALLBACK = {"callback", "sent_kp", "thinking"}
+
+
+@api_router.put("/leads/{item_id}", response_model=Lead)
+async def update_lead(item_id: str, payload: LeadUpdate, background_tasks: BackgroundTasks,
+                      current_user: Optional[dict] = Depends(_get_user_from_token)):
+    old_doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
+    if not old_doc:
+        raise HTTPException(404, "Not found")
+    old_status = old_doc.get("status")
+
+    p_dict = payload.dict(exclude_none=True)
+    p_dict.pop("last_call", None)
+
+    await db.leads.update_one({"id": item_id}, {"$set": p_dict})
+    doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
+
+    new_status = doc.get("status")
+    status_changed = new_status != old_status
+    old_notes_count = len(old_doc.get("call_notes") or [])
+    new_call_notes = p_dict.get("call_notes")
+    notes_added = new_call_notes is not None and len(new_call_notes) > old_notes_count
+
+    auto_set: dict = {}
+    if status_changed or notes_added:
+        now = datetime.now(timezone.utc)
+        auto_set["last_call"] = now.strftime("%Y-%m-%d")
+
+        if new_status in STATUSES_WITH_CALLBACK:
+            next_call_dt = now + timedelta(hours=24)
+            next_call_str = next_call_dt.strftime("%Y-%m-%d")
+            next_time_str = next_call_dt.strftime("%H:%M")
+            auto_set["next_call"] = next_call_str
+
+            label = doc.get("company") or doc.get("name") or ""
+            task_title = f"Перезвонить: {label}"
+            existing = await db.tasks.find_one({"title": task_title, "due_date": next_call_str})
+            if not existing:
+                task_obj = {
+                    "id": str(uuid.uuid4()),
+                    "title": task_title,
+                    "task_type": "call",
+                    "due_date": next_call_str,
+                    "due_time": next_time_str,
+                    "status": "pending",
+                    "description": f"Лид: {doc.get('name', '')}, {doc.get('phone', '')}",
+                    "created_by": (current_user or {}).get("id", ""),
+                    "created_at": now_iso(),
+                    "google_task_id": None,
+                }
+                await db.tasks.insert_one(task_obj)
+                background_tasks.add_task(_bg_gt_create, task_obj)
+
+    if auto_set:
+        await db.leads.update_one({"id": item_id}, {"$set": auto_set})
+        doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
+
+    if status_changed:
+        action = "status_change"
+    elif notes_added or any(k in p_dict for k in ("last_contact", "next_call", "call_notes")):
+        action = "call"
+    else:
+        action = "update"
+    await db.lead_activity.insert_one({
+        "id": str(uuid.uuid4()),
+        "lead_id": item_id,
+        "user_id": (current_user or {}).get("id", ""),
+        "action": action,
+        "old_status": old_status,
+        "new_status": new_status,
+        "timestamp": datetime.now(timezone.utc),
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    })
+
+    background_tasks.add_task(_bg_push_lead, doc)
+    return Lead(**doc)
 
 
 make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)

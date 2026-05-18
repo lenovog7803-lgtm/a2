@@ -137,8 +137,13 @@ export default function LeadDetail() {
           <Field label="Город" value={lead.city} onChangeText={(v: string) => update({ city: v })} />
           <Field label="Отрасль" value={lead.industry || ''} onChangeText={(v: string) => update({ industry: v })} />
           <Field label="Направления" placeholder="МСК-СПб, МСК-НСК" value={lead.directions || ''} onChangeText={(v: string) => update({ directions: v })} />
-          <Field label="Дата следующего звонка" placeholder="2026-02-15" value={lead.next_call || ''} onChangeText={(v: string) => update({ next_call: v })} />
-          <Field label="Последний контакт" placeholder="2026-02-10" value={lead.last_contact || ''} onChangeText={(v: string) => update({ last_contact: v })} />
+          <DateField label="Следующий звонок" value={lead.next_call || ''} onChange={(v: string) => update({ next_call: v })} />
+          <View style={styles.readOnlyWrap}>
+            <Text style={styles.label}>ПОСЛЕДНИЙ ЗВОНОК</Text>
+            <Text style={styles.readOnlyValue}>
+              {lead.last_call ? lead.last_call.split('-').reverse().join('.') : '—'}
+            </Text>
+          </View>
 
           <Text style={styles.label}>СТАТУС</Text>
           <View style={styles.row}>
@@ -316,4 +321,7 @@ const styles = StyleSheet.create({
     borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginBottom: 16,
   },
   addNoteBtnText: { color: theme.colors.textTertiary, fontSize: 13, fontWeight: '500' },
+
+  readOnlyWrap: { marginBottom: 16 },
+  readOnlyValue: { color: theme.colors.textSecondary, fontSize: 15, paddingVertical: 2 },
 });
