@@ -71,12 +71,13 @@ export const api = {
     delete: (id: string) => req(`/tasks/${id}`, { method: 'DELETE' }),
   },
   leads: {
-    list: () => req('/leads'),
+    list: (industry?: string) => req(`/leads${industry ? `?industry=${encodeURIComponent(industry)}` : ''}`),
     get: (id: string) => req(`/leads/${id}`),
     create: (data: any) => req('/leads', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => req(`/leads/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/leads/${id}`, { method: 'DELETE' }),
     activityStats: () => req('/leads/activity/stats'),
+    industries: () => req('/leads/industries'),
   },
   notes: {
     list: () => req('/notes'),

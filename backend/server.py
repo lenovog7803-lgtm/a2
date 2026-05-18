@@ -737,6 +737,25 @@ async def leads_activity_stats():
     return [{"date": k, "count": v} for k, v in sorted(counts.items())]
 
 
+@api_router.get("/leads/industries", response_model=List[str])
+async def leads_industries():
+    docs = await db.leads.distinct("industry", {"deleted": {"$ne": True}, "industry": {"$nin": [None, ""]}})
+    return sorted([d for d in docs if d], key=lambda x: x.lower())
+
+
+@api_router.get("/leads", response_model=List[Lead])
+async def list_leads_filtered(industry: Optional[str] = None, current_user: Optional[dict] = Depends(_get_user_from_token)):
+    filter_q: dict = {"deleted": {"$ne": True}}
+    if current_user and current_user.get("role") == "manager":
+        perms = current_user.get("permissions") or {}
+        if not perms.get("can_view_all_leads"):
+            filter_q["assigned_to"] = current_user["id"]
+    if industry:
+        filter_q["industry"] = industry
+    docs = await db.leads.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(50000)
+    return [Lead(**d) for d in docs]
+
+
 make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)
 
 

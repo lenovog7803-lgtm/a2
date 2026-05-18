@@ -1,8 +1,8 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, Alert, TextInput } from 'react-native';
+import React, { useState, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, Alert, TextInput, Platform, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, Phone, Calendar, Check, Search, RefreshCw } from 'lucide-react-native';
+import { Plus, Phone, Calendar, Check, Search, RefreshCw, ChevronDown, X } from 'lucide-react-native';
 import { theme, leadStatusLabels, leadStatusColors } from '../../src/theme';
 import { api } from '../../src/api';
 import { Badge } from '../../src/components/Badge';
@@ -17,21 +17,37 @@ export default function Leads() {
   const [filter, setFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [industries, setIndustries] = useState<string[]>([]);
+  const [industryFilter, setIndustryFilter] = useState('');
+  const [industryPickerOpen, setIndustryPickerOpen] = useState(false);
+  const industryRef = useRef('');
 
   const load = useCallback(async () => {
     try {
-      const [l, stats] = await Promise.all([
-        api.leads.list(),
+      const [l, stats, inds] = await Promise.all([
+        api.leads.list(industryRef.current || undefined),
         api.leads.activityStats().catch(() => [] as any[]),
+        api.leads.industries().catch(() => [] as string[]),
       ]);
       setLeads(l);
       setActivityStats(stats);
+      setIndustries(inds);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const handleIndustryChange = useCallback((val: string) => {
+    industryRef.current = val;
+    setIndustryFilter(val);
+    setLoading(true);
+    api.leads.list(val || undefined).then(l => {
+      setLeads(l);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
 
   const syncAndReload = useCallback(async () => {
     setSyncing(true);
@@ -112,6 +128,73 @@ export default function Leads() {
             clearButtonMode="while-editing"
           />
         </View>
+
+        {Platform.OS === 'web' ? (
+          <View style={{ marginTop: 10 }}>
+            {/* @ts-ignore */}
+            <select
+              value={industryFilter}
+              onChange={(e: any) => handleIndustryChange(e.target.value)}
+              style={{
+                backgroundColor: 'transparent',
+                color: industryFilter ? '#EAFF00' : '#9CA3AF',
+                border: `1px solid ${industryFilter ? '#EAFF00' : '#2A2A2A'}`,
+                borderRadius: 12,
+                padding: '9px 14px',
+                fontSize: 14,
+                width: '100%',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              <option value="">Все отрасли</option>
+              {industries.map(i => <option key={i} value={i}>{i}</option>)}
+            </select>
+          </View>
+        ) : (
+          <>
+            <TouchableOpacity
+              onPress={() => setIndustryPickerOpen(true)}
+              style={[styles.industryBtn, !!industryFilter && styles.industryBtnActive]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.industryBtnText, !!industryFilter && styles.industryBtnTextActive]} numberOfLines={1}>
+                {industryFilter || 'Все отрасли'}
+              </Text>
+              <ChevronDown size={14} color={industryFilter ? '#EAFF00' : '#9CA3AF'} strokeWidth={1.8} />
+            </TouchableOpacity>
+
+            <Modal visible={industryPickerOpen} transparent animationType="fade" onRequestClose={() => setIndustryPickerOpen(false)}>
+              <TouchableOpacity style={styles.industryBackdrop} activeOpacity={1} onPress={() => setIndustryPickerOpen(false)}>
+                <TouchableOpacity activeOpacity={1} style={styles.industrySheet} onPress={() => {}}>
+                  <View style={styles.industrySheetHead}>
+                    <Text style={styles.industrySheetTitle}>Отрасль</Text>
+                    <TouchableOpacity onPress={() => setIndustryPickerOpen(false)}>
+                      <X size={20} color="#fff" strokeWidth={1.6} />
+                    </TouchableOpacity>
+                  </View>
+                  <FlatList
+                    data={[{ id: '', label: 'Все отрасли' }, ...industries.map(i => ({ id: i, label: i }))]}
+                    keyExtractor={(i) => i.id || '__all__'}
+                    renderItem={({ item }) => {
+                      const active = item.id === industryFilter;
+                      return (
+                        <TouchableOpacity
+                          style={[styles.industryItem, active && styles.industryItemActive]}
+                          onPress={() => { handleIndustryChange(item.id); setIndustryPickerOpen(false); }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.industryItemText, active && { color: '#EAFF00' }]}>{item.label}</Text>
+                          {active && <Check size={16} color="#EAFF00" strokeWidth={2} />}
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Modal>
+          </>
+        )}
 
         <FlatList
           horizontal
@@ -444,4 +527,21 @@ const styles = StyleSheet.create({
 
   searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginTop: 12 },
   searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
+
+  industryBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border,
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 9, marginTop: 10,
+  },
+  industryBtnActive: { borderColor: theme.colors.accent, backgroundColor: theme.colors.accent + '15' },
+  industryBtnText: { color: theme.colors.textTertiary, fontSize: 14, flex: 1, marginRight: 8 },
+  industryBtnTextActive: { color: theme.colors.accent },
+
+  industryBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  industrySheet: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '75%', paddingBottom: 20 },
+  industrySheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  industrySheetTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
+  industryItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  industryItemActive: { backgroundColor: theme.colors.accent + '10' },
+  industryItemText: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '500' },
 });
