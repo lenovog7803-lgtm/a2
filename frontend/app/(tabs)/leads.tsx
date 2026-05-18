@@ -137,8 +137,8 @@ export default function Leads() {
               onChange={(e: any) => handleIndustryChange(e.target.value)}
               style={{
                 backgroundColor: 'transparent',
-                color: industryFilter ? '#EAFF00' : '#9CA3AF',
-                border: `1px solid ${industryFilter ? '#EAFF00' : '#2A2A2A'}`,
+                color: industryFilter ? theme.colors.accent : theme.colors.textTertiary,
+                border: `1px solid ${industryFilter ? theme.colors.accent : theme.colors.border}`,
                 borderRadius: 12,
                 padding: '9px 14px',
                 fontSize: 14,
@@ -161,7 +161,7 @@ export default function Leads() {
               <Text style={[styles.industryBtnText, !!industryFilter && styles.industryBtnTextActive]} numberOfLines={1}>
                 {industryFilter || 'Все отрасли'}
               </Text>
-              <ChevronDown size={14} color={industryFilter ? '#EAFF00' : '#9CA3AF'} strokeWidth={1.8} />
+              <ChevronDown size={14} color={industryFilter ? theme.colors.accent : theme.colors.textTertiary} strokeWidth={1.8} />
             </TouchableOpacity>
 
             <Modal visible={industryPickerOpen} transparent animationType="fade" onRequestClose={() => setIndustryPickerOpen(false)}>
@@ -170,7 +170,7 @@ export default function Leads() {
                   <View style={styles.industrySheetHead}>
                     <Text style={styles.industrySheetTitle}>Отрасль</Text>
                     <TouchableOpacity onPress={() => setIndustryPickerOpen(false)}>
-                      <X size={20} color="#fff" strokeWidth={1.6} />
+                      <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
                     </TouchableOpacity>
                   </View>
                   <FlatList
@@ -184,8 +184,8 @@ export default function Leads() {
                           onPress={() => { handleIndustryChange(item.id); setIndustryPickerOpen(false); }}
                           activeOpacity={0.7}
                         >
-                          <Text style={[styles.industryItemText, active && { color: '#EAFF00' }]}>{item.label}</Text>
-                          {active && <Check size={16} color="#EAFF00" strokeWidth={2} />}
+                          <Text style={[styles.industryItemText, active && { color: theme.colors.accent }]}>{item.label}</Text>
+                          {active && <Check size={16} color={theme.colors.accent} strokeWidth={2} />}
                         </TouchableOpacity>
                       );
                     }}
