@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Modal, FlatList } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { X } from 'lucide-react-native';
+import { X, ChevronDown, Check } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
+
+const BASIS_OPTIONS = [
+  { id: 'устава', label: 'Устава' },
+  { id: 'свидетельства', label: 'Свидетельства' },
+];
 
 const VEHICLES = ['Тент', 'Реф', 'Изотерм', 'Бортовой', 'Контейнер'];
 
@@ -13,14 +18,16 @@ export default function NewCarrier() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [saving, setSaving] = useState(false);
+  const [basisOpen, setBasisOpen] = useState(false);
   const [data, setData] = useState<any>({
     company_name: '', driver_name: '', phone: '', inn: '', kpp: '',
-    legal_address: '', bank_name: '', bank_account: '', bank_bik: '', bank_corr_account: '',
+    legal_address: '', postal_address: '', director: '', basis: '',
+    bank_name: '', bank_account: '', bank_bik: '', bank_corr_account: '',
     vehicle_type: '', plate: '', capacity_tons: 0, capacity_m3: 0, rating: 5,
     cargo_types: '', regions: '', notes: '',
   });
 
-  const update = (patch: any) => setData({ ...data, ...patch });
+  const update = (patch: any) => setData((prev: any) => ({ ...prev, ...patch }));
 
   const save = async () => {
     if (!data.company_name) { Alert.alert('Заполните', 'Название обязательно'); return; }
@@ -52,6 +59,47 @@ export default function NewCarrier() {
         <Field label="ИНН" keyboardType="numeric" value={data.inn} onChangeText={(v: string) => update({ inn: v })} />
         <Field label="КПП" keyboardType="numeric" value={data.kpp} onChangeText={(v: string) => update({ kpp: v })} />
         <Field label="Юр. адрес" multiline value={data.legal_address} onChangeText={(v: string) => update({ legal_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
+        <Field label="Почтовый адрес" multiline value={data.postal_address} onChangeText={(v: string) => update({ postal_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
+        <Field label="Директор" value={data.director} onChangeText={(v: string) => update({ director: v })} />
+
+        <Text style={styles.fieldLabel}>ОСНОВАНИЕ</Text>
+        <TouchableOpacity onPress={() => setBasisOpen(true)} activeOpacity={0.7} style={styles.dropdownBtn}>
+          <Text style={[styles.dropdownValue, !data.basis && { color: theme.colors.textTertiary }]}>
+            {BASIS_OPTIONS.find(o => o.id === data.basis)?.label || 'Выбрать…'}
+          </Text>
+          <ChevronDown size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+        </TouchableOpacity>
+
+        <Modal visible={basisOpen} transparent animationType="fade" onRequestClose={() => setBasisOpen(false)}>
+          <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setBasisOpen(false)}>
+            <TouchableOpacity activeOpacity={1} style={styles.sheet} onPress={() => {}}>
+              <View style={styles.sheetHead}>
+                <Text style={styles.sheetTitle}>Основание</Text>
+                <TouchableOpacity onPress={() => setBasisOpen(false)}>
+                  <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
+                </TouchableOpacity>
+              </View>
+              <FlatList
+                data={BASIS_OPTIONS}
+                keyExtractor={(i) => i.id}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => {
+                  const active = item.id === data.basis;
+                  return (
+                    <TouchableOpacity
+                      style={[styles.sheetItem, active && styles.sheetItemActive]}
+                      onPress={() => { update({ basis: item.id }); setBasisOpen(false); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.sheetItemLabel, active && { color: theme.colors.accent }]}>{item.label}</Text>
+                      {active && <Check size={16} color={theme.colors.accent} strokeWidth={2} />}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
 
         <Text style={styles.groupLabel}>БАНК</Text>
         <Field label="Название банка" value={data.bank_name} onChangeText={(v: string) => update({ bank_name: v })} />
@@ -100,4 +148,14 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 8 },
   saveText: { color: '#000', fontSize: 15, fontWeight: '700' },
   groupLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.accent, marginTop: 16, marginBottom: 8 },
+  fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6, marginTop: 4 },
+  dropdownBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 16 },
+  dropdownValue: { color: theme.colors.textPrimary, fontSize: 15, flex: 1, marginRight: 8 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', paddingBottom: 20 },
+  sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  sheetTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
+  sheetItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  sheetItemActive: { backgroundColor: theme.colors.accent + '10' },
+  sheetItemLabel: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '500', flex: 1 },
 });

@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, Modal, FlatList } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X, Trash2, Edit3, Phone, Star, Truck as TruckIcon, Copy } from 'lucide-react-native';
+import { X, Trash2, Edit3, Phone, Star, Truck as TruckIcon, Copy, ChevronDown, Check } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
+
+const BASIS_OPTIONS = [
+  { id: 'устава', label: 'Устава' },
+  { id: 'свидетельства', label: 'Свидетельства' },
+];
 
 const VEHICLES = ['Тент', 'Реф', 'Изотерм', 'Бортовой', 'Контейнер'];
 
@@ -18,6 +23,7 @@ export default function CarrierDetail() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [basisOpen, setBasisOpen] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
 
   useEffect(() => {
@@ -33,7 +39,7 @@ export default function CarrierDetail() {
     })();
   }, [id]);
 
-  const update = (patch: any) => setCarrier({ ...carrier, ...patch });
+  const update = (patch: any) => setCarrier((prev: any) => ({ ...prev, ...patch }));
 
   const save = async () => {
     setSaving(true);
@@ -108,11 +114,14 @@ export default function CarrierDetail() {
               </Section>
             )}
 
-            {(carrier.inn || carrier.kpp || carrier.legal_address) && (
+            {(carrier.inn || carrier.kpp || carrier.legal_address || carrier.postal_address || carrier.director || carrier.basis) && (
               <Section title="РЕКВИЗИТЫ">
                 <Row label="ИНН" value={carrier.inn} onCopy={() => copyText(carrier.inn, 'ИНН')} />
                 <Row label="КПП" value={carrier.kpp} onCopy={() => copyText(carrier.kpp, 'КПП')} />
                 <Row label="Юр. адрес" value={carrier.legal_address} multiline onCopy={() => copyText(carrier.legal_address, 'Юр. адрес')} />
+                <Row label="Почтовый адрес" value={carrier.postal_address} multiline onCopy={() => copyText(carrier.postal_address, 'Почтовый адрес')} />
+                <Row label="Директор" value={carrier.director} onCopy={() => copyText(carrier.director, 'Директор')} />
+                <Row label="Основание" value={carrier.basis ? BASIS_OPTIONS.find(o => o.id === carrier.basis)?.label || carrier.basis : ''} />
               </Section>
             )}
 
@@ -166,6 +175,47 @@ export default function CarrierDetail() {
             <Field label="ИНН" keyboardType="numeric" value={carrier.inn} onChangeText={(v: string) => update({ inn: v })} />
             <Field label="КПП" keyboardType="numeric" value={carrier.kpp} onChangeText={(v: string) => update({ kpp: v })} />
             <Field label="Юр. адрес" multiline value={carrier.legal_address} onChangeText={(v: string) => update({ legal_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
+            <Field label="Почтовый адрес" multiline value={carrier.postal_address || ''} onChangeText={(v: string) => update({ postal_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
+            <Field label="Директор" value={carrier.director || ''} onChangeText={(v: string) => update({ director: v })} />
+
+            <Text style={styles.fieldLabel}>ОСНОВАНИЕ</Text>
+            <TouchableOpacity onPress={() => setBasisOpen(true)} activeOpacity={0.7} style={styles.dropdownBtn}>
+              <Text style={[styles.dropdownValue, !carrier.basis && { color: theme.colors.textTertiary }]}>
+                {BASIS_OPTIONS.find(o => o.id === carrier.basis)?.label || 'Выбрать…'}
+              </Text>
+              <ChevronDown size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+            </TouchableOpacity>
+
+            <Modal visible={basisOpen} transparent animationType="fade" onRequestClose={() => setBasisOpen(false)}>
+              <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setBasisOpen(false)}>
+                <TouchableOpacity activeOpacity={1} style={styles.sheet} onPress={() => {}}>
+                  <View style={styles.sheetHead}>
+                    <Text style={styles.sheetTitle}>Основание</Text>
+                    <TouchableOpacity onPress={() => setBasisOpen(false)}>
+                      <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
+                    </TouchableOpacity>
+                  </View>
+                  <FlatList
+                    data={BASIS_OPTIONS}
+                    keyExtractor={(i) => i.id}
+                    keyboardShouldPersistTaps="handled"
+                    renderItem={({ item }) => {
+                      const active = item.id === carrier.basis;
+                      return (
+                        <TouchableOpacity
+                          style={[styles.sheetItem, active && styles.sheetItemActive]}
+                          onPress={() => { update({ basis: item.id }); setBasisOpen(false); }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.sheetItemLabel, active && { color: theme.colors.accent }]}>{item.label}</Text>
+                          {active && <Check size={16} color={theme.colors.accent} strokeWidth={2} />}
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Modal>
 
             <Text style={styles.groupLabel}>БАНК</Text>
             <Field label="Банк" value={carrier.bank_name} onChangeText={(v: string) => update({ bank_name: v })} />
@@ -292,6 +342,16 @@ const styles = StyleSheet.create({
   rowValue: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '500', textAlign: 'right', flexShrink: 1 },
 
   groupLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.accent, marginTop: 16, marginBottom: 8 },
+  fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6, marginTop: 4 },
+  dropdownBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 16 },
+  dropdownValue: { color: theme.colors.textPrimary, fontSize: 15, flex: 1, marginRight: 8 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', paddingBottom: 20 },
+  sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  sheetTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
+  sheetItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  sheetItemActive: { backgroundColor: theme.colors.accent + '10' },
+  sheetItemLabel: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '500', flex: 1 },
   miniLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.4, color: theme.colors.textTertiary, marginBottom: 6 },
   choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   pill: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.colors.surfaceElevated, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
