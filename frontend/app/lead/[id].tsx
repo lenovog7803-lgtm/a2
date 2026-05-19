@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X, Trash2, Phone, Pencil } from 'lucide-react-native';
+import { X, Trash2, Phone } from 'lucide-react-native';
 import { theme, leadStatusLabels } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
@@ -25,8 +25,7 @@ export default function LeadDetail() {
   const [showClientModal, setShowClientModal] = useState(false);
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [newNote, setNewNote] = useState('');
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [editingText, setEditingText] = useState('');
+  const [noteLoading, setNoteLoading] = useState(false);
 
   useEffect(() => {
     const fetchWithRetry = async (attempts = 3) => { try { const data = await api.leads.get(id!); if (data) { setLead(data); setLoading(false); } else if (attempts > 1) { setTimeout(() => fetchWithRetry(attempts - 1), 500); } else { setLoading(false); } } catch { if (attempts > 1) setTimeout(() => fetchWithRetry(attempts - 1), 500); else setLoading(false); } }; fetchWithRetry();
@@ -58,54 +57,39 @@ export default function LeadDetail() {
 
   const update = (patch: any) => setLead((prev: any) => ({ ...prev, ...patch }));
 
+  const refetchLead = async () => {
+    const fresh = await api.leads.get(id!);
+    if (fresh) setLead(fresh);
+  };
+
   const addCallNote = async () => {
-    if (!newNote.trim()) return;
     const text = newNote.trim();
+    if (!text) return;
+    setNoteLoading(true);
     setNewNote('');
     setShowNoteInput(false);
     try {
-      const fresh = await api.leads.addNote(id!, text);
+      const fresh = await api.leads.addCallNote(id!, text);
       setLead(fresh);
     } catch (e: any) {
       Alert.alert('Ошибка', e.message);
-    }
-  };
-
-  const startEdit = (i: number) => {
-    setEditingIndex(i);
-    setEditingText((lead.call_notes || [])[i]?.text || '');
-  };
-
-  const cancelEdit = () => {
-    setEditingIndex(null);
-    setEditingText('');
-  };
-
-  const saveEdit = async (i: number) => {
-    if (!editingText.trim()) return;
-    const updated = (lead.call_notes || []).map((n: any, idx: number) =>
-      idx === i ? { ...n, text: editingText.trim() } : n
-    );
-    update({ call_notes: updated });
-    setEditingIndex(null);
-    setEditingText('');
-    try {
-      await api.leads.update(id!, { call_notes: updated });
-    } catch (e: any) {
-      Alert.alert('Ошибка', e.message);
+      await refetchLead();
+    } finally {
+      setNoteLoading(false);
     }
   };
 
   const deleteNote = async (i: number) => {
     if (typeof window !== 'undefined' && !window.confirm('Удалить заметку?')) return;
-    const prev = lead.call_notes || [];
-    const updated = prev.filter((_: any, idx: number) => idx !== i);
-    update({ call_notes: updated });
+    setNoteLoading(true);
     try {
-      await api.leads.update(id!, { call_notes: updated });
+      const fresh = await api.leads.deleteCallNote(id!, i);
+      setLead(fresh);
     } catch (e: any) {
-      update({ call_notes: prev });
       Alert.alert('Ошибка', e.message);
+      await refetchLead();
+    } finally {
+      setNoteLoading(false);
     }
   };
 
@@ -162,48 +146,23 @@ export default function LeadDetail() {
           <Field label="Заметки" multiline value={lead.notes || ''} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
 
           <Text style={styles.label}>ЗАМЕТКИ ПОСЛЕ ЗВОНКОВ</Text>
-          {(lead.call_notes || []).map((note: any, i: number) =>
-            editingIndex === i ? (
-              <View key={i} style={styles.callNoteItem}>
-                <Text style={styles.callNoteDate}>
-                  {new Date(note.date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                </Text>
-                <TextInput
-                  style={styles.noteEditInput}
-                  value={editingText}
-                  onChangeText={setEditingText}
-                  multiline
-                  autoFocus
-                  placeholderTextColor={theme.colors.textTertiary}
-                />
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                  <TouchableOpacity onPress={() => saveEdit(i)} style={styles.noteConfirmBtn} activeOpacity={0.8}>
-                    <Text style={styles.noteConfirmText}>Сохранить</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={cancelEdit} style={styles.noteCancelBtn} activeOpacity={0.8}>
-                    <Text style={styles.noteCancelText}>Отмена</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View key={i} style={styles.callNoteItem}>
-                <View style={styles.callNoteHeader}>
+          {noteLoading && <ActivityIndicator color={theme.colors.accent} style={{ marginBottom: 8 }} />}
+          {(lead.call_notes || []).map((note: any, i: number) => (
+            <View key={i} style={styles.callNoteItem}>
+              <View style={styles.callNoteHeader}>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.callNoteDate}>
-                    {new Date(note.date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    {note.date ? new Date(note.date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
                   </Text>
-                  <View style={{ flexDirection: 'row', gap: 2 }}>
-                    <TouchableOpacity onPress={() => startEdit(i)} style={styles.noteActionBtn} activeOpacity={0.7}>
-                      <Pencil size={13} color={theme.colors.textTertiary} strokeWidth={1.6} />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => deleteNote(i)} style={styles.noteActionBtn} activeOpacity={0.7}>
-                      <Trash2 size={13} color={theme.colors.loss} strokeWidth={1.6} />
-                    </TouchableOpacity>
-                  </View>
+                  {!!note.author && <Text style={styles.callNoteAuthor}>{note.author}</Text>}
                 </View>
-                <Text style={styles.callNoteText}>{note.text}</Text>
+                <TouchableOpacity onPress={() => deleteNote(i)} style={styles.noteActionBtn} activeOpacity={0.7} disabled={noteLoading}>
+                  <Trash2 size={14} color={theme.colors.loss} strokeWidth={1.6} />
+                </TouchableOpacity>
               </View>
-            )
-          )}
+              <Text style={styles.callNoteText}>{note.text}</Text>
+            </View>
+          ))}
           {showNoteInput ? (
             <View style={styles.noteInputWrap}>
               <TextInput
@@ -216,7 +175,7 @@ export default function LeadDetail() {
                 autoFocus
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                <TouchableOpacity onPress={addCallNote} style={styles.noteConfirmBtn} activeOpacity={0.8}>
+                <TouchableOpacity onPress={addCallNote} disabled={noteLoading} style={[styles.noteConfirmBtn, noteLoading && { opacity: 0.6 }]} activeOpacity={0.8}>
                   <Text style={styles.noteConfirmText}>Сохранить</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => { setShowNoteInput(false); setNewNote(''); }} style={styles.noteCancelBtn} activeOpacity={0.8}>
@@ -290,15 +249,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4,
   },
   callNoteDate: { fontSize: 10, color: theme.colors.textTertiary, fontWeight: '600' },
-  callNoteText: { fontSize: 13, color: theme.colors.textPrimary, lineHeight: 18 },
+  callNoteAuthor: { fontSize: 10, color: theme.colors.accent, fontWeight: '600', marginTop: 1 },
+  callNoteText: { fontSize: 13, color: theme.colors.textPrimary, lineHeight: 18, marginTop: 4 },
   noteActionBtn: { padding: 6 },
-  noteEditInput: {
-    color: theme.colors.textPrimary, fontSize: 13,
-    minHeight: 56, textAlignVertical: 'top',
-    borderWidth: 1, borderColor: theme.colors.border,
-    borderRadius: 6, padding: 8, marginTop: 2,
-    backgroundColor: theme.colors.surface,
-  },
 
   noteInputWrap: {
     backgroundColor: theme.colors.surfaceElevated,
