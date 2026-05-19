@@ -9,6 +9,7 @@ import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
 import { Picker } from '../../src/components/Picker';
 import { DateField } from '../../src/components/DateField';
+import { CityInput } from '../../src/components/CityInput';
 
 const DRAFT_KEY = 'draft_order';
 
@@ -159,10 +160,8 @@ export default function NewOrder() {
         <Picker label="Перевозчик" value={data.carrier_id} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier-new" />
 
         <Text style={styles.groupLabel}>МАРШРУТ</Text>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ flex: 1 }}><Field label="Откуда (город)" value={data.route_from} onChangeText={(v: string) => update({ route_from: v })} testID="new-from" /></View>
-          <View style={{ flex: 1 }}><Field label="Куда (город)" value={data.route_to} onChangeText={(v: string) => update({ route_to: v })} testID="new-to" /></View>
-        </View>
+        <CityInput label="Откуда (город)" value={data.route_from} onChangeText={(v: string) => update({ route_from: v })} testID="new-from" />
+        <CityInput label="Куда (город)" value={data.route_to} onChangeText={(v: string) => update({ route_to: v })} testID="new-to" />
         <Field label="Точный адрес загрузки" multiline value={data.route_from_address} onChangeText={(v: string) => update({ route_from_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
         <Field label="Точный адрес выгрузки" multiline value={data.route_to_address} onChangeText={(v: string) => update({ route_to_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
         <View style={{ flexDirection: 'row', gap: 10 }}>
