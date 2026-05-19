@@ -66,6 +66,7 @@ export const api = {
   },
   tasks: {
     list: () => req('/tasks'),
+    get: (id: string) => req(`/tasks/${id}`),
     create: (data: any) => req('/tasks', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => req(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/tasks/${id}`, { method: 'DELETE' }),
@@ -84,6 +85,7 @@ export const api = {
   notes: {
     list: () => req('/notes'),
     create: (data: any) => req('/notes', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => req(`/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/notes/${id}`, { method: 'DELETE' }),
   },
   sync: {

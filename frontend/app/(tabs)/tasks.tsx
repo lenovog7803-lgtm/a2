@@ -65,28 +65,36 @@ export default function Tasks() {
     }
   };
 
-  const removeTask = async (id: string) => {
-    if (!window.confirm('Удалить задачу?')) return;
-    const prev = tasks;
-    setTasks(ts => ts.filter(t => t.id !== id));
-    try {
-      await api.tasks.delete(id);
-    } catch (e: any) {
-      setTasks(prev);
-      Alert.alert('Ошибка', e.message);
-    }
+  const removeTask = (id: string) => {
+    Alert.alert('Удалить задачу?', '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        const prev = tasks;
+        setTasks(ts => ts.filter(t => t.id !== id));
+        try {
+          await api.tasks.delete(id);
+        } catch (e: any) {
+          setTasks(prev);
+          Alert.alert('Ошибка', e.message);
+        }
+      }},
+    ]);
   };
 
-  const removeNote = async (id: string) => {
-    if (!window.confirm('Удалить заметку?')) return;
-    const prev = notes;
-    setNotes(ns => ns.filter(n => n.id !== id));
-    try {
-      await api.notes.delete(id);
-    } catch (e: any) {
-      setNotes(prev);
-      Alert.alert('Ошибка', e.message);
-    }
+  const removeNote = (id: string) => {
+    Alert.alert('Удалить заметку?', '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        const prev = notes;
+        setNotes(ns => ns.filter(n => n.id !== id));
+        try {
+          await api.notes.delete(id);
+        } catch (e: any) {
+          setNotes(prev);
+          Alert.alert('Ошибка', e.message);
+        }
+      }},
+    ]);
   };
 
   const saveNote = async () => {
@@ -109,9 +117,8 @@ export default function Tasks() {
     if (!editTitle.trim() || !selectedNote) return;
     setSavingEditNote(true);
     try {
-      const created = await api.notes.create({ title: editTitle.trim(), text: editText.trim() });
-      await api.notes.delete(selectedNote.id);
-      setNotes(ns => [created, ...ns.filter(n => n.id !== selectedNote.id)]);
+      const updated = await api.notes.update(selectedNote.id, { title: editTitle.trim(), text: editText.trim() });
+      setNotes(ns => ns.map(n => n.id === selectedNote.id ? updated : n));
       setSelectedNote(null);
       setEditingNote(false);
     } catch (e: any) {

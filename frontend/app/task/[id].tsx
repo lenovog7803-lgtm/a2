@@ -37,13 +37,7 @@ export default function EditTask() {
   useEffect(() => {
     (async () => {
       try {
-        const tasks = await api.tasks.list();
-        const task = tasks.find((t: any) => t.id === id);
-        if (!task) {
-          Alert.alert('Задача не найдена');
-          router.back();
-          return;
-        }
+        const task = await api.tasks.get(id!);
         setData({
           task_type: task.task_type || 'call',
           title: task.title || '',
@@ -53,7 +47,7 @@ export default function EditTask() {
           status: task.status || 'pending',
         });
       } catch (e: any) {
-        Alert.alert('Ошибка', e.message);
+        Alert.alert('Задача не найдена', e.message);
         router.back();
       } finally {
         setLoading(false);
@@ -76,16 +70,18 @@ export default function EditTask() {
     }
   };
 
-  const remove = async () => {
-    if (typeof window !== 'undefined') {
-      if (!window.confirm('Удалить задачу?')) return;
-    }
-    try {
-      await api.tasks.delete(id!);
-      router.back();
-    } catch (e: any) {
-      Alert.alert('Ошибка', e.message);
-    }
+  const remove = () => {
+    Alert.alert('Удалить задачу?', data.title || '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        try {
+          await api.tasks.delete(id!);
+          router.back();
+        } catch (e: any) {
+          Alert.alert('Ошибка', e.message);
+        }
+      }},
+    ]);
   };
 
   if (loading) {

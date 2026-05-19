@@ -17,7 +17,7 @@ export default function NewClient() {
     payment_terms: '', cargo_types: '', directions: '', notes: '',
   });
 
-  const update = (patch: any) => setData({ ...data, ...patch });
+  const update = (patch: any) => setData((d: any) => ({ ...d, ...patch }));
 
   const save = async () => {
     if (!data.name) { Alert.alert('Заполните', 'Название обязательно'); return; }

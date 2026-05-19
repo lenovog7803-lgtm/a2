@@ -10,7 +10,7 @@ import { Field } from '../../src/components/Field';
 import { DateField } from '../../src/components/DateField';
 
 const DRAFT_KEY = 'draft_lead';
-const STATUSES = ['new', 'in_progress', 'callback', 'won', 'lost'];
+const STATUSES = ['new', 'thinking', 'sent_kp', 'callback', 'won', 'lost'];
 
 const EMPTY: any = {
   name: '', company: '', phone: '', email: '', city: '', industry: '', status: 'new',

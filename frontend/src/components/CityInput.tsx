@@ -31,7 +31,7 @@ export function CityInput({ label, value, onChangeText, testID, ...rest }: Props
     setSuggestions([]);
   }, [onChangeText]);
 
-  const dismiss = useCallback(() => setSuggestions([]), []);
+  const dismiss = useCallback(() => { setTimeout(() => setSuggestions([]), 150); }, []);
 
   return (
     <View

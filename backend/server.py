@@ -1010,6 +1010,14 @@ async def list_tasks(current_user: Optional[dict] = Depends(_get_user_from_token
     return [Task(**d) for d in docs]
 
 
+@api_router.get("/tasks/{task_id}", response_model=Task)
+async def get_task(task_id: str):
+    doc = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Task not found")
+    return Task(**doc)
+
+
 @api_router.post("/tasks", response_model=Task)
 async def create_task(payload: TaskCreate, background_tasks: BackgroundTasks,
                       current_user: Optional[dict] = Depends(_get_user_from_token)):
@@ -2219,6 +2227,15 @@ async def create_note(payload: NotePayload):
     obj = Note(**payload.dict())
     await db.notes.insert_one(obj.dict())
     return obj
+
+
+@api_router.put("/notes/{note_id}", response_model=Note)
+async def update_note(note_id: str, payload: NotePayload):
+    await db.notes.update_one({"id": note_id}, {"$set": payload.dict()})
+    doc = await db.notes.find_one({"id": note_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Note not found")
+    return Note(**doc)
 
 
 @api_router.delete("/notes/{note_id}")

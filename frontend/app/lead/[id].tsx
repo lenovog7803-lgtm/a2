@@ -43,16 +43,18 @@ export default function LeadDetail() {
     }
   };
 
-  const remove = async () => {
-    if (typeof window !== 'undefined') {
-      if (!window.confirm(`Удалить контакт ${lead?.name}?`)) return;
-      try {
-        await api.leads.delete(id!);
-        router.back();
-      } catch (e: any) {
-        Alert.alert('Ошибка', e.message);
-      }
-    }
+  const remove = () => {
+    Alert.alert('Удалить контакт?', lead?.name || '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        try {
+          await api.leads.delete(id!);
+          router.back();
+        } catch (e: any) {
+          Alert.alert('Ошибка', e.message);
+        }
+      }},
+    ]);
   };
 
   const update = (patch: any) => setLead((prev: any) => ({ ...prev, ...patch }));
