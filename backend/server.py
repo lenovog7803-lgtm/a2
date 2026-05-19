@@ -841,6 +841,33 @@ async def update_lead(item_id: str, payload: LeadUpdate, background_tasks: Backg
     return Lead(**doc)
 
 
+class NotePayload(BaseModel):
+    text: str
+    author: Optional[str] = ""
+
+
+@api_router.post("/leads/{item_id}/notes", response_model=Lead)
+async def add_lead_note(item_id: str, payload: NotePayload,
+                        current_user: Optional[dict] = Depends(_get_user_from_token)):
+    doc = await db.leads.find_one({"id": item_id, "deleted": {"$ne": True}}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    note = {
+        "text": payload.text,
+        "date": datetime.now(timezone.utc).isoformat(),
+        "author": payload.author or (current_user or {}).get("name", ""),
+    }
+    await db.leads.update_one(
+        {"id": item_id},
+        {
+            "$push": {"call_notes": {"$each": [note], "$position": 0}},
+            "$set": {"last_call": datetime.now(timezone.utc).strftime("%Y-%m-%d")},
+        }
+    )
+    doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
+    return Lead(**doc)
+
+
 make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)
 
 

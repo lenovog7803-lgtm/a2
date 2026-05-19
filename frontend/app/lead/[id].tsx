@@ -58,12 +58,17 @@ export default function LeadDetail() {
 
   const update = (patch: any) => setLead((prev: any) => ({ ...prev, ...patch }));
 
-  const addCallNote = () => {
+  const addCallNote = async () => {
     if (!newNote.trim()) return;
-    const note = { date: new Date().toISOString(), text: newNote.trim() };
-    update({ call_notes: [note, ...(lead.call_notes || [])] });
+    const text = newNote.trim();
     setNewNote('');
     setShowNoteInput(false);
+    try {
+      const fresh = await api.leads.addNote(id!, text);
+      setLead(fresh);
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message);
+    }
   };
 
   const startEdit = (i: number) => {

@@ -76,6 +76,7 @@ export const api = {
     create: (data: any) => req('/leads', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => req(`/leads/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/leads/${id}`, { method: 'DELETE' }),
+    addNote: (id: string, text: string) => req(`/leads/${id}/notes`, { method: 'POST', body: JSON.stringify({ text }) }),
     activityStats: () => req('/leads/activity/stats'),
     industries: () => req('/leads/industries'),
   },
