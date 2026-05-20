@@ -81,18 +81,22 @@ export default function LeadDetail() {
     }
   };
 
-  const deleteNote = async (i: number) => {
-    if (typeof window !== 'undefined' && !window.confirm('Удалить заметку?')) return;
-    setNoteLoading(true);
-    try {
-      const fresh = await api.leads.deleteCallNote(id!, i);
-      setLead(fresh);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e.message);
-      await refetchLead();
-    } finally {
-      setNoteLoading(false);
-    }
+  const deleteNote = (i: number) => {
+    Alert.alert('Удалить заметку?', '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        setNoteLoading(true);
+        try {
+          const fresh = await api.leads.deleteCallNote(id!, i);
+          setLead(fresh);
+        } catch (e: any) {
+          Alert.alert('Ошибка', e.message);
+          await refetchLead();
+        } finally {
+          setNoteLoading(false);
+        }
+      }},
+    ]);
   };
 
   if (loading) return (

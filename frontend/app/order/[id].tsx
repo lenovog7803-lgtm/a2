@@ -122,12 +122,18 @@ export default function OrderDetail() {
     finally { setSaving(false); }
   };
 
-  const remove = async () => {
-    if (typeof window !== 'undefined') {
-      if (!window.confirm(`Удалить заявку ${order.order_number}?`)) return;
-      await api.orders.delete(order.id);
-      router.back();
-    }
+  const remove = () => {
+    Alert.alert('Удалить заявку?', order?.order_number || '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        try {
+          await api.orders.delete(order.id);
+          router.back();
+        } catch (e: any) {
+          Alert.alert('Ошибка', e.message);
+        }
+      }},
+    ]);
   };
 
   const duplicateOrder = () => {
