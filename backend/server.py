@@ -1069,18 +1069,19 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
 
 @api_router.get("/orders/next_number")
 async def next_order_number():
-    last = await db.orders.find_one(
-        {"deleted": {"$ne": True}, "order_number": {"$regex": "^З-"}},
-        sort=[("order_number", -1)]
-    )
-    year = datetime.utcnow().year
-    if last and last.get("order_number"):
-        try:
-            num = int(last["order_number"].split("-")[1].split("/")[0])
-            return {"order_number": f"З-{num + 1}/{year}"}
-        except Exception:
-            pass
-    return {"order_number": f"З-1/{year}"}
+    import re as _re
+    year = datetime.now(timezone.utc).year
+    all_docs = await db.orders.find({"deleted": {"$ne": True}}, {"_id": 0, "order_number": 1}).to_list(5000)
+    pattern = _re.compile(r"[ЗЗз3]\s*[-–—]\s*(\d+)\s*/\s*(\d{4})", _re.IGNORECASE)
+    max_num = 0
+    for d in all_docs:
+        m = pattern.search(d.get("order_number", "") or "")
+        if not m:
+            continue
+        n, y = int(m.group(1)), int(m.group(2))
+        if y == year and n > max_num:
+            max_num = n
+    return {"order_number": f"З-{max_num + 1:03d}/{year}"}
 
 
 @api_router.post("/orders", response_model=Order)

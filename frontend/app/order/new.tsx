@@ -44,6 +44,7 @@ export default function NewOrder() {
         api.carriers.list(),
         api.orders.getNextNumber().catch(() => null),
       ]);
+      console.log('[NewOrder] getNextNumber response:', nn);
       setClients(c);
       setCarriers(cr);
 
@@ -89,6 +90,7 @@ export default function NewOrder() {
           ],
         );
       } else if (nn?.order_number != null) {
+        console.log('[NewOrder] setting order_number:', nn.order_number);
         setData((d: any) => ({ ...d, order_number: String(nn.order_number) }));
       }
     })();
