@@ -42,7 +42,7 @@ export default function NewOrder() {
       const [c, cr, nn] = await Promise.all([
         api.clients.list(),
         api.carriers.list(),
-        api.orders.nextNumber().catch(() => null),
+        api.orders.getNextNumber().catch(() => null),
       ]);
       setClients(c);
       setCarriers(cr);
@@ -63,7 +63,7 @@ export default function NewOrder() {
           setData({
             ...EMPTY,
             ...rest,
-            order_number: nn?.next_number || '',
+            order_number: nn?.order_number != null ? String(nn.order_number) : '',
             status: 'new',
             client_paid: false,
             carrier_paid: false,
@@ -83,13 +83,13 @@ export default function NewOrder() {
           'Найден несохранённый черновик заявки. Восстановить?',
           [
             { text: 'Нет', style: 'cancel', onPress: () => {
-              if (nn?.next_number) setData((d: any) => ({ ...d, order_number: nn.next_number }));
+              if (nn?.order_number != null) setData((d: any) => ({ ...d, order_number: String(nn.order_number) }));
             }},
             { text: 'Восстановить', onPress: () => setData(parsed) },
           ],
         );
-      } else if (nn?.next_number) {
-        setData((d: any) => ({ ...d, order_number: nn.next_number }));
+      } else if (nn?.order_number != null) {
+        setData((d: any) => ({ ...d, order_number: String(nn.order_number) }));
       }
     })();
 
@@ -154,7 +154,7 @@ export default function NewOrder() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: insets.bottom + 100 }}>
-        <Field label="Номер заявки" value={data.order_number} onChangeText={(v: string) => update({ order_number: v })} testID="new-order-number" />
+        <Field label="Номер заявки" value={data.order_number} editable={false} testID="new-order-number" />
 
         <Picker label="Клиент" value={data.client_id} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client-new" />
         <Picker label="Перевозчик" value={data.carrier_id} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier-new" />

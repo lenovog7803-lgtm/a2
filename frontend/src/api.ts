@@ -42,6 +42,7 @@ export const api = {
     list: () => req('/orders'),
     get: (id: string) => req(`/orders/${id}`),
     nextNumber: () => req('/orders/next_number'),
+    getNextNumber: () => req('/orders/next_number'),
     create: (data: any) => req('/orders', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => req(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/orders/${id}`, { method: 'DELETE' }),

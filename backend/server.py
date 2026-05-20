@@ -1069,23 +1069,11 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
 
 @api_router.get("/orders/next_number")
 async def next_order_number():
-    """Возвращает следующий номер заявки в формате 'З-NNN/YYYY'.
-    Берёт max среди активных (не удалённых) заявок текущего года и прибавляет 1.
-    """
-    import re as _re
-    year = datetime.now(timezone.utc).year
-    docs = await db.orders.find({"deleted": {"$ne": True}}, {"_id": 0, "order_number": 1}).to_list(5000)
-    pattern = _re.compile(r"[ЗЗз3]\s*[-–—]\s*(\d+)\s*/\s*(\d{4})", _re.IGNORECASE)
-    max_num = 0
-    for d in docs:
-        m = pattern.search(d.get("order_number", "") or "")
-        if not m:
-            continue
-        n, y = int(m.group(1)), int(m.group(2))
-        if y == year and n > max_num:
-            max_num = n
-    next_n = max_num + 1
-    return {"next_number": f"З-{next_n:03d}/{year}", "year": year, "n": next_n}
+    last = await db.orders.find_one(
+        {"deleted": {"$ne": True}},
+        sort=[("order_number", -1)]
+    )
+    return {"order_number": (last["order_number"] + 1) if last else 1}
 
 
 @api_router.post("/orders", response_model=Order)
