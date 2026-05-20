@@ -136,6 +136,11 @@ export default function TrashScreen() {
                   <View style={styles.cardBody}>
                     <Text style={styles.label} numberOfLines={1}>{item.label}</Text>
                     <Text style={styles.date}>Удалено: {formatDate(item.deleted_at)}</Text>
+                    {item.days_left != null && (
+                      <Text style={[styles.daysLeft, item.days_left <= 3 && styles.daysLeftUrgent]}>
+                        Удалится через {item.days_left} {item.days_left === 1 ? 'день' : item.days_left < 5 ? 'дня' : 'дней'}
+                      </Text>
+                    )}
                   </View>
                   <TouchableOpacity
                     onPress={() => handleRestore(item)}
@@ -182,6 +187,8 @@ const styles = StyleSheet.create({
 
   restoreBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: theme.colors.accent + '15', borderRadius: 8, borderWidth: 1, borderColor: theme.colors.accent + '30' },
   restoreTxt: { color: theme.colors.accent, fontSize: 12, fontWeight: '700' },
+  daysLeft: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
+  daysLeftUrgent: { color: theme.colors.loss },
 
   empty: { alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: 12 },
   emptyTxt: { color: theme.colors.textSecondary, fontSize: 18, fontWeight: '600' },

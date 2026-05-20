@@ -257,7 +257,7 @@ async def _trash_purge_loop():
     last_date = None
     while True:
         now = datetime.now(timezone.utc)
-        if now.hour == 0 and now.minute == 5 and last_date != now.date():
+        if now.hour == 3 and now.minute == 0 and last_date != now.date():
             last_date = now.date()
             try:
                 await _purge_old_trash()
@@ -2266,16 +2266,29 @@ _TRASH_LABELS = {
 @api_router.get("/trash")
 async def list_trash(current_user: dict = Depends(_require_user)):
     result = []
+    now = datetime.now(timezone.utc)
     for cname, type_label in _TRASH_LABELS.items():
-        docs = await db[cname].find({"deleted": True}, {"_id": 0}).sort("deleted_at", -1).to_list(1000)
+        docs = await db[cname].find(
+            {"deleted": True, "deleted_at": {"$exists": True}},
+            {"_id": 0},
+        ).sort("deleted_at", -1).to_list(1000)
         for d in docs:
             label = d.get("order_number") or d.get("name") or d.get("company_name") or d.get("id", "")
+            deleted_at = d.get("deleted_at")
+            days_left = None
+            if deleted_at:
+                try:
+                    deleted_dt = datetime.fromisoformat(deleted_at)
+                    days_left = max(0, 30 - (now - deleted_dt).days)
+                except Exception:
+                    pass
             result.append({
                 "id": d.get("id"),
                 "collection": cname,
                 "type": type_label,
                 "label": label,
-                "deleted_at": d.get("deleted_at"),
+                "deleted_at": deleted_at,
+                "days_left": days_left,
             })
     result.sort(key=lambda x: x.get("deleted_at") or "", reverse=True)
     return result
