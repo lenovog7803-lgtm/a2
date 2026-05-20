@@ -69,7 +69,7 @@ export default function NewOrder() {
             carrier_paid: false,
           });
         } catch {
-          if (nn?.next_number) setData((d: any) => ({ ...d, order_number: nn.next_number }));
+          if (nn?.order_number) setData((d: any) => ({ ...d, order_number: nn.order_number }));
         }
         return;
       }
@@ -154,7 +154,7 @@ export default function NewOrder() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: insets.bottom + 100 }}>
-        <Field label="Номер заявки" value={data.order_number} editable={false} testID="new-order-number" />
+        <Field label="Номер заявки" value={data.order_number} onChangeText={(v: string) => update({ order_number: v })} testID="new-order-number" />
 
         <Picker label="Клиент" value={data.client_id} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client-new" />
         <Picker label="Перевозчик" value={data.carrier_id} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier-new" />

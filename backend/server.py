@@ -1070,10 +1070,17 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
 @api_router.get("/orders/next_number")
 async def next_order_number():
     last = await db.orders.find_one(
-        {"deleted": {"$ne": True}},
+        {"deleted": {"$ne": True}, "order_number": {"$regex": "^З-"}},
         sort=[("order_number", -1)]
     )
-    return {"order_number": (last["order_number"] + 1) if last else 1}
+    year = datetime.utcnow().year
+    if last and last.get("order_number"):
+        try:
+            num = int(last["order_number"].split("-")[1].split("/")[0])
+            return {"order_number": f"З-{num + 1}/{year}"}
+        except Exception:
+            pass
+    return {"order_number": f"З-1/{year}"}
 
 
 @api_router.post("/orders", response_model=Order)
@@ -1083,10 +1090,18 @@ async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks,
     order_data["created_by"] = current_user["id"] if current_user else "admin"
     if not order_data.get("order_number"):
         last_order = await db.orders.find_one(
-            {"deleted": {"$ne": True}},
+            {"deleted": {"$ne": True}, "order_number": {"$regex": "^З-"}},
             sort=[("order_number", -1)]
         )
-        order_data["order_number"] = (last_order["order_number"] + 1) if last_order else 1
+        year = datetime.utcnow().year
+        if last_order and last_order.get("order_number"):
+            try:
+                num = int(last_order["order_number"].split("-")[1].split("/")[0])
+                order_data["order_number"] = f"З-{num + 1}/{year}"
+            except Exception:
+                order_data["order_number"] = f"З-1/{year}"
+        else:
+            order_data["order_number"] = f"З-1/{year}"
     obj = Order(**order_data)
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())
