@@ -715,7 +715,12 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
                     background_tasks.add_task(_bg_delete_lead, doc.get("name", ""))
                 if sync_to_sheets and collection == "clients":
                     background_tasks.add_task(_bg_delete_client, doc.get("name", ""))
-                await db[collection].update_one({"id": item_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
+                deleted_at = now_iso()
+                print(f"[delete_{collection}] id={item_id} setting deleted=True deleted_at={deleted_at}")
+                result = await db[collection].update_one({"id": item_id}, {"$set": {"deleted": True, "deleted_at": deleted_at}})
+                print(f"[delete_{collection}] modified_count={result.modified_count}")
+            else:
+                print(f"[delete_{collection}] id={item_id} not found")
             return {"ok": True}
         if doc:
             if sync_to_sheets and collection == "leads":
@@ -1175,8 +1180,12 @@ async def get_order_logs(order_id: str):
 async def delete_order(order_id: str, background_tasks: BackgroundTasks):
     doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not doc:
+        print(f"[delete_order] id={order_id} not found")
         return {"ok": True}
-    await db.orders.update_one({"id": order_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
+    deleted_at = now_iso()
+    print(f"[delete_order] id={order_id} setting deleted=True deleted_at={deleted_at}")
+    result = await db.orders.update_one({"id": order_id}, {"$set": {"deleted": True, "deleted_at": deleted_at}})
+    print(f"[delete_order] modified_count={result.modified_count}")
     if doc.get("order_number"):
         background_tasks.add_task(_bg_delete_order_row, doc["order_number"])
     if doc.get("calendar_event_id"):
@@ -2268,28 +2277,35 @@ async def list_trash(current_user: dict = Depends(_require_user)):
     result = []
     now = datetime.now(timezone.utc)
     for cname, type_label in _TRASH_LABELS.items():
-        docs = await db[cname].find(
-            {"deleted": True, "deleted_at": {"$exists": True}},
-            {"_id": 0},
-        ).sort("deleted_at", -1).to_list(1000)
+        docs = await db[cname].find({"deleted": True}, {"_id": 0}).sort("deleted_at", -1).to_list(1000)
+        print(f"[list_trash] {cname}: found {len(docs)} deleted docs")
         for d in docs:
             label = d.get("order_number") or d.get("name") or d.get("company_name") or d.get("id", "")
-            deleted_at = d.get("deleted_at")
+            raw_deleted_at = d.get("deleted_at")
+            deleted_at_str = None
             days_left = None
-            if deleted_at:
+            if raw_deleted_at is not None:
                 try:
-                    deleted_dt = datetime.fromisoformat(deleted_at)
+                    if isinstance(raw_deleted_at, datetime):
+                        deleted_dt = raw_deleted_at.replace(tzinfo=timezone.utc) if raw_deleted_at.tzinfo is None else raw_deleted_at
+                    else:
+                        deleted_dt = datetime.fromisoformat(str(raw_deleted_at))
+                        if deleted_dt.tzinfo is None:
+                            deleted_dt = deleted_dt.replace(tzinfo=timezone.utc)
+                    deleted_at_str = deleted_dt.isoformat()
                     days_left = max(0, 30 - (now - deleted_dt).days)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[list_trash] failed to parse deleted_at={raw_deleted_at!r}: {e}")
+                    deleted_at_str = str(raw_deleted_at)
             result.append({
                 "id": d.get("id"),
                 "collection": cname,
                 "type": type_label,
                 "label": label,
-                "deleted_at": deleted_at,
+                "deleted_at": deleted_at_str,
                 "days_left": days_left,
             })
+    print(f"[list_trash] total: {len(result)} items")
     result.sort(key=lambda x: x.get("deleted_at") or "", reverse=True)
     return result
 
