@@ -498,7 +498,7 @@ class Order(BaseModel):
 
 
 class OrderPayload(BaseModel):
-    order_number: str
+    order_number: Optional[str] = None
     client_id: Optional[str] = ""
     client_name: Optional[str] = ""
     carrier_id: Optional[str] = ""
@@ -1093,6 +1093,12 @@ async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks,
                        current_user: Optional[dict] = Depends(_get_user_from_token)):
     order_data = payload.dict()
     order_data["created_by"] = current_user["id"] if current_user else "admin"
+    if not order_data.get("order_number"):
+        last_order = await db.orders.find_one(
+            {"deleted": {"$ne": True}},
+            sort=[("order_number", -1)]
+        )
+        order_data["order_number"] = (last_order["order_number"] + 1) if last_order else 1
     obj = Order(**order_data)
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())
