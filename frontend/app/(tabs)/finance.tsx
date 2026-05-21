@@ -106,14 +106,6 @@ function FinanceInner() {
   const [recDateTo, setRecDateTo] = useState('');
   const [recGenerating, setRecGenerating] = useState(false);
   const [recHistory, setRecHistory] = useState<any[]>([]);
-  const [recAllHistory, setRecAllHistory] = useState<any[]>([]);
-
-  const loadAllRecHistory = useCallback(async () => {
-    try {
-      const items = await api.reconciliation.history();
-      setRecAllHistory(items || []);
-    } catch { setRecAllHistory([]); }
-  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -154,7 +146,14 @@ function FinanceInner() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); loadAllRecHistory(); }, [load, loadAllRecHistory]));
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  useEffect(() => {
+    if (!recCounterpartyId) { setRecHistory([]); return; }
+    api.reconciliation.history({ counterparty_id: recCounterpartyId, type: recType })
+      .then((data: any[]) => setRecHistory(data || []))
+      .catch(() => setRecHistory([]));
+  }, [recCounterpartyId, recType]);
 
   useEffect(() => {
     AsyncStorage.getItem(`plan_${period}`).then(val => {
@@ -277,14 +276,6 @@ function FinanceInner() {
     }
   };
 
-  const loadRecHistory = async (cid: string, type: string) => {
-    if (!cid) { setRecHistory([]); return; }
-    try {
-      const items = await api.reconciliation.history({ counterparty_id: cid, type });
-      setRecHistory(items);
-    } catch { setRecHistory([]); }
-  };
-
   const generateReconciliation = async () => {
     const counterpartyName = recType === 'client'
       ? (clients.find((c: any) => c.id === recCounterpartyId)?.name ?? '')
@@ -303,10 +294,11 @@ function FinanceInner() {
 
       const result = await api.reconciliation.generate(body);
       if (result?.doc_url) {
-        await Promise.all([
-          loadRecHistory(recCounterpartyId, recType),
-          loadAllRecHistory(),
-        ]);
+        // useEffect will auto-refresh recHistory since recCounterpartyId hasn't changed —
+        // force a re-fetch by temporarily triggering it via the history call directly
+        api.reconciliation.history({ counterparty_id: recCounterpartyId, type: recType })
+          .then((data: any[]) => setRecHistory(data || []))
+          .catch(() => {});
         if (Platform.OS === 'web') {
           const open = window.confirm('Акт сгенерирован! Открыть документ?');
           if (open) window.open(result.doc_url, '_blank');
@@ -780,7 +772,7 @@ function FinanceInner() {
                   ? clients.map((c: any) => ({ id: c.id, label: c.name }))
                   : carriers.map((c: any) => ({ id: c.id, label: c.company_name }))
                 }
-                onSelect={(it: any) => { setRecCounterpartyId(it.id); loadRecHistory(it.id, recType); }}
+                onSelect={(it: any) => setRecCounterpartyId(it.id)}
                 searchable
               />
 
@@ -857,37 +849,28 @@ function FinanceInner() {
               </TouchableOpacity>
             </View>
 
-            {(() => {
-              const historyToShow = recHistory.length > 0 ? recHistory : recAllHistory;
-              if (historyToShow.length === 0) return null;
-              return (
-                <View style={[styles.card, { marginTop: 12 }]}>
-                  <Text style={styles.sLabel}>
-                    {recHistory.length > 0 ? 'ИСТОРИЯ АКТОВ' : 'ВСЕ АКТЫ СВЕРКИ'}
-                  </Text>
-                  {historyToShow.map((item: any, idx: number) => (
-                    <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: idx < historyToShow.length - 1 ? 1 : 0, borderColor: theme.colors.border }}>
-                      <Text style={{ color: theme.colors.textSecondary, fontSize: 12, width: 82 }}>{item.created_at}</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: theme.colors.textPrimary, fontSize: 13 }}>{item.period_label}</Text>
-                        {recHistory.length === 0 && (
-                          <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>{item.counterparty_name}</Text>
-                        )}
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (Platform.OS === 'web') window.open(item.doc_url, '_blank');
-                          else Linking.openURL(item.doc_url);
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Открыть →</Text>
-                      </TouchableOpacity>
+            {recHistory.length > 0 && (
+              <View style={[styles.card, { marginTop: 12 }]}>
+                <Text style={styles.sLabel}>ИСТОРИЯ АКТОВ</Text>
+                {recHistory.map((item: any, idx: number) => (
+                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: idx < recHistory.length - 1 ? 1 : 0, borderColor: theme.colors.border }}>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, width: 82 }}>{item.created_at}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: theme.colors.textPrimary, fontSize: 13 }}>{item.period_label}</Text>
                     </View>
-                  ))}
-                </View>
-              );
-            })()}
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (Platform.OS === 'web') window.open(item.doc_url, '_blank');
+                        else Linking.openURL(item.doc_url);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Открыть →</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
           </>
         ) : null}
       </ScrollView>
