@@ -154,8 +154,13 @@ export const api = {
   },
   reconciliation: {
     generate: (data: any) => req('/reconciliation/generate', { method: 'POST', body: JSON.stringify(data) }),
-    history: (params: { counterparty_id: string; type: string }) =>
-      req(`/reconciliation/history?counterparty_id=${encodeURIComponent(params.counterparty_id)}&type=${encodeURIComponent(params.type)}`),
+    history: (params?: { counterparty_id?: string; type?: string }) => {
+      const p = new URLSearchParams();
+      if (params?.counterparty_id) p.append('counterparty_id', params.counterparty_id);
+      if (params?.type) p.append('type', params.type);
+      const qs = p.toString();
+      return req(`/reconciliation/history${qs ? '?' + qs : ''}`);
+    },
   },
   trash: {
     list: () => req('/trash'),

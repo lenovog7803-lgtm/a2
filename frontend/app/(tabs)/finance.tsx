@@ -106,6 +106,14 @@ function FinanceInner() {
   const [recDateTo, setRecDateTo] = useState('');
   const [recGenerating, setRecGenerating] = useState(false);
   const [recHistory, setRecHistory] = useState<any[]>([]);
+  const [recAllHistory, setRecAllHistory] = useState<any[]>([]);
+
+  const loadAllRecHistory = useCallback(async () => {
+    try {
+      const items = await api.reconciliation.history();
+      setRecAllHistory(items || []);
+    } catch { setRecAllHistory([]); }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -146,7 +154,7 @@ function FinanceInner() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => { load(); loadAllRecHistory(); }, [load, loadAllRecHistory]));
 
   useEffect(() => {
     AsyncStorage.getItem(`plan_${period}`).then(val => {
@@ -295,7 +303,10 @@ function FinanceInner() {
 
       const result = await api.reconciliation.generate(body);
       if (result?.doc_url) {
-        await loadRecHistory(recCounterpartyId, recType);
+        await Promise.all([
+          loadRecHistory(recCounterpartyId, recType),
+          loadAllRecHistory(),
+        ]);
         if (Platform.OS === 'web') {
           const open = window.confirm('Акт сгенерирован! Открыть документ?');
           if (open) window.open(result.doc_url, '_blank');
@@ -846,26 +857,37 @@ function FinanceInner() {
               </TouchableOpacity>
             </View>
 
-            {recHistory.length > 0 && (
-              <View style={[styles.card, { marginTop: 12 }]}>
-                <Text style={styles.sLabel}>ИСТОРИЯ АКТОВ</Text>
-                {recHistory.map((item: any, idx: number) => (
-                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: idx < recHistory.length - 1 ? 1 : 0, borderColor: theme.colors.border }}>
-                    <Text style={{ color: theme.colors.textSecondary, fontSize: 13, width: 90 }}>{item.created_at}</Text>
-                    <Text style={{ color: theme.colors.text, fontSize: 13, flex: 1 }}>{item.period_label}</Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        if (Platform.OS === 'web') window.open(item.doc_url, '_blank');
-                        else Linking.openURL(item.doc_url);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Открыть →</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
+            {(() => {
+              const historyToShow = recHistory.length > 0 ? recHistory : recAllHistory;
+              if (historyToShow.length === 0) return null;
+              return (
+                <View style={[styles.card, { marginTop: 12 }]}>
+                  <Text style={styles.sLabel}>
+                    {recHistory.length > 0 ? 'ИСТОРИЯ АКТОВ' : 'ВСЕ АКТЫ СВЕРКИ'}
+                  </Text>
+                  {historyToShow.map((item: any, idx: number) => (
+                    <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: idx < historyToShow.length - 1 ? 1 : 0, borderColor: theme.colors.border }}>
+                      <Text style={{ color: theme.colors.textSecondary, fontSize: 12, width: 82 }}>{item.created_at}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: theme.colors.textPrimary, fontSize: 13 }}>{item.period_label}</Text>
+                        {recHistory.length === 0 && (
+                          <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>{item.counterparty_name}</Text>
+                        )}
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (Platform.OS === 'web') window.open(item.doc_url, '_blank');
+                          else Linking.openURL(item.doc_url);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Открыть →</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
           </>
         ) : null}
       </ScrollView>

@@ -2763,11 +2763,13 @@ async def generate_reconciliation(payload: ReconciliationRequest):
 
 
 @api_router.get("/reconciliation/history")
-async def get_reconciliation_history(counterparty_id: str, type: str):
-    cursor = db.reconciliation_history.find(
-        {"counterparty_id": counterparty_id, "type": type},
-        {"_id": 0},
-    ).sort("created_at", -1)
+async def get_reconciliation_history(counterparty_id: Optional[str] = None, type: Optional[str] = None):
+    q: dict = {}
+    if counterparty_id:
+        q["counterparty_id"] = counterparty_id
+    if type:
+        q["type"] = type
+    cursor = db.reconciliation_history.find(q, {"_id": 0}).sort("created_at", -1)
     items = await cursor.to_list(200)
     for item in items:
         if isinstance(item.get("created_at"), datetime):
