@@ -67,8 +67,7 @@ def build_auth_url(redirect_uri: Optional[str] = None) -> Tuple[str, str]:
     auth_url, state = oauth.authorization_url(
         AUTHORIZATION_BASE_URL,
         access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
+        prompt="select_account",
     )
     return auth_url, state
 
