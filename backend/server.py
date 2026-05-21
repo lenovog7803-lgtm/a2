@@ -2626,7 +2626,12 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         return "none"
 
     if payload.type == "client":
-        cp_doc = await db.clients.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
+        _client_q: dict = {"deleted": {"$ne": True}}
+        if payload.counterparty_name:
+            _client_q["$or"] = [{"id": cid}, {"name": payload.counterparty_name}]
+        else:
+            _client_q["id"] = cid
+        cp_doc = await db.clients.find_one(_client_q, {"_id": 0})
         if not cp_doc:
             raise HTTPException(404, "Клиент не найден")
         cp_name = payload.counterparty_name or cp_doc.get("name", "")
@@ -2670,7 +2675,12 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         _side   = _client_side
 
     else:  # carrier
-        cp_doc = await db.carriers.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
+        _carrier_q: dict = {"deleted": {"$ne": True}}
+        if payload.counterparty_name:
+            _carrier_q["$or"] = [{"id": cid}, {"company_name": payload.counterparty_name}]
+        else:
+            _carrier_q["id"] = cid
+        cp_doc = await db.carriers.find_one(_carrier_q, {"_id": 0})
         if not cp_doc:
             raise HTTPException(404, "Перевозчик не найден")
         cp_name = payload.counterparty_name or cp_doc.get("company_name", "")
