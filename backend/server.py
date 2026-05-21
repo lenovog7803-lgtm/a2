@@ -2640,10 +2640,11 @@ async def generate_reconciliation(payload: ReconciliationRequest):
              "unload_date": {"$gte": date_from, "$lte": date_to}},
             {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1},
         ).sort("unload_date", 1).to_list(10000)
-        period_pmts = await db.payments_in.find(
-            {"client_id": cid, "date": {"$gte": date_from, "$lte": date_to}},
-            {"_id": 0, "pp_number": 1, "date": 1, "amount": 1},
-        ).sort("date", 1).to_list(10000)
+        cursor = db.payments_in.find({
+            "client_id": cid,
+            "date": {"$gte": date_from, "$lte": date_to},
+        }).sort("date", 1)
+        period_pmts = await cursor.to_list(length=1000)
 
         right_rows = [
             {"date": _fmt_date(o.get("unload_date", "")),
@@ -2682,10 +2683,11 @@ async def generate_reconciliation(payload: ReconciliationRequest):
              "unload_date": {"$gte": date_from, "$lte": date_to}},
             {"_id": 0, "order_number": 1, "unload_date": 1, "carrier_rate": 1},
         ).sort("unload_date", 1).to_list(10000)
-        period_pmts = await db.payments_out.find(
-            {"carrier_id": cid, "date": {"$gte": date_from, "$lte": date_to}},
-            {"_id": 0, "pp_number": 1, "date": 1, "amount": 1},
-        ).sort("date", 1).to_list(10000)
+        cursor = db.payments_out.find({
+            "carrier_id": cid,
+            "date": {"$gte": date_from, "$lte": date_to},
+        }).sort("date", 1)
+        period_pmts = await cursor.to_list(length=1000)
 
         right_rows = [
             {"date": _fmt_date(o.get("unload_date", "")),
