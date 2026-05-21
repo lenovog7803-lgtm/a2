@@ -2529,28 +2529,57 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
     cb      = data.get("closing_balance", 0.0)
     cb_side = data.get("closing_balance_side", "none")
 
-    cur_year = str(datetime.now(timezone.utc).year)
+    cur_year            = str(datetime.now(timezone.utc).year)
+    date_from_str       = data.get("date_from", "")
+    date_to_str         = data.get("date_to", "")
+    opening_balance_str = _balance_str(ob, ob_side, cp_name)
+    closing_balance_str = _balance_str(cb, cb_side, cp_name)
+    left_total          = data.get("left_total", 0)
+    right_total         = data.get("right_total", 0)
 
-    simple_replacements = {
-        "{{КонтрагентНазвание}}": cp_name,
-        "{{ДатаНачало}}":         data.get("date_from", ""),
-        "{{ДатаКонец}}":          data.get("date_to", ""),
-        "{{СальдоНачало}}":       _balance_str(ob, ob_side, cp_name),
-        "{{ИтогоЛевые}}":         f"{data.get('left_total', 0):.2f}".replace(".", ","),
-        "{{ИтогоПравые}}":        f"{data.get('right_total', 0):.2f}".replace(".", ","),
-        "{{СальдоКонец}}":        _balance_str(cb, cb_side, cp_name),
-        "{{СальдоСторона}}":      "",
-        "{{ГодДок}}":             cur_year,
-    }
-
-    replace_reqs = [
+    requests = [
         {"replaceAllText": {
-            "containsText": {"text": ph, "matchCase": True},
-            "replaceText": val,
-        }}
-        for ph, val in simple_replacements.items()
+            "containsText": {"text": "{{КонтрагентНазвание}}", "matchCase": True},
+            "replaceText": cp_name,
+        }},
+        {"replaceAllText": {
+            "containsText": {"text": "{{ДатаНачало}}", "matchCase": True},
+            "replaceText": date_from_str,
+        }},
+        {"replaceAllText": {
+            "containsText": {"text": "{{ДатаКонец}}", "matchCase": True},
+            "replaceText": date_to_str,
+        }},
+        {"replaceAllText": {
+            "containsText": {"text": "{{СальдоНачало}}", "matchCase": True},
+            "replaceText": opening_balance_str,
+        }},
+        {"replaceAllText": {
+            "containsText": {"text": "{{ИтогоЛевые}}", "matchCase": True},
+            "replaceText": f"{left_total:.2f}".replace(".", ","),
+        }},
+        {"replaceAllText": {
+            "containsText": {"text": "{{ИтогоПравые}}", "matchCase": True},
+            "replaceText": f"{right_total:.2f}".replace(".", ","),
+        }},
+        {"replaceAllText": {
+            "containsText": {"text": "{{СальдоКонец}}", "matchCase": True},
+            "replaceText": closing_balance_str,
+        }},
+        {"replaceAllText": {
+            "containsText": {"text": "{{СальдоСторона}}", "matchCase": True},
+            "replaceText": "",
+        }},
+        {"replaceAllText": {
+            "containsText": {"text": "{{ГодДок}}", "matchCase": True},
+            "replaceText": cur_year,
+        }},
     ]
-    docs_svc.documents().batchUpdate(documentId=doc_id, body={"requests": replace_reqs}).execute()
+
+    docs_svc.documents().batchUpdate(
+        documentId=doc_id,
+        body={"requests": requests},
+    ).execute()
 
     # Fill table rows (insertTableRow + insertText + deleteTableRow for placeholder)
     _fill_table_rows(docs_svc, doc_id, data.get("left_rows", []), data.get("right_rows", []))
