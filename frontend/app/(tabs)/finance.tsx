@@ -261,15 +261,25 @@ function FinanceInner() {
   };
 
   const generateReconciliation = async () => {
-    if (!recCounterpartyId) { Alert.alert('Выберите контрагента'); return; }
+    Alert.alert('Тест', 'Кнопка нажата');
+    const counterpartyName = recType === 'client'
+      ? (clients.find((c: any) => c.id === recCounterpartyId)?.name ?? '')
+      : (carriers.find((c: any) => c.id === recCounterpartyId)?.company_name ?? '');
+    console.log('generate pressed', {
+      type: recType,
+      counterparty_id: recCounterpartyId,
+      counterparty_name: counterpartyName,
+      period: recPeriod,
+      year: recYear,
+      quarter: recQuarter,
+      date_from: recDateFrom,
+      date_to: recDateTo,
+    });
     setRecGenerating(true);
     try {
-      const counterpartyName = recType === 'client'
-        ? (clients.find((c: any) => c.id === recCounterpartyId)?.name ?? '')
-        : (carriers.find((c: any) => c.id === recCounterpartyId)?.company_name ?? '');
       const body: any = {
         type: recType,
-        counterparty_id: recCounterpartyId,
+        counterparty_id: recCounterpartyId || 'EMPTY',
         counterparty_name: counterpartyName,
         period: recPeriod,
       };
@@ -277,34 +287,13 @@ function FinanceInner() {
       if (recPeriod === 'quarter') { body.year = recYear; body.quarter = recQuarter; }
       if (recPeriod === 'custom')  { body.date_from = recDateFrom; body.date_to = recDateTo; }
 
-      console.log('[reconciliation] sending', JSON.stringify(body));
+      Alert.alert('Запрос', `Отправляю: ${JSON.stringify(body)}`);
       const result = await api.reconciliation.generate(body);
-      console.log('[reconciliation] result', JSON.stringify(result));
-
-      const url = result.doc_url;
-      if (url) {
-        Alert.alert('Акт сверки создан', 'Открыть документ?', [
-          { text: 'Отмена', style: 'cancel' },
-          { text: 'Открыть', onPress: () => Linking.openURL(url) },
-        ]);
-      } else if (result.doc_error) {
-        const cb = result.closing_balance ?? 0;
-        const cbSide = result.closing_balance_side ?? 'none';
-        const sideLabel = cbSide === 'none' ? 'нет задолженности' : cbSide === 'them' ? 'долг контрагента' : 'наш долг';
-        Alert.alert(
-          'Данные готовы, Google Doc не создан',
-          `Сальдо: ${cb.toLocaleString()} BYN (${sideLabel})\n\nПричина ошибки:\n${result.doc_error}`,
-          [{ text: 'OK' }],
-        );
-      } else {
-        const cb = result.closing_balance ?? 0;
-        const cbSide = result.closing_balance_side ?? 'none';
-        const sideLabel = cbSide === 'none' ? 'нет задолженности' : cbSide === 'them' ? 'долг контрагента' : 'наш долг';
-        Alert.alert('Акт сформирован', `Сальдо: ${cb.toLocaleString()} BYN (${sideLabel})`);
-      }
+      console.log('result:', JSON.stringify(result));
+      Alert.alert('Результат', JSON.stringify(result));
     } catch (e: any) {
-      console.error('[reconciliation] error', e);
-      Alert.alert('Ошибка', e.message);
+      console.log('error:', e);
+      Alert.alert('Ошибка', e?.message || JSON.stringify(e));
     } finally {
       setRecGenerating(false);
     }
@@ -831,9 +820,8 @@ function FinanceInner() {
 
               <TouchableOpacity
                 onPress={generateReconciliation}
-                style={[styles.mSaveBtn, recGenerating && { opacity: 0.6 }]}
+                style={styles.mSaveBtn}
                 activeOpacity={0.8}
-                disabled={recGenerating}
               >
                 {recGenerating
                   ? <ActivityIndicator color="#000" />
