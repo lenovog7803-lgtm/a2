@@ -287,12 +287,16 @@ function FinanceInner() {
       const result = await api.reconciliation.generate(body);
       if (result?.doc_url) {
         if (Platform.OS === 'web') {
-          window.open(result.doc_url, '_blank');
+          const open = window.confirm('Акт сгенерирован! Открыть документ?');
+          if (open) window.open(result.doc_url, '_blank');
         } else {
-          Linking.openURL(result.doc_url);
+          Alert.alert('Акт сгенерирован!', 'Открыть документ?', [
+            { text: 'Отмена', style: 'cancel' },
+            { text: 'Открыть', onPress: () => Linking.openURL(result.doc_url) },
+          ]);
         }
       } else {
-        showAlert('Ошибка', result?.doc_error || 'Документ не создан');
+        showAlert('Ошибка', result?.doc_error || 'неизвестная ошибка');
       }
     } catch (e: any) {
       showAlert('Ошибка', e?.message || JSON.stringify(e));

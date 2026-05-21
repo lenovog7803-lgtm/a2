@@ -2434,25 +2434,24 @@ def _fill_table_rows(docs_svc, doc_id: str, left_rows: list, right_rows: list):
     tbl = tbl_elem["table"]
 
     # Fill new rows (they are now at indices ph_row_idx .. ph_row_idx + max_rows - 1)
+    # Table layout: col0=date_L, col1=doc_L, col2=amt_L, col3=separator, col4=date_R, col5=doc_R, col6=amt_R
     text_reqs = []
     for i in range(max_rows):
         row = tbl["tableRows"][ph_row_idx + i]
         cells = row.get("tableCells", [])
         ncols = len(cells)
-        half  = ncols // 2
 
-        # Build column values: [date_L, doc_L, amt_L, ...] [date_R, doc_R, amt_R, ...]
         vals = [""] * ncols
         if i < len(left_rows):
             lr = left_rows[i]
-            if ncols > 0:      vals[0]    = lr.get("date", "")
-            if ncols > 1:      vals[1]    = lr.get("pp_number", "")
-            if ncols > 2:      vals[2]    = f"{lr.get('amount', 0):.2f}".replace(".", ",")
+            if ncols > 0: vals[0] = lr.get("date", "")
+            if ncols > 1: vals[1] = lr.get("pp_number", "") or lr.get("doc_number", "")
+            if ncols > 2: vals[2] = f"{lr.get('amount', 0):.2f}".replace(".", ",")
         if i < len(right_rows):
             rr = right_rows[i]
-            if ncols > half:   vals[half]     = rr.get("date", "")
-            if ncols > half+1: vals[half + 1] = rr.get("doc_number", "")
-            if ncols > half+2: vals[half + 2] = f"{rr.get('amount', 0):.2f}".replace(".", ",")
+            if ncols > 4: vals[4] = rr.get("date", "")
+            if ncols > 5: vals[5] = rr.get("doc_number", "") or rr.get("pp_number", "")
+            if ncols > 6: vals[6] = f"{rr.get('amount', 0):.2f}".replace(".", ",")
 
         for ci, cell in enumerate(cells):
             text = vals[ci] if ci < len(vals) else ""
