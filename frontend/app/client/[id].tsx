@@ -17,6 +17,7 @@ export default function ClientDetail() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
+  const [acts, setActs] = useState<any[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -29,6 +30,14 @@ export default function ClientDetail() {
         router.back();
       } finally { setLoading(false); }
     })();
+  }, [id]);
+
+  useEffect(() => {
+    if (id) {
+      api.reconciliation.history({ counterparty_id: id, type: 'client' })
+        .then((data: any[]) => setActs(data || []))
+        .catch(() => {});
+    }
   }, [id]);
 
   const update = (patch: any) => setClient((prev: any) => ({ ...prev, ...patch }));
@@ -151,6 +160,27 @@ export default function ClientDetail() {
               rateKey="client_rate"
               onPress={(oid: string) => router.push('/order/' + oid)}
             />
+
+            {/* Акты сверки */}
+            {acts.length > 0 && (
+              <View style={{ marginTop: 4, marginBottom: 12 }}>
+                <Text style={styles.sectionTitle}>АКТЫ СВЕРКИ</Text>
+                <View style={styles.section}>
+                  {acts.map((act: any, i: number) => (
+                    <TouchableOpacity
+                      key={i}
+                      onPress={() => Platform.OS === 'web' ? window.open(act.doc_url, '_blank') : Linking.openURL(act.doc_url)}
+                      style={[styles.orderRow, i === acts.length - 1 && { borderBottomWidth: 0 }]}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ color: theme.colors.textPrimary, flex: 1, fontSize: 13 }}>{act.period_label}</Text>
+                      <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginRight: 10 }}>{act.created_at}</Text>
+                      <Text style={{ color: theme.colors.accent, fontSize: 13, fontWeight: '600' }}>Открыть →</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
           </>
         ) : (
           <>

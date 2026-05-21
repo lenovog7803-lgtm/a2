@@ -272,7 +272,7 @@ function FinanceInner() {
   const loadRecHistory = async (cid: string, type: string) => {
     if (!cid) { setRecHistory([]); return; }
     try {
-      const items = await api.reconciliation.history(cid, type);
+      const items = await api.reconciliation.history({ counterparty_id: cid, type });
       setRecHistory(items);
     } catch { setRecHistory([]); }
   };

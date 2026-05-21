@@ -2608,6 +2608,13 @@ async def generate_reconciliation(payload: ReconciliationRequest):
 
     cid = payload.counterparty_id
 
+    from bson import ObjectId
+
+    def _norm_date(v) -> str:
+        if isinstance(v, str): return v[:10]
+        if hasattr(v, 'strftime'): return v.strftime('%Y-%m-%d')
+        return ''
+
     def _client_side(b: float) -> str:
         if b > 0.005:  return "them"
         if b < -0.005: return "us"
@@ -2629,11 +2636,22 @@ async def generate_reconciliation(payload: ReconciliationRequest):
              "unload_date": {"$lt": date_from}},
             {"_id": 0, "client_rate": 1},
         ).to_list(10000)
-        prior_pmts = await db.payments_in.find(
-            {"client_id": cid, "date": {"$lt": date_from}}, {"_id": 0, "amount": 1}
-        ).to_list(10000)
-        opening_balance = sum(o.get("client_rate", 0) for o in prior_orders) - \
-                          sum(p.get("amount", 0) for p in prior_pmts)
+
+        # ObjectId-aware client_id query (handles string UUID, str(oid), and ObjectId)
+        try:
+            oid = ObjectId(cid)
+            id_query = {"$in": [cid, str(oid), oid]}
+        except Exception:
+            id_query = cid
+
+        sample = await db.payments_in.find().to_list(3)
+        print(f"[rec_debug] Пример payments_in: {[{k: v for k, v in p.items() if k != '_id'} for p in sample]}")
+
+        all_client_pmts = await db.payments_in.find({"client_id": id_query}).sort("date", 1).to_list(1000)
+        print(f"[rec_debug] Найдено поступлений клиента: {len(all_client_pmts)}, client_id={cid!r}")
+
+        prior_pmts_amt = sum(p.get("amount", 0) for p in all_client_pmts if _norm_date(p.get("date", "")) < date_from)
+        opening_balance = sum(o.get("client_rate", 0) for o in prior_orders) - prior_pmts_amt
 
         period_orders = await db.orders.find(
             {"client_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
@@ -2641,15 +2659,8 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1},
         ).sort("unload_date", 1).to_list(10000)
 
-        print(f"[rec_debug] Ищу поступления: client_id={cid}, date_from={date_from!r}, date_to={date_to!r}")
-        all_payments = await db.payments_in.find({"client_id": cid}).to_list(100)
-        print(f"[rec_debug] Все поступления клиента: {len(all_payments)}, данные: {[{k: v for k, v in p.items() if k != '_id'} for p in all_payments]}")
-        cursor = db.payments_in.find({
-            "client_id": cid,
-            "date": {"$gte": date_from, "$lte": date_to},
-        }).sort("date", 1)
-        period_pmts = await cursor.to_list(length=1000)
-        print(f"[rec_debug] Поступления за период: {len(period_pmts)}, date_from type={type(date_from).__name__}")
+        period_pmts = [p for p in all_client_pmts if date_from <= _norm_date(p.get("date", "")) <= date_to]
+        print(f"[rec_debug] Поступления за период: {len(period_pmts)}")
 
         right_rows = [
             {"date": _fmt_date(o.get("unload_date", "")),
@@ -2658,8 +2669,8 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             for o in period_orders
         ]
         left_rows = [
-            {"date": _fmt_date(p.get("date", "")),
-             "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(p.get('date',''))}",
+            {"date": _fmt_date(_norm_date(p.get("date", ""))),
+             "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(_norm_date(p.get('date','')))}",
              "amount": p.get("amount", 0)}
             for p in period_pmts
         ]
@@ -2677,22 +2688,27 @@ async def generate_reconciliation(payload: ReconciliationRequest):
              "unload_date": {"$lt": date_from}},
             {"_id": 0, "carrier_rate": 1},
         ).to_list(10000)
-        prior_pmts = await db.payments_out.find(
-            {"carrier_id": cid, "date": {"$lt": date_from}}, {"_id": 0, "amount": 1}
-        ).to_list(10000)
-        opening_balance = sum(o.get("carrier_rate", 0) for o in prior_orders) - \
-                          sum(p.get("amount", 0) for p in prior_pmts)
+
+        try:
+            oid = ObjectId(cid)
+            id_query = {"$in": [cid, str(oid), oid]}
+        except Exception:
+            id_query = cid
+
+        all_carrier_pmts = await db.payments_out.find({"carrier_id": id_query}).sort("date", 1).to_list(1000)
+        print(f"[rec_debug] Найдено списаний перевозчика: {len(all_carrier_pmts)}, carrier_id={cid!r}")
+
+        prior_pmts_amt = sum(p.get("amount", 0) for p in all_carrier_pmts if _norm_date(p.get("date", "")) < date_from)
+        opening_balance = sum(o.get("carrier_rate", 0) for o in prior_orders) - prior_pmts_amt
 
         period_orders = await db.orders.find(
             {"carrier_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
              "unload_date": {"$gte": date_from, "$lte": date_to}},
             {"_id": 0, "order_number": 1, "unload_date": 1, "carrier_rate": 1},
         ).sort("unload_date", 1).to_list(10000)
-        cursor = db.payments_out.find({
-            "carrier_id": cid,
-            "date": {"$gte": date_from, "$lte": date_to},
-        }).sort("date", 1)
-        period_pmts = await cursor.to_list(length=1000)
+
+        period_pmts = [p for p in all_carrier_pmts if date_from <= _norm_date(p.get("date", "")) <= date_to]
+        print(f"[rec_debug] Списания за период: {len(period_pmts)}")
 
         right_rows = [
             {"date": _fmt_date(o.get("unload_date", "")),
@@ -2701,8 +2717,8 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             for o in period_orders
         ]
         left_rows = [
-            {"date": _fmt_date(p.get("date", "")),
-             "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(p.get('date',''))}",
+            {"date": _fmt_date(_norm_date(p.get("date", ""))),
+             "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(_norm_date(p.get('date','')))}",
              "amount": p.get("amount", 0)}
             for p in period_pmts
         ]

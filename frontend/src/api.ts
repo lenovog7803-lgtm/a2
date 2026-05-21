@@ -154,8 +154,8 @@ export const api = {
   },
   reconciliation: {
     generate: (data: any) => req('/reconciliation/generate', { method: 'POST', body: JSON.stringify(data) }),
-    history: (counterparty_id: string, type: string) =>
-      req(`/reconciliation/history?counterparty_id=${encodeURIComponent(counterparty_id)}&type=${encodeURIComponent(type)}`),
+    history: (params: { counterparty_id: string; type: string }) =>
+      req(`/reconciliation/history?counterparty_id=${encodeURIComponent(params.counterparty_id)}&type=${encodeURIComponent(params.type)}`),
   },
   trash: {
     list: () => req('/trash'),
