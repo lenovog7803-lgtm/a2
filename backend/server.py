@@ -2500,20 +2500,10 @@ def _fill_table_rows(docs_svc, doc_id: str, left_rows: list, right_rows: list):
 
 
 def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request as _GReq
     from googleapiclient.discovery import build
+    from oauth_google import make_user_credentials
 
-    creds = Credentials(
-        token=token_doc.get("access_token"),
-        refresh_token=token_doc.get("refresh_token"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.environ.get("GOOGLE_CLIENT_ID"),
-        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
-    )
-    # Always refresh — expiry is not stored reliably, so creds.expired is always False
-    if creds.refresh_token:
-        creds.refresh(_GReq())
+    creds = make_user_credentials(token_doc)
 
     docs_svc  = build("docs",  "v1", credentials=creds)
     drive_svc = build("drive", "v3", credentials=creds)
