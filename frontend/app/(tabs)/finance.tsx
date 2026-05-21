@@ -277,20 +277,33 @@ function FinanceInner() {
       if (recPeriod === 'quarter') { body.year = recYear; body.quarter = recQuarter; }
       if (recPeriod === 'custom')  { body.date_from = recDateFrom; body.date_to = recDateTo; }
 
+      console.log('[reconciliation] sending', JSON.stringify(body));
       const result = await api.reconciliation.generate(body);
+      console.log('[reconciliation] result', JSON.stringify(result));
+
       const url = result.doc_url;
       if (url) {
-        Alert.alert('Акт сверки создан', `Открыть документ?`, [
+        Alert.alert('Акт сверки создан', 'Открыть документ?', [
           { text: 'Отмена', style: 'cancel' },
           { text: 'Открыть', onPress: () => Linking.openURL(url) },
         ]);
+      } else if (result.doc_error) {
+        const cb = result.closing_balance ?? 0;
+        const cbSide = result.closing_balance_side ?? 'none';
+        const sideLabel = cbSide === 'none' ? 'нет задолженности' : cbSide === 'them' ? 'долг контрагента' : 'наш долг';
+        Alert.alert(
+          'Данные готовы, Google Doc не создан',
+          `Сальдо: ${cb.toLocaleString()} BYN (${sideLabel})\n\nПричина ошибки:\n${result.doc_error}`,
+          [{ text: 'OK' }],
+        );
       } else {
         const cb = result.closing_balance ?? 0;
         const cbSide = result.closing_balance_side ?? 'none';
-        const sideLabel = cbSide === 'none' ? 'без задолженности' : cbSide === 'them' ? 'долг контрагента' : 'наш долг';
-        Alert.alert('Акт сформирован', `Сальдо: ${cb.toLocaleString()} (${sideLabel})\n\nДокумент Google не создан — проверьте OAuth.`);
+        const sideLabel = cbSide === 'none' ? 'нет задолженности' : cbSide === 'them' ? 'долг контрагента' : 'наш долг';
+        Alert.alert('Акт сформирован', `Сальдо: ${cb.toLocaleString()} BYN (${sideLabel})`);
       }
     } catch (e: any) {
+      console.error('[reconciliation] error', e);
       Alert.alert('Ошибка', e.message);
     } finally {
       setRecGenerating(false);

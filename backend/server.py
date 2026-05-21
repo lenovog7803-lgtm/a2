@@ -2501,6 +2501,7 @@ def _fill_table_rows(docs_svc, doc_id: str, left_rows: list, right_rows: list):
 
 def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
     from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request as _GReq
     from googleapiclient.discovery import build
 
     creds = Credentials(
@@ -2510,8 +2511,8 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
         client_id=os.environ.get("GOOGLE_CLIENT_ID"),
         client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
     )
-    if creds.expired and creds.refresh_token:
-        from google.auth.transport.requests import Request as _GReq
+    # Always refresh — expiry is not stored reliably, so creds.expired is always False
+    if creds.refresh_token:
         creds.refresh(_GReq())
 
     docs_svc  = build("docs",  "v1", credentials=creds)
@@ -2564,6 +2565,7 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
 
 @api_router.post("/reconciliation/generate")
 async def generate_reconciliation(payload: ReconciliationRequest):
+    print(f"[reconciliation] START type={payload.type} cid={payload.counterparty_id} period={payload.period} year={payload.year}")
     now_dt = datetime.now(timezone.utc)
 
     if payload.period == "year":
@@ -2698,14 +2700,22 @@ async def generate_reconciliation(payload: ReconciliationRequest):
     }
 
     doc_url = None
+    doc_error = None
     try:
         token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
-        if token_doc:
+        if not token_doc:
+            doc_error = "Google OAuth не подключён — перейдите в Настройки и авторизуйте Google"
+            print(f"[reconciliation] no oauth token")
+        else:
+            print(f"[reconciliation] calling _create_reconciliation_doc_sync")
             doc_url = await asyncio.to_thread(_create_reconciliation_doc_sync, result, token_doc)
+            print(f"[reconciliation] doc_url={doc_url}")
     except Exception as _de:
+        doc_error = str(_de)
         logging.getLogger(__name__).error(f"reconciliation doc failed: {_de}", exc_info=True)
+        print(f"[reconciliation] ERROR: {_de}")
 
-    return {**result, "doc_url": doc_url}
+    return {**result, "doc_url": doc_url, "doc_error": doc_error}
 
 
 # ====== Notes ======
