@@ -105,6 +105,7 @@ function FinanceInner() {
   const [recDateFrom, setRecDateFrom] = useState('');
   const [recDateTo, setRecDateTo] = useState('');
   const [recGenerating, setRecGenerating] = useState(false);
+  const [recHistory, setRecHistory] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -268,6 +269,14 @@ function FinanceInner() {
     }
   };
 
+  const loadRecHistory = async (cid: string, type: string) => {
+    if (!cid) { setRecHistory([]); return; }
+    try {
+      const items = await api.reconciliation.history(cid, type);
+      setRecHistory(items);
+    } catch { setRecHistory([]); }
+  };
+
   const generateReconciliation = async () => {
     const counterpartyName = recType === 'client'
       ? (clients.find((c: any) => c.id === recCounterpartyId)?.name ?? '')
@@ -286,6 +295,7 @@ function FinanceInner() {
 
       const result = await api.reconciliation.generate(body);
       if (result?.doc_url) {
+        await loadRecHistory(recCounterpartyId, recType);
         if (Platform.OS === 'web') {
           const open = window.confirm('Акт сгенерирован! Открыть документ?');
           if (open) window.open(result.doc_url, '_blank');
@@ -737,14 +747,14 @@ function FinanceInner() {
               <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
                 <TouchableOpacity
                   style={[styles.typeBtn, recType === 'client' && { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent }]}
-                  onPress={() => { setRecType('client'); setRecCounterpartyId(''); }}
+                  onPress={() => { setRecType('client'); setRecCounterpartyId(''); setRecHistory([]); }}
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.typeBtnTxt, recType === 'client' && { color: theme.colors.accent }]}>С клиентом</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.typeBtn, recType === 'carrier' && { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent }]}
-                  onPress={() => { setRecType('carrier'); setRecCounterpartyId(''); }}
+                  onPress={() => { setRecType('carrier'); setRecCounterpartyId(''); setRecHistory([]); }}
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.typeBtnTxt, recType === 'carrier' && { color: theme.colors.accent }]}>С перевозчиком</Text>
@@ -759,7 +769,7 @@ function FinanceInner() {
                   ? clients.map((c: any) => ({ id: c.id, label: c.name }))
                   : carriers.map((c: any) => ({ id: c.id, label: c.company_name }))
                 }
-                onSelect={(it: any) => setRecCounterpartyId(it.id)}
+                onSelect={(it: any) => { setRecCounterpartyId(it.id); loadRecHistory(it.id, recType); }}
                 searchable
               />
 
@@ -835,6 +845,27 @@ function FinanceInner() {
                 }
               </TouchableOpacity>
             </View>
+
+            {recHistory.length > 0 && (
+              <View style={[styles.card, { marginTop: 12 }]}>
+                <Text style={styles.sLabel}>ИСТОРИЯ АКТОВ</Text>
+                {recHistory.map((item: any, idx: number) => (
+                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: idx < recHistory.length - 1 ? 1 : 0, borderColor: theme.colors.border }}>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 13, width: 90 }}>{item.created_at}</Text>
+                    <Text style={{ color: theme.colors.text, fontSize: 13, flex: 1 }}>{item.period_label}</Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (Platform.OS === 'web') window.open(item.doc_url, '_blank');
+                        else Linking.openURL(item.doc_url);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Открыть →</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
           </>
         ) : null}
       </ScrollView>

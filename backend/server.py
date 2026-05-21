@@ -2738,7 +2738,30 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         logging.getLogger(__name__).error(f"reconciliation doc failed: {_de}", exc_info=True)
         print(f"[reconciliation] ERROR: {_de}")
 
+    if doc_url:
+        await db.reconciliation_history.insert_one({
+            "counterparty_id":   cid,
+            "counterparty_name": cp_name,
+            "type":              payload.type,
+            "period_label":      period_label,
+            "doc_url":           doc_url,
+            "created_at":        datetime.now(timezone.utc),
+        })
+
     return {**result, "doc_url": doc_url, "doc_error": doc_error}
+
+
+@api_router.get("/reconciliation/history")
+async def get_reconciliation_history(counterparty_id: str, type: str):
+    cursor = db.reconciliation_history.find(
+        {"counterparty_id": counterparty_id, "type": type},
+        {"_id": 0},
+    ).sort("created_at", -1)
+    items = await cursor.to_list(200)
+    for item in items:
+        if isinstance(item.get("created_at"), datetime):
+            item["created_at"] = item["created_at"].strftime("%d.%m.%Y")
+    return items
 
 
 # ====== Notes ======
