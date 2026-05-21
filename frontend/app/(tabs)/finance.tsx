@@ -260,21 +260,18 @@ function FinanceInner() {
     ]);
   };
 
+  const showAlert = (title: string, message: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
+
   const generateReconciliation = async () => {
-    Alert.alert('Тест', 'Кнопка нажата');
     const counterpartyName = recType === 'client'
       ? (clients.find((c: any) => c.id === recCounterpartyId)?.name ?? '')
       : (carriers.find((c: any) => c.id === recCounterpartyId)?.company_name ?? '');
-    console.log('generate pressed', {
-      type: recType,
-      counterparty_id: recCounterpartyId,
-      counterparty_name: counterpartyName,
-      period: recPeriod,
-      year: recYear,
-      quarter: recQuarter,
-      date_from: recDateFrom,
-      date_to: recDateTo,
-    });
     setRecGenerating(true);
     try {
       const body: any = {
@@ -287,13 +284,18 @@ function FinanceInner() {
       if (recPeriod === 'quarter') { body.year = recYear; body.quarter = recQuarter; }
       if (recPeriod === 'custom')  { body.date_from = recDateFrom; body.date_to = recDateTo; }
 
-      Alert.alert('Запрос', `Отправляю: ${JSON.stringify(body)}`);
       const result = await api.reconciliation.generate(body);
-      console.log('result:', JSON.stringify(result));
-      Alert.alert('Результат', JSON.stringify(result));
+      if (result?.doc_url) {
+        if (Platform.OS === 'web') {
+          window.open(result.doc_url, '_blank');
+        } else {
+          Linking.openURL(result.doc_url);
+        }
+      } else {
+        showAlert('Ошибка', result?.doc_error || 'Документ не создан');
+      }
     } catch (e: any) {
-      console.log('error:', e);
-      Alert.alert('Ошибка', e?.message || JSON.stringify(e));
+      showAlert('Ошибка', e?.message || JSON.stringify(e));
     } finally {
       setRecGenerating(false);
     }
