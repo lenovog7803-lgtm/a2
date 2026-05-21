@@ -129,10 +129,10 @@ export const api = {
     },
   },
   paymentsIn: {
-    list: (filters?: { client_id?: string; date?: string }) => {
+    list: (filters?: { client_id?: string; month?: string }) => {
       const p = new URLSearchParams();
       if (filters?.client_id) p.append('client_id', filters.client_id);
-      if (filters?.date) p.append('date', filters.date);
+      if (filters?.month) p.append('month', filters.month);
       const qs = p.toString();
       return req(`/payments/in${qs ? '?' + qs : ''}`);
     },
@@ -141,10 +141,10 @@ export const api = {
     remove: (id: string) => req(`/payments/in/${id}`, { method: 'DELETE' }),
   },
   paymentsOut: {
-    list: (filters?: { carrier_id?: string; date?: string }) => {
+    list: (filters?: { carrier_id?: string; month?: string }) => {
       const p = new URLSearchParams();
       if (filters?.carrier_id) p.append('carrier_id', filters.carrier_id);
-      if (filters?.date) p.append('date', filters.date);
+      if (filters?.month) p.append('month', filters.month);
       const qs = p.toString();
       return req(`/payments/out${qs ? '?' + qs : ''}`);
     },

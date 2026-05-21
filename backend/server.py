@@ -2244,12 +2244,12 @@ class PaymentInPayload(BaseModel):
 
 
 @api_router.get("/payments/in", response_model=List[PaymentIn])
-async def list_payments_in(client_id: Optional[str] = None, date: Optional[str] = None):
+async def list_payments_in(client_id: Optional[str] = None, month: Optional[str] = None):
     q: dict = {}
     if client_id:
         q["client_id"] = client_id
-    if date:
-        q["date"] = {"$regex": f"^{date}"}
+    if month:
+        q["date"] = {"$regex": f"^{month}"}
     docs = await db.payments_in.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
     return [PaymentIn(**d) for d in docs]
 
@@ -2298,12 +2298,12 @@ class PaymentOutPayload(BaseModel):
 
 
 @api_router.get("/payments/out", response_model=List[PaymentOut])
-async def list_payments_out(carrier_id: Optional[str] = None, date: Optional[str] = None):
+async def list_payments_out(carrier_id: Optional[str] = None, month: Optional[str] = None):
     q: dict = {}
     if carrier_id:
         q["carrier_id"] = carrier_id
-    if date:
-        q["date"] = {"$regex": f"^{date}"}
+    if month:
+        q["date"] = {"$regex": f"^{month}"}
     docs = await db.payments_out.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
     return [PaymentOut(**d) for d in docs]
 
@@ -2331,9 +2331,15 @@ async def delete_payment_out(pid: str):
 
 
 # ====== Reconciliation (акт сверки) ======
+RECONCILIATION_TEMPLATE_ID = "14O_8Er-fY6ituNFyEvMClUdhgfhTOftMeo5vGdUUSdI"
+RECONCILIATION_FOLDER_ID   = "1xXXH1_zjVStziS0txoDJoIgXnVizHZ3i"
+OUR_NAME = "Александрович Е.А. ИП"
+
+
 class ReconciliationRequest(BaseModel):
     type: str  # "client" | "carrier"
     counterparty_id: str
+    counterparty_name: Optional[str] = None
     period: str  # "year" | "quarter" | "custom"
     year: Optional[int] = None
     quarter: Optional[int] = None
@@ -2356,6 +2362,143 @@ def _fmt_date(iso: str) -> str:
         return iso
 
 
+def _balance_str(balance: float, side: str, cp_name: str) -> str:
+    """Format balance as 'составляет X,XX BYN в пользу ...' or 'нет'."""
+    if abs(balance) < 0.005 or side == "none":
+        return "нет"
+    amt = f"{abs(balance):.2f}".replace(".", ",")
+    favor = OUR_NAME if side == "them" else cp_name
+    return f"составляет {amt} BYN в пользу {favor}"
+
+
+def _find_placeholder_table(body_content: list):
+    """Return (table_start_index, placeholder_row_index) or None."""
+    for elem in body_content:
+        if "table" not in elem:
+            continue
+        tbl = elem["table"]
+        tbl_start = elem.get("startIndex", 0)
+        for ri, row in enumerate(tbl.get("tableRows", [])):
+            for cell in row.get("tableCells", []):
+                for cp in cell.get("content", []):
+                    for pe in cp.get("paragraph", {}).get("elements", []):
+                        if "{{СТРОКА" in pe.get("textRun", {}).get("content", ""):
+                            return tbl_start, ri
+    return None
+
+
+def _fill_table_rows(docs_svc, doc_id: str, left_rows: list, right_rows: list):
+    """Insert data rows into the template table, then delete the placeholder row."""
+    max_rows = max(len(left_rows), len(right_rows))
+
+    doc = docs_svc.documents().get(documentId=doc_id).execute()
+    body = doc.get("body", {}).get("content", [])
+    info = _find_placeholder_table(body)
+    if info is None:
+        return
+
+    tbl_start, ph_row_idx = info
+
+    # Delete placeholder immediately if no data rows
+    if max_rows == 0:
+        docs_svc.documents().batchUpdate(documentId=doc_id, body={"requests": [
+            {"deleteTableRow": {"tableCellLocation": {
+                "tableStartLocation": {"index": tbl_start},
+                "rowIndex": ph_row_idx, "columnIndex": 0
+            }}}
+        ]}).execute()
+        return
+
+    # Insert max_rows rows ABOVE the placeholder row
+    ins_reqs = [
+        {"insertTableRow": {"tableCellLocation": {
+            "tableStartLocation": {"index": tbl_start},
+            "rowIndex": ph_row_idx, "columnIndex": 0
+        }, "insertBelow": False}}
+        for _ in range(max_rows)
+    ]
+    docs_svc.documents().batchUpdate(documentId=doc_id, body={"requests": ins_reqs}).execute()
+
+    # Re-read the document to get fresh indices after insertions
+    doc = docs_svc.documents().get(documentId=doc_id).execute()
+    body = doc.get("body", {}).get("content", [])
+    tbl_elem = next((e for e in body if "table" in e), None)
+    if tbl_elem is None:
+        return
+    tbl_start = tbl_elem.get("startIndex", 0)
+    tbl = tbl_elem["table"]
+
+    # Fill new rows (they are now at indices ph_row_idx .. ph_row_idx + max_rows - 1)
+    text_reqs = []
+    for i in range(max_rows):
+        row = tbl["tableRows"][ph_row_idx + i]
+        cells = row.get("tableCells", [])
+        ncols = len(cells)
+        half  = ncols // 2
+
+        # Build column values: [date_L, doc_L, amt_L, ...] [date_R, doc_R, amt_R, ...]
+        vals = [""] * ncols
+        if i < len(left_rows):
+            lr = left_rows[i]
+            if ncols > 0:      vals[0]    = lr.get("date", "")
+            if ncols > 1:      vals[1]    = lr.get("pp_number", "")
+            if ncols > 2:      vals[2]    = f"{lr.get('amount', 0):.2f}".replace(".", ",")
+        if i < len(right_rows):
+            rr = right_rows[i]
+            if ncols > half:   vals[half]     = rr.get("date", "")
+            if ncols > half+1: vals[half + 1] = rr.get("doc_number", "")
+            if ncols > half+2: vals[half + 2] = f"{rr.get('amount', 0):.2f}".replace(".", ",")
+
+        for ci, cell in enumerate(cells):
+            text = vals[ci] if ci < len(vals) else ""
+            if not text:
+                continue
+            cell_content = cell.get("content", [])
+            if not cell_content:
+                continue
+            para_elems = cell_content[0].get("paragraph", {}).get("elements", [])
+            if not para_elems:
+                continue
+            insert_idx = para_elems[0].get("startIndex", 0)
+            text_reqs.append({"insertText": {
+                "location": {"index": insert_idx},
+                "text": text
+            }})
+
+    if text_reqs:
+        # Sort descending so earlier insertions don't shift subsequent indices
+        text_reqs.sort(key=lambda r: r["insertText"]["location"]["index"], reverse=True)
+        docs_svc.documents().batchUpdate(documentId=doc_id, body={"requests": text_reqs}).execute()
+
+    # Find and delete the placeholder row (search again after insertions)
+    doc = docs_svc.documents().get(documentId=doc_id).execute()
+    body = doc.get("body", {}).get("content", [])
+    tbl_elem = next((e for e in body if "table" in e), None)
+    if tbl_elem is None:
+        return
+    tbl_start = tbl_elem.get("startIndex", 0)
+    tbl = tbl_elem["table"]
+    ph_row_now = None
+    for ri, row in enumerate(tbl.get("tableRows", [])):
+        for cell in row.get("tableCells", []):
+            for cp in cell.get("content", []):
+                for pe in cp.get("paragraph", {}).get("elements", []):
+                    if "{{СТРОКА" in pe.get("textRun", {}).get("content", ""):
+                        ph_row_now = ri
+                        break
+                if ph_row_now is not None: break
+            if ph_row_now is not None: break
+        if ph_row_now is not None: break
+
+    if ph_row_now is not None:
+        docs_svc.documents().batchUpdate(documentId=doc_id, body={"requests": [
+            {"deleteTableRow": {"tableCellLocation": {
+                "tableStartLocation": {"index": tbl_start},
+                "rowIndex": ph_row_now, "columnIndex": 0
+            }}}
+        ]}).execute()
+
+
 def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
@@ -2368,118 +2511,53 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
         client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
     )
     if creds.expired and creds.refresh_token:
-        from google.auth.transport.requests import Request as _GRequest
-        creds.refresh(_GRequest())
+        from google.auth.transport.requests import Request as _GReq
+        creds.refresh(_GReq())
 
     docs_svc  = build("docs",  "v1", credentials=creds)
     drive_svc = build("drive", "v3", credentials=creds)
 
-    title = f"Акт сверки – {data['counterparty_name']} – {data['period_label']}"
-    doc    = docs_svc.documents().create(body={"title": title}).execute()
-    doc_id = doc["documentId"]
+    cp_name   = data["counterparty_name"]
+    period_lb = data["period_label"]
+    title     = f"Акт сверки – {cp_name} – {period_lb}"
 
-    opening = data.get("opening_balance", 0.0)
-    ob_side = data.get("opening_balance_side", "none")
-    closing = data.get("closing_balance", 0.0)
-    cb_side = data.get("closing_balance_side", "none")
-    left_total  = data.get("left_total", 0.0)
-    right_total = data.get("right_total", 0.0)
-
-    def _side_label(side: str, rec_type: str) -> str:
-        if side == "none":
-            return "Без задолженности"
-        if rec_type == "client":
-            return "Задолженность клиента" if side == "them" else "Наша задолженность"
-        return "Наша задолженность" if side == "us" else "Задолженность перевозчика"
-
-    date_doc = _fmt_date(datetime.now(timezone.utc).isoformat())
-    rec_type = data.get("_type", "client")
-
-    lines = []
-    lines.append("АКТ СВЕРКИ ВЗАИМНЫХ РАСЧЁТОВ\n\n")
-    lines.append(f"г. Минск                                                              {date_doc}\n\n")
-    lines.append(
-        "Мы, нижеподписавшиеся, представители "
-        "Александрович Егор Александрович ИП (УНП 592028329) "
-        f"и {data['counterparty_name']}, "
-        f"составили настоящий акт сверки взаимных расчётов {data['period_label']}.\n\n"
-    )
-    lines.append(f"Период: {data.get('date_from','')} – {data.get('date_to','')}\n\n")
-
-    ob_str = f"{abs(opening):.2f} ({_side_label(ob_side, rec_type)})" if opening else "0,00"
-    lines.append(f"Сальдо на начало периода: {ob_str}\n\n")
-
-    lines.append("─" * 80 + "\n")
-    lines.append(f"{'ПОСТУПЛЕНИЯ / ОПЛАТЫ':<50}{'УСЛУГИ / ЗАЯВКИ':>30}\n")
-    lines.append("─" * 80 + "\n")
-
-    left_rows  = data.get("left_rows", [])
-    right_rows = data.get("right_rows", [])
-    max_rows = max(len(left_rows), len(right_rows))
-    for i in range(max_rows):
-        left  = left_rows[i]  if i < len(left_rows)  else None
-        right = right_rows[i] if i < len(right_rows) else None
-        left_str  = f"{left.get('date','')}  {left.get('pp_number','')}  {left.get('amount',0):.2f}"   if left  else ""
-        right_str = f"{right.get('date','')}  {right.get('doc_number','')}  {right.get('amount',0):.2f}" if right else ""
-        lines.append(f"{left_str:<48}  {right_str}\n")
-
-    lines.append("─" * 80 + "\n")
-    lines.append(f"{'Итого:':<48}  {'Итого:'}\n")
-    lines.append(f"{left_total:<48.2f}  {right_total:.2f}\n\n")
-
-    cb_str = f"{abs(closing):.2f} ({_side_label(cb_side, rec_type)})" if closing else "0,00 (Без задолженности)"
-    lines.append(f"Сальдо на конец периода: {cb_str}\n\n")
-
-    lines.append("\n\nПодписи сторон:\n\n")
-    lines.append("Александрович Е.А. ИП  _____________     ")
-    lines.append(f"{data['counterparty_name']}  _____________\n")
-
-    content = "".join(lines)
-    docs_svc.documents().batchUpdate(
-        documentId=doc_id,
-        body={"requests": [{"insertText": {"location": {"index": 1}, "text": content}}]},
+    # Copy template into the reconciliation folder
+    copied = drive_svc.files().copy(
+        fileId=RECONCILIATION_TEMPLATE_ID,
+        body={"name": title, "parents": [RECONCILIATION_FOLDER_ID]},
     ).execute()
+    doc_id = copied["id"]
 
-    # Move to "Акты сверки" folder
-    folder_id = os.environ.get("RECONCILIATION_FOLDER_ID") or ""
-    if not folder_id:
-        try:
-            res = drive_svc.files().list(
-                q="name='Акты сверки' and mimeType='application/vnd.google-apps.folder' and trashed=false",
-                fields="files(id)",
-            ).execute()
-            existing = res.get("files", [])
-            if existing:
-                folder_id = existing[0]["id"]
-            else:
-                f = drive_svc.files().create(
-                    body={"name": "Акты сверки", "mimeType": "application/vnd.google-apps.folder"},
-                    fields="id",
-                ).execute()
-                folder_id = f.get("id", "")
-            if folder_id:
-                env_path = ROOT_DIR / ".env"
-                try:
-                    env_text = env_path.read_text()
-                    if "RECONCILIATION_FOLDER_ID" not in env_text:
-                        env_path.write_text(env_text.rstrip() + f"\nRECONCILIATION_FOLDER_ID={folder_id}\n")
-                except Exception:
-                    pass
-        except Exception as _fe:
-            logging.getLogger(__name__).warning(f"folder lookup failed: {_fe}")
+    ob      = data.get("opening_balance", 0.0)
+    ob_side = data.get("opening_balance_side", "none")
+    cb      = data.get("closing_balance", 0.0)
+    cb_side = data.get("closing_balance_side", "none")
 
-    if folder_id:
-        try:
-            file_meta = drive_svc.files().get(fileId=doc_id, fields="parents").execute()
-            prev_parents = ",".join(file_meta.get("parents", []))
-            drive_svc.files().update(
-                fileId=doc_id,
-                addParents=folder_id,
-                removeParents=prev_parents,
-                fields="id,parents",
-            ).execute()
-        except Exception as _me:
-            logging.getLogger(__name__).warning(f"move to folder failed: {_me}")
+    cur_year = str(datetime.now(timezone.utc).year)
+
+    simple_replacements = {
+        "{{КонтрагентНазвание}}": cp_name,
+        "{{ДатаНачало}}":         data.get("date_from", ""),
+        "{{ДатаКонец}}":          data.get("date_to", ""),
+        "{{СальдоНачало}}":       _balance_str(ob, ob_side, cp_name),
+        "{{ИтогоЛевые}}":         f"{data.get('left_total', 0):.2f}".replace(".", ","),
+        "{{ИтогоПравые}}":        f"{data.get('right_total', 0):.2f}".replace(".", ","),
+        "{{СальдоКонец}}":        _balance_str(cb, cb_side, cp_name),
+        "{{СальдоСторона}}":      "",
+        "{{ГодДок}}":             cur_year,
+    }
+
+    replace_reqs = [
+        {"replaceAllText": {
+            "containsText": {"text": ph, "matchCase": True},
+            "replaceText": val,
+        }}
+        for ph, val in simple_replacements.items()
+    ]
+    docs_svc.documents().batchUpdate(documentId=doc_id, body={"requests": replace_reqs}).execute()
+
+    # Fill table rows (insertTableRow + insertText + deleteTableRow for placeholder)
+    _fill_table_rows(docs_svc, doc_id, data.get("left_rows", []), data.get("right_rows", []))
 
     return f"https://docs.google.com/document/d/{doc_id}/edit"
 
@@ -2488,11 +2566,10 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
 async def generate_reconciliation(payload: ReconciliationRequest):
     now_dt = datetime.now(timezone.utc)
 
-    # Resolve date range
     if payload.period == "year":
         year = payload.year or now_dt.year
-        date_from = f"{year}-01-01"
-        date_to   = f"{year}-12-31"
+        date_from    = f"{year}-01-01"
+        date_to      = f"{year}-12-31"
         period_label = f"за {year} год"
     elif payload.period == "quarter":
         year    = payload.year    or now_dt.year
@@ -2500,40 +2577,47 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         date_from, date_to = _quarter_dates(year, quarter)
         period_label = f"за Q{quarter} {year}"
     else:
-        date_from = payload.date_from or ""
-        date_to   = payload.date_to   or ""
+        date_from    = payload.date_from or ""
+        date_to      = payload.date_to   or ""
         period_label = f"с {_fmt_date(date_from)} по {_fmt_date(date_to)}"
 
     cid = payload.counterparty_id
+
+    def _client_side(b: float) -> str:
+        if b > 0.005:  return "them"
+        if b < -0.005: return "us"
+        return "none"
+
+    def _carrier_side(b: float) -> str:
+        if b > 0.005:  return "us"
+        if b < -0.005: return "them"
+        return "none"
 
     if payload.type == "client":
         cp_doc = await db.clients.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
         if not cp_doc:
             raise HTTPException(404, "Клиент не найден")
-        cp_name = cp_doc.get("name", "")
+        cp_name = payload.counterparty_name or cp_doc.get("name", "")
 
-        # Opening balance: all before date_from
         prior_orders = await db.orders.find(
             {"client_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
              "unload_date": {"$lt": date_from}},
-            {"_id": 0, "client_rate": 1}
+            {"_id": 0, "client_rate": 1},
         ).to_list(10000)
-        prior_payments = await db.payments_in.find(
+        prior_pmts = await db.payments_in.find(
             {"client_id": cid, "date": {"$lt": date_from}}, {"_id": 0, "amount": 1}
         ).to_list(10000)
-        prior_right = sum(o.get("client_rate", 0) for o in prior_orders)
-        prior_left  = sum(p.get("amount", 0) for p in prior_payments)
-        opening_balance = prior_right - prior_left
+        opening_balance = sum(o.get("client_rate", 0) for o in prior_orders) - \
+                          sum(p.get("amount", 0) for p in prior_pmts)
 
-        # Period data
         period_orders = await db.orders.find(
             {"client_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
              "unload_date": {"$gte": date_from, "$lte": date_to}},
-            {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1}
+            {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1},
         ).sort("unload_date", 1).to_list(10000)
-        period_payments = await db.payments_in.find(
+        period_pmts = await db.payments_in.find(
             {"client_id": cid, "date": {"$gte": date_from, "$lte": date_to}},
-            {"_id": 0, "pp_number": 1, "date": 1, "amount": 1}
+            {"_id": 0, "pp_number": 1, "date": 1, "amount": 1},
         ).sort("date", 1).to_list(10000)
 
         right_rows = [
@@ -2546,41 +2630,36 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             {"date": _fmt_date(p.get("date", "")),
              "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(p.get('date',''))}",
              "amount": p.get("amount", 0)}
-            for p in period_payments
+            for p in period_pmts
         ]
-
-        def _client_side(balance: float) -> str:
-            if balance > 0.005:  return "them"
-            if balance < -0.005: return "us"
-            return "none"
         ob_side = _client_side(opening_balance)
+        _side   = _client_side
 
     else:  # carrier
         cp_doc = await db.carriers.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
         if not cp_doc:
             raise HTTPException(404, "Перевозчик не найден")
-        cp_name = cp_doc.get("company_name", "")
+        cp_name = payload.counterparty_name or cp_doc.get("company_name", "")
 
         prior_orders = await db.orders.find(
             {"carrier_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
              "unload_date": {"$lt": date_from}},
-            {"_id": 0, "carrier_rate": 1}
+            {"_id": 0, "carrier_rate": 1},
         ).to_list(10000)
-        prior_payments = await db.payments_out.find(
+        prior_pmts = await db.payments_out.find(
             {"carrier_id": cid, "date": {"$lt": date_from}}, {"_id": 0, "amount": 1}
         ).to_list(10000)
-        prior_right = sum(o.get("carrier_rate", 0) for o in prior_orders)
-        prior_left  = sum(p.get("amount", 0) for p in prior_payments)
-        opening_balance = prior_right - prior_left
+        opening_balance = sum(o.get("carrier_rate", 0) for o in prior_orders) - \
+                          sum(p.get("amount", 0) for p in prior_pmts)
 
         period_orders = await db.orders.find(
             {"carrier_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
              "unload_date": {"$gte": date_from, "$lte": date_to}},
-            {"_id": 0, "order_number": 1, "unload_date": 1, "carrier_rate": 1}
+            {"_id": 0, "order_number": 1, "unload_date": 1, "carrier_rate": 1},
         ).sort("unload_date", 1).to_list(10000)
-        period_payments = await db.payments_out.find(
+        period_pmts = await db.payments_out.find(
             {"carrier_id": cid, "date": {"$gte": date_from, "$lte": date_to}},
-            {"_id": 0, "pp_number": 1, "date": 1, "amount": 1}
+            {"_id": 0, "pp_number": 1, "date": 1, "amount": 1},
         ).sort("date", 1).to_list(10000)
 
         right_rows = [
@@ -2593,49 +2672,38 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             {"date": _fmt_date(p.get("date", "")),
              "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(p.get('date',''))}",
              "amount": p.get("amount", 0)}
-            for p in period_payments
+            for p in period_pmts
         ]
-
-        def _carrier_side(balance: float) -> str:
-            if balance > 0.005:  return "us"
-            if balance < -0.005: return "them"
-            return "none"
         ob_side = _carrier_side(opening_balance)
+        _side   = _carrier_side
 
-    left_total  = sum(r["amount"] for r in left_rows)
-    right_total = sum(r["amount"] for r in right_rows)
+    left_total      = sum(r["amount"] for r in left_rows)
+    right_total     = sum(r["amount"] for r in right_rows)
     closing_balance = opening_balance + right_total - left_total
-
-    if payload.type == "client":
-        cb_side = _client_side(closing_balance)
-    else:
-        cb_side = _carrier_side(closing_balance)
+    cb_side         = _side(closing_balance)
 
     result = {
-        "counterparty_name": cp_name,
-        "period_label": period_label,
-        "date_from": _fmt_date(date_from),
-        "date_to":   _fmt_date(date_to),
-        "opening_balance": round(opening_balance, 2),
-        "opening_balance_side": ob_side,
-        "left_rows": left_rows,
-        "right_rows": right_rows,
-        "left_total":  round(left_total, 2),
-        "right_total": round(right_total, 2),
-        "closing_balance": round(closing_balance, 2),
-        "closing_balance_side": cb_side,
+        "counterparty_name":     cp_name,
+        "period_label":          period_label,
+        "date_from":             _fmt_date(date_from),
+        "date_to":               _fmt_date(date_to),
+        "opening_balance":       round(opening_balance, 2),
+        "opening_balance_side":  ob_side,
+        "left_rows":             left_rows,
+        "right_rows":            right_rows,
+        "left_total":            round(left_total, 2),
+        "right_total":           round(right_total, 2),
+        "closing_balance":       round(closing_balance, 2),
+        "closing_balance_side":  cb_side,
     }
 
-    # Generate Google Doc
     doc_url = None
-    if _docs_get_generator is not None:
-        try:
-            token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
-            if token_doc:
-                doc_data = {**result, "_type": payload.type}
-                doc_url = await asyncio.to_thread(_create_reconciliation_doc_sync, doc_data, token_doc)
-        except Exception as _de:
-            logging.getLogger(__name__).error(f"reconciliation doc failed: {_de}", exc_info=True)
+    try:
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if token_doc:
+            doc_url = await asyncio.to_thread(_create_reconciliation_doc_sync, result, token_doc)
+    except Exception as _de:
+        logging.getLogger(__name__).error(f"reconciliation doc failed: {_de}", exc_info=True)
 
     return {**result, "doc_url": doc_url}
 

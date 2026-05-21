@@ -264,9 +264,13 @@ function FinanceInner() {
     if (!recCounterpartyId) { Alert.alert('Выберите контрагента'); return; }
     setRecGenerating(true);
     try {
+      const counterpartyName = recType === 'client'
+        ? (clients.find((c: any) => c.id === recCounterpartyId)?.name ?? '')
+        : (carriers.find((c: any) => c.id === recCounterpartyId)?.company_name ?? '');
       const body: any = {
         type: recType,
         counterparty_id: recCounterpartyId,
+        counterparty_name: counterpartyName,
         period: recPeriod,
       };
       if (recPeriod === 'year')    { body.year = recYear; }
