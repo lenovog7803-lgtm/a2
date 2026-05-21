@@ -2637,18 +2637,10 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             {"_id": 0, "client_rate": 1},
         ).to_list(10000)
 
-        # ObjectId-aware client_id query (handles string UUID, str(oid), and ObjectId)
-        try:
-            oid = ObjectId(cid)
-            id_query = {"$in": [cid, str(oid), oid]}
-        except Exception:
-            id_query = cid
-
-        sample = await db.payments_in.find().to_list(3)
-        print(f"[rec_debug] Пример payments_in: {[{k: v for k, v in p.items() if k != '_id'} for p in sample]}")
-
-        all_client_pmts = await db.payments_in.find({"client_id": id_query}).sort("date", 1).to_list(1000)
-        print(f"[rec_debug] Найдено поступлений клиента: {len(all_client_pmts)}, client_id={cid!r}")
+        all_client_pmts = await db.payments_in.find(
+            {"$or": [{"client_id": cid}, {"client_name": cp_name}]}
+        ).sort("date", 1).to_list(1000)
+        print(f"[rec_debug] Найдено поступлений: {len(all_client_pmts)} (client_id={cid!r} OR client_name={cp_name!r})")
 
         prior_pmts_amt = sum(p.get("amount", 0) for p in all_client_pmts if _norm_date(p.get("date", "")) < date_from)
         opening_balance = sum(o.get("client_rate", 0) for o in prior_orders) - prior_pmts_amt
@@ -2689,14 +2681,10 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             {"_id": 0, "carrier_rate": 1},
         ).to_list(10000)
 
-        try:
-            oid = ObjectId(cid)
-            id_query = {"$in": [cid, str(oid), oid]}
-        except Exception:
-            id_query = cid
-
-        all_carrier_pmts = await db.payments_out.find({"carrier_id": id_query}).sort("date", 1).to_list(1000)
-        print(f"[rec_debug] Найдено списаний перевозчика: {len(all_carrier_pmts)}, carrier_id={cid!r}")
+        all_carrier_pmts = await db.payments_out.find(
+            {"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}]}
+        ).sort("date", 1).to_list(1000)
+        print(f"[rec_debug] Найдено списаний: {len(all_carrier_pmts)} (carrier_id={cid!r} OR carrier_name={cp_name!r})")
 
         prior_pmts_amt = sum(p.get("amount", 0) for p in all_carrier_pmts if _norm_date(p.get("date", "")) < date_from)
         opening_balance = sum(o.get("carrier_rate", 0) for o in prior_orders) - prior_pmts_amt
