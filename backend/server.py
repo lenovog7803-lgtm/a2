@@ -1,10 +1,15 @@
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+logger.info("Starting server...")
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, asyncio, hashlib, secrets
+import os, uuid, asyncio, hashlib, secrets
 import jwt as _jwt
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -103,11 +108,6 @@ def _sync_user_creds_provider():
     return loop.run_until_complete(_get_oauth_token_doc())
 
 
-if _docs_get_generator is not None:
-    try:
-        _docs_get_generator().set_user_credentials_provider(_sync_user_creds_provider)
-    except Exception as _e:
-        logging.getLogger(__name__).warning(f"docs_gen user creds wiring failed: {_e}")
 
 
 async def _bg_sheets_sync():
@@ -268,6 +268,11 @@ async def _trash_purge_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if _docs_get_generator is not None:
+        try:
+            _docs_get_generator().set_user_credentials_provider(_sync_user_creds_provider)
+        except Exception as _e:
+            logging.getLogger(__name__).warning(f"docs_gen user creds wiring failed: {_e}")
     asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_trash_purge_loop())
@@ -2859,23 +2864,6 @@ async def root():
     return {"message": "Logistics CRM API"}
 
 
-@app.post("/api/admin/restore")
-async def restore_admin():
-    await db.users.update_one(
-        {"login": "admin"},
-        {"$set": {"role": "admin", "permissions": {"can_view_finance": True, "can_view_all_orders": True, "can_view_all_clients": True, "can_view_all_leads": True, "can_create_orders": True}}}
-    )
-    return {"ok": True}
-
-
-app.include_router(api_router)
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-
-
-
 @api_router.get("/ping")
 async def ping():
     return {"ok": True}
@@ -2898,3 +2886,7 @@ async def admin_restore():
         raise HTTPException(404, "Пользователь admin не найден")
     user = await db.users.find_one({"login": "admin"}, {"_id": 0, "password_hash": 0})
     return {"ok": True, "user": user}
+
+
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.include_router(api_router)
