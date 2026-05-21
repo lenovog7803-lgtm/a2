@@ -2,12 +2,12 @@ import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView,
-  Platform, RefreshControl,
+  Platform, RefreshControl, Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import { Plus, X } from 'lucide-react-native';
+import { Plus, X, Trash2 } from 'lucide-react-native';
 import { theme, formatMoney } from '../../src/theme';
 import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
@@ -20,7 +20,7 @@ const QUARTERS = [
   { name: 'Q4', months: [10, 11, 12], label: 'Окт–Дек' },
 ];
 
-type TabType = 'orders' | 'accounting';
+type TabType = 'orders' | 'accounting' | 'payments_in' | 'payments_out' | 'reconciliation';
 
 const currentMonth = () => {
   const d = new Date();
@@ -68,16 +68,62 @@ function FinanceInner() {
   const [txDesc, setTxDesc] = useState('');
   const [txDate, setTxDate] = useState(todayISO);
 
+  // Payments In state
+  const [paymentsIn, setPaymentsIn] = useState<any[]>([]);
+  const [piModalVisible, setPiModalVisible] = useState(false);
+  const [piPpNumber, setPiPpNumber] = useState('');
+  const [piDate, setPiDate] = useState(todayISO);
+  const [piAmount, setPiAmount] = useState('');
+  const [piClientId, setPiClientId] = useState('');
+  const [piClientName, setPiClientName] = useState('');
+  const [piNotes, setPiNotes] = useState('');
+  const [piFilterClient, setPiFilterClient] = useState('');
+  const [piFilterMonth, setPiFilterMonth] = useState('');
+
+  // Payments Out state
+  const [paymentsOut, setPaymentsOut] = useState<any[]>([]);
+  const [poModalVisible, setPoModalVisible] = useState(false);
+  const [poPpNumber, setPoPpNumber] = useState('');
+  const [poDate, setPoDate] = useState(todayISO);
+  const [poAmount, setPoAmount] = useState('');
+  const [poCarrierId, setPoCarrierId] = useState('');
+  const [poCarrierName, setPoCarrierName] = useState('');
+  const [poNotes, setPoNotes] = useState('');
+  const [poFilterCarrier, setPoFilterCarrier] = useState('');
+  const [poFilterMonth, setPoFilterMonth] = useState('');
+
+  // Clients / Carriers for pickers
+  const [clients, setClients] = useState<any[]>([]);
+  const [carriers, setCarriers] = useState<any[]>([]);
+
+  // Reconciliation state
+  const [recType, setRecType] = useState<'client' | 'carrier'>('client');
+  const [recCounterpartyId, setRecCounterpartyId] = useState('');
+  const [recPeriod, setRecPeriod] = useState<'year' | 'quarter' | 'custom'>('year');
+  const [recYear, setRecYear] = useState(new Date().getFullYear());
+  const [recQuarter, setRecQuarter] = useState(1);
+  const [recDateFrom, setRecDateFrom] = useState('');
+  const [recDateTo, setRecDateTo] = useState('');
+  const [recGenerating, setRecGenerating] = useState(false);
+
   const load = useCallback(async () => {
     try {
-      const [allOrders, ws, txs] = await Promise.all([
+      const [allOrders, ws, txs, pin, pout, cls, crs] = await Promise.all([
         api.orders.list(),
         api.finance.withdrawals.list().catch(() => []),
         api.finance.transactions.list().catch(() => []),
+        api.paymentsIn.list().catch(() => []),
+        api.paymentsOut.list().catch(() => []),
+        api.clients.list().catch(() => []),
+        api.carriers.list().catch(() => []),
       ]);
       setOrders(allOrders);
       setWithdrawals(ws);
       setTransactions(txs);
+      setPaymentsIn(pin);
+      setPaymentsOut(pout);
+      setClients(cls);
+      setCarriers(crs);
 
       const months = Array.from(new Set(
         (allOrders as any[]).map(o => {
@@ -160,6 +206,91 @@ function FinanceInner() {
         setTransactions(prev => prev.filter(t => t.id !== id));
       }},
     ]);
+  };
+
+  const savePaymentIn = async () => {
+    const amount = parseFloat(piAmount.replace(/\s/g, '').replace(',', '.'));
+    if (!piPpNumber.trim()) { Alert.alert('Введите номер ПП'); return; }
+    if (!amount || isNaN(amount)) { Alert.alert('Введите сумму'); return; }
+    if (!piClientId) { Alert.alert('Выберите клиента'); return; }
+    try {
+      const entry = await api.paymentsIn.create({
+        pp_number: piPpNumber.trim(), date: piDate, amount,
+        client_id: piClientId, client_name: piClientName, notes: piNotes,
+      });
+      setPaymentsIn(prev => [entry, ...prev]);
+      setPiModalVisible(false);
+      setPiPpNumber(''); setPiAmount(''); setPiNotes(''); setPiClientId(''); setPiClientName(''); setPiDate(todayISO());
+    } catch (e: any) { Alert.alert('Ошибка', e.message); }
+  };
+
+  const deletePaymentIn = (id: string) => {
+    Alert.alert('Удалить поступление?', '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        await api.paymentsIn.remove(id);
+        setPaymentsIn(prev => prev.filter(p => p.id !== id));
+      }},
+    ]);
+  };
+
+  const savePaymentOut = async () => {
+    const amount = parseFloat(poAmount.replace(/\s/g, '').replace(',', '.'));
+    if (!poPpNumber.trim()) { Alert.alert('Введите номер ПП'); return; }
+    if (!amount || isNaN(amount)) { Alert.alert('Введите сумму'); return; }
+    if (!poCarrierId) { Alert.alert('Выберите перевозчика'); return; }
+    try {
+      const entry = await api.paymentsOut.create({
+        pp_number: poPpNumber.trim(), date: poDate, amount,
+        carrier_id: poCarrierId, carrier_name: poCarrierName, notes: poNotes,
+      });
+      setPaymentsOut(prev => [entry, ...prev]);
+      setPoModalVisible(false);
+      setPoPpNumber(''); setPoAmount(''); setPoNotes(''); setPoCarrierId(''); setPoCarrierName(''); setPoDate(todayISO());
+    } catch (e: any) { Alert.alert('Ошибка', e.message); }
+  };
+
+  const deletePaymentOut = (id: string) => {
+    Alert.alert('Удалить списание?', '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        await api.paymentsOut.remove(id);
+        setPaymentsOut(prev => prev.filter(p => p.id !== id));
+      }},
+    ]);
+  };
+
+  const generateReconciliation = async () => {
+    if (!recCounterpartyId) { Alert.alert('Выберите контрагента'); return; }
+    setRecGenerating(true);
+    try {
+      const body: any = {
+        type: recType,
+        counterparty_id: recCounterpartyId,
+        period: recPeriod,
+      };
+      if (recPeriod === 'year')    { body.year = recYear; }
+      if (recPeriod === 'quarter') { body.year = recYear; body.quarter = recQuarter; }
+      if (recPeriod === 'custom')  { body.date_from = recDateFrom; body.date_to = recDateTo; }
+
+      const result = await api.reconciliation.generate(body);
+      const url = result.doc_url;
+      if (url) {
+        Alert.alert('Акт сверки создан', `Открыть документ?`, [
+          { text: 'Отмена', style: 'cancel' },
+          { text: 'Открыть', onPress: () => Linking.openURL(url) },
+        ]);
+      } else {
+        const cb = result.closing_balance ?? 0;
+        const cbSide = result.closing_balance_side ?? 'none';
+        const sideLabel = cbSide === 'none' ? 'без задолженности' : cbSide === 'them' ? 'долг контрагента' : 'наш долг';
+        Alert.alert('Акт сформирован', `Сальдо: ${cb.toLocaleString()} (${sideLabel})\n\nДокумент Google не создан — проверьте OAuth.`);
+      }
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message);
+    } finally {
+      setRecGenerating(false);
+    }
   };
 
   const cm = currentMonth();
@@ -282,22 +413,31 @@ function FinanceInner() {
         <Text style={styles.title}>Финансы</Text>
 
         {/* Tab switcher */}
-        <View style={styles.tabRow}>
-          <TouchableOpacity style={[styles.tabBtn, tab === 'orders' && styles.tabBtnActive]} onPress={() => setTab('orders')} activeOpacity={0.7}>
-            <Text style={[styles.tabBtnTxt, tab === 'orders' && styles.tabBtnTxtActive]}>По заявкам</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.tabBtn, tab === 'accounting' && styles.tabBtnActive]} onPress={() => setTab('accounting')} activeOpacity={0.7}>
-            <Text style={[styles.tabBtnTxt, tab === 'accounting' && styles.tabBtnTxtActive]}>Бухгалтерия</Text>
-          </TouchableOpacity>
-        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+          <View style={styles.tabRow}>
+            {([
+              { id: 'orders',       label: 'По заявкам' },
+              { id: 'accounting',   label: 'Бухгалтерия' },
+              { id: 'payments_in',  label: 'Поступления' },
+              { id: 'payments_out', label: 'Списания' },
+              { id: 'reconciliation', label: 'Акт сверки' },
+            ] as { id: TabType; label: string }[]).map(t => (
+              <TouchableOpacity key={t.id} style={[styles.tabBtn, tab === t.id && styles.tabBtnActive]} onPress={() => setTab(t.id)} activeOpacity={0.7}>
+                <Text style={[styles.tabBtnTxt, tab === t.id && styles.tabBtnTxtActive]}>{t.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
 
-        <Picker
-          label="Период"
-          value={period}
-          items={periodItems}
-          onSelect={(it: any) => setPeriod(it.id)}
-          searchable={false}
-        />
+        {tab === 'orders' || tab === 'accounting' ? (
+          <Picker
+            label="Период"
+            value={period}
+            items={periodItems}
+            onSelect={(it: any) => setPeriod(it.id)}
+            searchable={false}
+          />
+        ) : null}
 
         {tab === 'orders' ? (
           <>
@@ -386,7 +526,7 @@ function FinanceInner() {
 
             <PlanChart orders={orders} allPlans={allPlans} months={[...monthsInOrders].reverse()} />
           </>
-        ) : (
+        ) : tab === 'accounting' ? (
           <>
             {/* Accounting period switcher */}
             <View style={styles.accSegRow}>
@@ -483,7 +623,209 @@ function FinanceInner() {
               )}
             </View>
           </>
-        )}
+        ) : tab === 'payments_in' ? (
+          <>
+            {/* Payments In tab */}
+            <View style={styles.card}>
+              <Text style={styles.sLabel}>ФИЛЬТР</Text>
+              <Picker
+                label="Клиент"
+                value={piFilterClient}
+                items={[{ id: '', label: 'Все клиенты' }, ...clients.map((c: any) => ({ id: c.id, label: c.name }))]}
+                onSelect={(it: any) => setPiFilterClient(it.id)}
+                searchable
+              />
+              <Picker
+                label="Месяц"
+                value={piFilterMonth}
+                items={[{ id: '', label: 'Все периоды' }, ...Array.from(new Set(paymentsIn.map((p: any) => (p.date || '').slice(0, 7)).filter(Boolean))).sort().reverse().map(m => ({ id: m, label: m }))]}
+                onSelect={(it: any) => setPiFilterMonth(it.id)}
+                searchable={false}
+              />
+            </View>
+            <TouchableOpacity onPress={() => setPiModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
+              <Plus size={16} color="#000" strokeWidth={2.5} />
+              <Text style={styles.withdrawBtnTxt}>+ Добавить</Text>
+            </TouchableOpacity>
+            <View style={[styles.card, { marginTop: 12 }]}>
+              {paymentsIn
+                .filter((p: any) => (!piFilterClient || p.client_id === piFilterClient) && (!piFilterMonth || (p.date || '').startsWith(piFilterMonth)))
+                .length === 0 ? (
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 13, textAlign: 'center', paddingVertical: 8 }}>Нет поступлений</Text>
+              ) : paymentsIn
+                .filter((p: any) => (!piFilterClient || p.client_id === piFilterClient) && (!piFilterMonth || (p.date || '').startsWith(piFilterMonth)))
+                .map((p: any, i: number, arr: any[]) => (
+                  <View key={p.id} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.wDate}>{p.date}  ПП {p.pp_number}</Text>
+                      <Text style={styles.wNote}>{p.client_name}</Text>
+                      {!!p.notes && <Text style={[styles.wNote, { color: theme.colors.textTertiary }]}>{p.notes}</Text>}
+                    </View>
+                    <Text style={[styles.wAmount, { color: theme.colors.profit, marginRight: 8 }]}>{formatMoney(p.amount)}</Text>
+                    <TouchableOpacity onPress={() => deletePaymentIn(p.id)}>
+                      <Trash2 size={16} color={theme.colors.loss} strokeWidth={1.6} />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              }
+            </View>
+          </>
+        ) : tab === 'payments_out' ? (
+          <>
+            {/* Payments Out tab */}
+            <View style={styles.card}>
+              <Text style={styles.sLabel}>ФИЛЬТР</Text>
+              <Picker
+                label="Перевозчик"
+                value={poFilterCarrier}
+                items={[{ id: '', label: 'Все перевозчики' }, ...carriers.map((c: any) => ({ id: c.id, label: c.company_name }))]}
+                onSelect={(it: any) => setPoFilterCarrier(it.id)}
+                searchable
+              />
+              <Picker
+                label="Месяц"
+                value={poFilterMonth}
+                items={[{ id: '', label: 'Все периоды' }, ...Array.from(new Set(paymentsOut.map((p: any) => (p.date || '').slice(0, 7)).filter(Boolean))).sort().reverse().map(m => ({ id: m, label: m }))]}
+                onSelect={(it: any) => setPoFilterMonth(it.id)}
+                searchable={false}
+              />
+            </View>
+            <TouchableOpacity onPress={() => setPoModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
+              <Plus size={16} color="#000" strokeWidth={2.5} />
+              <Text style={styles.withdrawBtnTxt}>+ Добавить</Text>
+            </TouchableOpacity>
+            <View style={[styles.card, { marginTop: 12 }]}>
+              {paymentsOut
+                .filter((p: any) => (!poFilterCarrier || p.carrier_id === poFilterCarrier) && (!poFilterMonth || (p.date || '').startsWith(poFilterMonth)))
+                .length === 0 ? (
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 13, textAlign: 'center', paddingVertical: 8 }}>Нет списаний</Text>
+              ) : paymentsOut
+                .filter((p: any) => (!poFilterCarrier || p.carrier_id === poFilterCarrier) && (!poFilterMonth || (p.date || '').startsWith(poFilterMonth)))
+                .map((p: any, i: number, arr: any[]) => (
+                  <View key={p.id} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.wDate}>{p.date}  ПП {p.pp_number}</Text>
+                      <Text style={styles.wNote}>{p.carrier_name}</Text>
+                      {!!p.notes && <Text style={[styles.wNote, { color: theme.colors.textTertiary }]}>{p.notes}</Text>}
+                    </View>
+                    <Text style={[styles.wAmount, { color: theme.colors.loss, marginRight: 8 }]}>{formatMoney(p.amount)}</Text>
+                    <TouchableOpacity onPress={() => deletePaymentOut(p.id)}>
+                      <Trash2 size={16} color={theme.colors.loss} strokeWidth={1.6} />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              }
+            </View>
+          </>
+        ) : tab === 'reconciliation' ? (
+          <>
+            {/* Reconciliation tab */}
+            <View style={styles.card}>
+              <Text style={styles.sLabel}>ТИП КОНТРАГЕНТА</Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+                <TouchableOpacity
+                  style={[styles.typeBtn, recType === 'client' && { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent }]}
+                  onPress={() => { setRecType('client'); setRecCounterpartyId(''); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.typeBtnTxt, recType === 'client' && { color: theme.colors.accent }]}>С клиентом</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.typeBtn, recType === 'carrier' && { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent }]}
+                  onPress={() => { setRecType('carrier'); setRecCounterpartyId(''); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.typeBtnTxt, recType === 'carrier' && { color: theme.colors.accent }]}>С перевозчиком</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.sLabel}>КОНТРАГЕНТ</Text>
+              <Picker
+                label={recType === 'client' ? 'Клиент' : 'Перевозчик'}
+                value={recCounterpartyId}
+                items={recType === 'client'
+                  ? clients.map((c: any) => ({ id: c.id, label: c.name }))
+                  : carriers.map((c: any) => ({ id: c.id, label: c.company_name }))
+                }
+                onSelect={(it: any) => setRecCounterpartyId(it.id)}
+                searchable
+              />
+
+              <Text style={[styles.sLabel, { marginTop: 14 }]}>ПЕРИОД</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                {(['year', 'quarter', 'custom'] as const).map(p => (
+                  <TouchableOpacity
+                    key={p}
+                    style={[styles.typeBtn, recPeriod === p && { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent }]}
+                    onPress={() => setRecPeriod(p)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.typeBtnTxt, recPeriod === p && { color: theme.colors.accent }]}>
+                      {p === 'year' ? 'Год' : p === 'quarter' ? 'Квартал' : 'Произвольный'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {recPeriod === 'year' && (
+                <Picker
+                  label="Год"
+                  value={String(recYear)}
+                  items={[2024, 2025, 2026].map(y => ({ id: String(y), label: String(y) }))}
+                  onSelect={(it: any) => setRecYear(parseInt(it.id))}
+                  searchable={false}
+                />
+              )}
+
+              {recPeriod === 'quarter' && (
+                <>
+                  <Picker
+                    label="Год"
+                    value={String(recYear)}
+                    items={[2024, 2025, 2026].map(y => ({ id: String(y), label: String(y) }))}
+                    onSelect={(it: any) => setRecYear(parseInt(it.id))}
+                    searchable={false}
+                  />
+                  <Picker
+                    label="Квартал"
+                    value={String(recQuarter)}
+                    items={[1, 2, 3, 4].map(q => ({ id: String(q), label: `Q${q}` }))}
+                    onSelect={(it: any) => setRecQuarter(parseInt(it.id))}
+                    searchable={false}
+                  />
+                </>
+              )}
+
+              {recPeriod === 'custom' && (
+                Platform.OS === 'web' ? (
+                  <>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 4 }}>Дата от</Text>
+                    <input type="date" value={recDateFrom} onChange={e => setRecDateFrom((e.target as any).value)} style={webInputStyle} />
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 4 }}>Дата до</Text>
+                    <input type="date" value={recDateTo} onChange={e => setRecDateTo((e.target as any).value)} style={webInputStyle} />
+                  </>
+                ) : (
+                  <>
+                    <TextInput style={styles.mInput} placeholder="Дата от (ГГГГ-ММ-ДД)" placeholderTextColor={theme.colors.textTertiary} value={recDateFrom} onChangeText={setRecDateFrom} />
+                    <TextInput style={styles.mInput} placeholder="Дата до (ГГГГ-ММ-ДД)" placeholderTextColor={theme.colors.textTertiary} value={recDateTo} onChangeText={setRecDateTo} />
+                  </>
+                )
+              )}
+
+              <TouchableOpacity
+                onPress={generateReconciliation}
+                style={[styles.mSaveBtn, recGenerating && { opacity: 0.6 }]}
+                activeOpacity={0.8}
+                disabled={recGenerating}
+              >
+                {recGenerating
+                  ? <ActivityIndicator color="#000" />
+                  : <Text style={styles.mSaveTxt}>Сгенерировать акт</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : null}
       </ScrollView>
 
       {/* Withdrawal modal */}
@@ -511,6 +853,86 @@ function FinanceInner() {
               </>
             )}
             <TouchableOpacity onPress={saveWithdrawal} style={styles.mSaveBtn} activeOpacity={0.8}>
+              <Text style={styles.mSaveTxt}>Сохранить</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Payment In modal */}
+      <Modal visible={piModalVisible} transparent animationType="slide" onRequestClose={() => setPiModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setPiModalVisible(false)} />
+          <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Добавить поступление</Text>
+              <TouchableOpacity onPress={() => setPiModalVisible(false)}>
+                <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+              </TouchableOpacity>
+            </View>
+            <Picker
+              label="Клиент"
+              value={piClientId}
+              items={clients.map((c: any) => ({ id: c.id, label: c.name }))}
+              onSelect={(it: any) => { setPiClientId(it.id); setPiClientName(it.label); }}
+              searchable
+            />
+            {Platform.OS === 'web' ? (
+              <>
+                <input type="text" placeholder="№ ПП" value={piPpNumber} onChange={e => setPiPpNumber((e.target as any).value)} style={webInputStyle} />
+                <input type="date" value={piDate} onChange={e => setPiDate((e.target as any).value)} style={webInputStyle} />
+                <input type="number" placeholder="Сумма" value={piAmount} onChange={e => setPiAmount((e.target as any).value)} style={webInputStyle} />
+                <input type="text" placeholder="Заметка (необязательно)" value={piNotes} onChange={e => setPiNotes((e.target as any).value)} style={webInputStyle} />
+              </>
+            ) : (
+              <>
+                <TextInput style={styles.mInput} placeholder="№ ПП" placeholderTextColor={theme.colors.textTertiary} value={piPpNumber} onChangeText={setPiPpNumber} />
+                <TextInput style={styles.mInput} placeholder="Дата (ГГГГ-ММ-ДД)" placeholderTextColor={theme.colors.textTertiary} value={piDate} onChangeText={setPiDate} />
+                <TextInput style={styles.mInput} placeholder="Сумма" placeholderTextColor={theme.colors.textTertiary} keyboardType="numeric" value={piAmount} onChangeText={setPiAmount} />
+                <TextInput style={styles.mInput} placeholder="Заметка (необязательно)" placeholderTextColor={theme.colors.textTertiary} value={piNotes} onChangeText={setPiNotes} />
+              </>
+            )}
+            <TouchableOpacity onPress={savePaymentIn} style={styles.mSaveBtn} activeOpacity={0.8}>
+              <Text style={styles.mSaveTxt}>Сохранить</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Payment Out modal */}
+      <Modal visible={poModalVisible} transparent animationType="slide" onRequestClose={() => setPoModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setPoModalVisible(false)} />
+          <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Добавить списание</Text>
+              <TouchableOpacity onPress={() => setPoModalVisible(false)}>
+                <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
+              </TouchableOpacity>
+            </View>
+            <Picker
+              label="Перевозчик"
+              value={poCarrierId}
+              items={carriers.map((c: any) => ({ id: c.id, label: c.company_name }))}
+              onSelect={(it: any) => { setPoCarrierId(it.id); setPoCarrierName(it.label); }}
+              searchable
+            />
+            {Platform.OS === 'web' ? (
+              <>
+                <input type="text" placeholder="№ ПП" value={poPpNumber} onChange={e => setPoPpNumber((e.target as any).value)} style={webInputStyle} />
+                <input type="date" value={poDate} onChange={e => setPoDate((e.target as any).value)} style={webInputStyle} />
+                <input type="number" placeholder="Сумма" value={poAmount} onChange={e => setPoAmount((e.target as any).value)} style={webInputStyle} />
+                <input type="text" placeholder="Заметка (необязательно)" value={poNotes} onChange={e => setPoNotes((e.target as any).value)} style={webInputStyle} />
+              </>
+            ) : (
+              <>
+                <TextInput style={styles.mInput} placeholder="№ ПП" placeholderTextColor={theme.colors.textTertiary} value={poPpNumber} onChangeText={setPoPpNumber} />
+                <TextInput style={styles.mInput} placeholder="Дата (ГГГГ-ММ-ДД)" placeholderTextColor={theme.colors.textTertiary} value={poDate} onChangeText={setPoDate} />
+                <TextInput style={styles.mInput} placeholder="Сумма" placeholderTextColor={theme.colors.textTertiary} keyboardType="numeric" value={poAmount} onChangeText={setPoAmount} />
+                <TextInput style={styles.mInput} placeholder="Заметка (необязательно)" placeholderTextColor={theme.colors.textTertiary} value={poNotes} onChangeText={setPoNotes} />
+              </>
+            )}
+            <TouchableOpacity onPress={savePaymentOut} style={styles.mSaveBtn} activeOpacity={0.8}>
               <Text style={styles.mSaveTxt}>Сохранить</Text>
             </TouchableOpacity>
           </View>
@@ -708,9 +1130,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: theme.colors.surface,
     borderWidth: 1, borderColor: theme.colors.border,
-    borderRadius: 12, padding: 4, marginBottom: 14, gap: 4,
+    borderRadius: 12, padding: 4, gap: 4,
   },
-  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: 'center' },
+  tabBtn: { paddingVertical: 9, paddingHorizontal: 14, borderRadius: 9, alignItems: 'center' },
   tabBtnActive: { backgroundColor: theme.colors.accent },
   tabBtnTxt: { fontSize: 13, fontWeight: '600', color: theme.colors.textTertiary },
   tabBtnTxtActive: { color: '#000' },

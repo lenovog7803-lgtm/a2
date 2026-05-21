@@ -128,6 +128,33 @@ export const api = {
       delete: (id: string) => req(`/finance/transactions/${id}`, { method: 'DELETE' }),
     },
   },
+  paymentsIn: {
+    list: (filters?: { client_id?: string; date?: string }) => {
+      const p = new URLSearchParams();
+      if (filters?.client_id) p.append('client_id', filters.client_id);
+      if (filters?.date) p.append('date', filters.date);
+      const qs = p.toString();
+      return req(`/payments/in${qs ? '?' + qs : ''}`);
+    },
+    create: (data: any) => req('/payments/in', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => req(`/payments/in/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id: string) => req(`/payments/in/${id}`, { method: 'DELETE' }),
+  },
+  paymentsOut: {
+    list: (filters?: { carrier_id?: string; date?: string }) => {
+      const p = new URLSearchParams();
+      if (filters?.carrier_id) p.append('carrier_id', filters.carrier_id);
+      if (filters?.date) p.append('date', filters.date);
+      const qs = p.toString();
+      return req(`/payments/out${qs ? '?' + qs : ''}`);
+    },
+    create: (data: any) => req('/payments/out', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => req(`/payments/out/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id: string) => req(`/payments/out/${id}`, { method: 'DELETE' }),
+  },
+  reconciliation: {
+    generate: (data: any) => req('/reconciliation/generate', { method: 'POST', body: JSON.stringify(data) }),
+  },
   trash: {
     list: () => req('/trash'),
     restore: (collection: string, id: string) => req(`/trash/restore/${collection}/${id}`, { method: 'POST' }),

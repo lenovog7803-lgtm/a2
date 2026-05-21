@@ -2222,6 +2222,424 @@ async def delete_finance_transaction(tid: str):
     return {"ok": True}
 
 
+# ====== Payments In (поступления от клиентов) ======
+class PaymentIn(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    pp_number: str
+    date: str
+    amount: float
+    client_id: Optional[str] = ""
+    client_name: Optional[str] = ""
+    notes: Optional[str] = ""
+    created_at: str = Field(default_factory=now_iso)
+
+
+class PaymentInPayload(BaseModel):
+    pp_number: str
+    date: str
+    amount: float
+    client_id: Optional[str] = ""
+    client_name: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+@api_router.get("/payments/in", response_model=List[PaymentIn])
+async def list_payments_in(client_id: Optional[str] = None, date: Optional[str] = None):
+    q: dict = {}
+    if client_id:
+        q["client_id"] = client_id
+    if date:
+        q["date"] = {"$regex": f"^{date}"}
+    docs = await db.payments_in.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
+    return [PaymentIn(**d) for d in docs]
+
+
+@api_router.post("/payments/in", response_model=PaymentIn)
+async def create_payment_in(payload: PaymentInPayload):
+    obj = PaymentIn(**payload.dict())
+    await db.payments_in.insert_one(obj.dict())
+    return obj
+
+
+@api_router.put("/payments/in/{pid}", response_model=PaymentIn)
+async def update_payment_in(pid: str, payload: PaymentInPayload):
+    await db.payments_in.update_one({"id": pid}, {"$set": payload.dict()})
+    doc = await db.payments_in.find_one({"id": pid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    return PaymentIn(**doc)
+
+
+@api_router.delete("/payments/in/{pid}")
+async def delete_payment_in(pid: str):
+    await db.payments_in.delete_one({"id": pid})
+    return {"ok": True}
+
+
+# ====== Payments Out (списания перевозчикам) ======
+class PaymentOut(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    pp_number: str
+    date: str
+    amount: float
+    carrier_id: Optional[str] = ""
+    carrier_name: Optional[str] = ""
+    notes: Optional[str] = ""
+    created_at: str = Field(default_factory=now_iso)
+
+
+class PaymentOutPayload(BaseModel):
+    pp_number: str
+    date: str
+    amount: float
+    carrier_id: Optional[str] = ""
+    carrier_name: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+@api_router.get("/payments/out", response_model=List[PaymentOut])
+async def list_payments_out(carrier_id: Optional[str] = None, date: Optional[str] = None):
+    q: dict = {}
+    if carrier_id:
+        q["carrier_id"] = carrier_id
+    if date:
+        q["date"] = {"$regex": f"^{date}"}
+    docs = await db.payments_out.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
+    return [PaymentOut(**d) for d in docs]
+
+
+@api_router.post("/payments/out", response_model=PaymentOut)
+async def create_payment_out(payload: PaymentOutPayload):
+    obj = PaymentOut(**payload.dict())
+    await db.payments_out.insert_one(obj.dict())
+    return obj
+
+
+@api_router.put("/payments/out/{pid}", response_model=PaymentOut)
+async def update_payment_out(pid: str, payload: PaymentOutPayload):
+    await db.payments_out.update_one({"id": pid}, {"$set": payload.dict()})
+    doc = await db.payments_out.find_one({"id": pid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    return PaymentOut(**doc)
+
+
+@api_router.delete("/payments/out/{pid}")
+async def delete_payment_out(pid: str):
+    await db.payments_out.delete_one({"id": pid})
+    return {"ok": True}
+
+
+# ====== Reconciliation (акт сверки) ======
+class ReconciliationRequest(BaseModel):
+    type: str  # "client" | "carrier"
+    counterparty_id: str
+    period: str  # "year" | "quarter" | "custom"
+    year: Optional[int] = None
+    quarter: Optional[int] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+
+
+def _quarter_dates(year: int, quarter: int):
+    q_starts = {1: "01-01", 2: "04-01", 3: "07-01", 4: "10-01"}
+    q_ends   = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
+    return f"{year}-{q_starts[quarter]}", f"{year}-{q_ends[quarter]}"
+
+
+def _fmt_date(iso: str) -> str:
+    """2026-01-12 → 12.01.2026"""
+    try:
+        parts = iso[:10].split("-")
+        return f"{parts[2]}.{parts[1]}.{parts[0]}"
+    except Exception:
+        return iso
+
+
+def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    creds = Credentials(
+        token=token_doc.get("access_token"),
+        refresh_token=token_doc.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.environ.get("GOOGLE_CLIENT_ID"),
+        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+    )
+    if creds.expired and creds.refresh_token:
+        from google.auth.transport.requests import Request as _GRequest
+        creds.refresh(_GRequest())
+
+    docs_svc  = build("docs",  "v1", credentials=creds)
+    drive_svc = build("drive", "v3", credentials=creds)
+
+    title = f"Акт сверки – {data['counterparty_name']} – {data['period_label']}"
+    doc    = docs_svc.documents().create(body={"title": title}).execute()
+    doc_id = doc["documentId"]
+
+    opening = data.get("opening_balance", 0.0)
+    ob_side = data.get("opening_balance_side", "none")
+    closing = data.get("closing_balance", 0.0)
+    cb_side = data.get("closing_balance_side", "none")
+    left_total  = data.get("left_total", 0.0)
+    right_total = data.get("right_total", 0.0)
+
+    def _side_label(side: str, rec_type: str) -> str:
+        if side == "none":
+            return "Без задолженности"
+        if rec_type == "client":
+            return "Задолженность клиента" if side == "them" else "Наша задолженность"
+        return "Наша задолженность" if side == "us" else "Задолженность перевозчика"
+
+    date_doc = _fmt_date(datetime.now(timezone.utc).isoformat())
+    rec_type = data.get("_type", "client")
+
+    lines = []
+    lines.append("АКТ СВЕРКИ ВЗАИМНЫХ РАСЧЁТОВ\n\n")
+    lines.append(f"г. Минск                                                              {date_doc}\n\n")
+    lines.append(
+        "Мы, нижеподписавшиеся, представители "
+        "Александрович Егор Александрович ИП (УНП 592028329) "
+        f"и {data['counterparty_name']}, "
+        f"составили настоящий акт сверки взаимных расчётов {data['period_label']}.\n\n"
+    )
+    lines.append(f"Период: {data.get('date_from','')} – {data.get('date_to','')}\n\n")
+
+    ob_str = f"{abs(opening):.2f} ({_side_label(ob_side, rec_type)})" if opening else "0,00"
+    lines.append(f"Сальдо на начало периода: {ob_str}\n\n")
+
+    lines.append("─" * 80 + "\n")
+    lines.append(f"{'ПОСТУПЛЕНИЯ / ОПЛАТЫ':<50}{'УСЛУГИ / ЗАЯВКИ':>30}\n")
+    lines.append("─" * 80 + "\n")
+
+    left_rows  = data.get("left_rows", [])
+    right_rows = data.get("right_rows", [])
+    max_rows = max(len(left_rows), len(right_rows))
+    for i in range(max_rows):
+        left  = left_rows[i]  if i < len(left_rows)  else None
+        right = right_rows[i] if i < len(right_rows) else None
+        left_str  = f"{left.get('date','')}  {left.get('pp_number','')}  {left.get('amount',0):.2f}"   if left  else ""
+        right_str = f"{right.get('date','')}  {right.get('doc_number','')}  {right.get('amount',0):.2f}" if right else ""
+        lines.append(f"{left_str:<48}  {right_str}\n")
+
+    lines.append("─" * 80 + "\n")
+    lines.append(f"{'Итого:':<48}  {'Итого:'}\n")
+    lines.append(f"{left_total:<48.2f}  {right_total:.2f}\n\n")
+
+    cb_str = f"{abs(closing):.2f} ({_side_label(cb_side, rec_type)})" if closing else "0,00 (Без задолженности)"
+    lines.append(f"Сальдо на конец периода: {cb_str}\n\n")
+
+    lines.append("\n\nПодписи сторон:\n\n")
+    lines.append("Александрович Е.А. ИП  _____________     ")
+    lines.append(f"{data['counterparty_name']}  _____________\n")
+
+    content = "".join(lines)
+    docs_svc.documents().batchUpdate(
+        documentId=doc_id,
+        body={"requests": [{"insertText": {"location": {"index": 1}, "text": content}}]},
+    ).execute()
+
+    # Move to "Акты сверки" folder
+    folder_id = os.environ.get("RECONCILIATION_FOLDER_ID") or ""
+    if not folder_id:
+        try:
+            res = drive_svc.files().list(
+                q="name='Акты сверки' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+                fields="files(id)",
+            ).execute()
+            existing = res.get("files", [])
+            if existing:
+                folder_id = existing[0]["id"]
+            else:
+                f = drive_svc.files().create(
+                    body={"name": "Акты сверки", "mimeType": "application/vnd.google-apps.folder"},
+                    fields="id",
+                ).execute()
+                folder_id = f.get("id", "")
+            if folder_id:
+                env_path = ROOT_DIR / ".env"
+                try:
+                    env_text = env_path.read_text()
+                    if "RECONCILIATION_FOLDER_ID" not in env_text:
+                        env_path.write_text(env_text.rstrip() + f"\nRECONCILIATION_FOLDER_ID={folder_id}\n")
+                except Exception:
+                    pass
+        except Exception as _fe:
+            logging.getLogger(__name__).warning(f"folder lookup failed: {_fe}")
+
+    if folder_id:
+        try:
+            file_meta = drive_svc.files().get(fileId=doc_id, fields="parents").execute()
+            prev_parents = ",".join(file_meta.get("parents", []))
+            drive_svc.files().update(
+                fileId=doc_id,
+                addParents=folder_id,
+                removeParents=prev_parents,
+                fields="id,parents",
+            ).execute()
+        except Exception as _me:
+            logging.getLogger(__name__).warning(f"move to folder failed: {_me}")
+
+    return f"https://docs.google.com/document/d/{doc_id}/edit"
+
+
+@api_router.post("/reconciliation/generate")
+async def generate_reconciliation(payload: ReconciliationRequest):
+    now_dt = datetime.now(timezone.utc)
+
+    # Resolve date range
+    if payload.period == "year":
+        year = payload.year or now_dt.year
+        date_from = f"{year}-01-01"
+        date_to   = f"{year}-12-31"
+        period_label = f"за {year} год"
+    elif payload.period == "quarter":
+        year    = payload.year    or now_dt.year
+        quarter = payload.quarter or 1
+        date_from, date_to = _quarter_dates(year, quarter)
+        period_label = f"за Q{quarter} {year}"
+    else:
+        date_from = payload.date_from or ""
+        date_to   = payload.date_to   or ""
+        period_label = f"с {_fmt_date(date_from)} по {_fmt_date(date_to)}"
+
+    cid = payload.counterparty_id
+
+    if payload.type == "client":
+        cp_doc = await db.clients.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
+        if not cp_doc:
+            raise HTTPException(404, "Клиент не найден")
+        cp_name = cp_doc.get("name", "")
+
+        # Opening balance: all before date_from
+        prior_orders = await db.orders.find(
+            {"client_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+             "unload_date": {"$lt": date_from}},
+            {"_id": 0, "client_rate": 1}
+        ).to_list(10000)
+        prior_payments = await db.payments_in.find(
+            {"client_id": cid, "date": {"$lt": date_from}}, {"_id": 0, "amount": 1}
+        ).to_list(10000)
+        prior_right = sum(o.get("client_rate", 0) for o in prior_orders)
+        prior_left  = sum(p.get("amount", 0) for p in prior_payments)
+        opening_balance = prior_right - prior_left
+
+        # Period data
+        period_orders = await db.orders.find(
+            {"client_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+             "unload_date": {"$gte": date_from, "$lte": date_to}},
+            {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1}
+        ).sort("unload_date", 1).to_list(10000)
+        period_payments = await db.payments_in.find(
+            {"client_id": cid, "date": {"$gte": date_from, "$lte": date_to}},
+            {"_id": 0, "pp_number": 1, "date": 1, "amount": 1}
+        ).sort("date", 1).to_list(10000)
+
+        right_rows = [
+            {"date": _fmt_date(o.get("unload_date", "")),
+             "doc_number": f"Акт {o.get('order_number','')} от {_fmt_date(o.get('unload_date',''))}",
+             "amount": o.get("client_rate", 0)}
+            for o in period_orders
+        ]
+        left_rows = [
+            {"date": _fmt_date(p.get("date", "")),
+             "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(p.get('date',''))}",
+             "amount": p.get("amount", 0)}
+            for p in period_payments
+        ]
+
+        def _client_side(balance: float) -> str:
+            if balance > 0.005:  return "them"
+            if balance < -0.005: return "us"
+            return "none"
+        ob_side = _client_side(opening_balance)
+
+    else:  # carrier
+        cp_doc = await db.carriers.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
+        if not cp_doc:
+            raise HTTPException(404, "Перевозчик не найден")
+        cp_name = cp_doc.get("company_name", "")
+
+        prior_orders = await db.orders.find(
+            {"carrier_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+             "unload_date": {"$lt": date_from}},
+            {"_id": 0, "carrier_rate": 1}
+        ).to_list(10000)
+        prior_payments = await db.payments_out.find(
+            {"carrier_id": cid, "date": {"$lt": date_from}}, {"_id": 0, "amount": 1}
+        ).to_list(10000)
+        prior_right = sum(o.get("carrier_rate", 0) for o in prior_orders)
+        prior_left  = sum(p.get("amount", 0) for p in prior_payments)
+        opening_balance = prior_right - prior_left
+
+        period_orders = await db.orders.find(
+            {"carrier_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+             "unload_date": {"$gte": date_from, "$lte": date_to}},
+            {"_id": 0, "order_number": 1, "unload_date": 1, "carrier_rate": 1}
+        ).sort("unload_date", 1).to_list(10000)
+        period_payments = await db.payments_out.find(
+            {"carrier_id": cid, "date": {"$gte": date_from, "$lte": date_to}},
+            {"_id": 0, "pp_number": 1, "date": 1, "amount": 1}
+        ).sort("date", 1).to_list(10000)
+
+        right_rows = [
+            {"date": _fmt_date(o.get("unload_date", "")),
+             "doc_number": f"Акт {o.get('order_number','')} от {_fmt_date(o.get('unload_date',''))}",
+             "amount": o.get("carrier_rate", 0)}
+            for o in period_orders
+        ]
+        left_rows = [
+            {"date": _fmt_date(p.get("date", "")),
+             "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(p.get('date',''))}",
+             "amount": p.get("amount", 0)}
+            for p in period_payments
+        ]
+
+        def _carrier_side(balance: float) -> str:
+            if balance > 0.005:  return "us"
+            if balance < -0.005: return "them"
+            return "none"
+        ob_side = _carrier_side(opening_balance)
+
+    left_total  = sum(r["amount"] for r in left_rows)
+    right_total = sum(r["amount"] for r in right_rows)
+    closing_balance = opening_balance + right_total - left_total
+
+    if payload.type == "client":
+        cb_side = _client_side(closing_balance)
+    else:
+        cb_side = _carrier_side(closing_balance)
+
+    result = {
+        "counterparty_name": cp_name,
+        "period_label": period_label,
+        "date_from": _fmt_date(date_from),
+        "date_to":   _fmt_date(date_to),
+        "opening_balance": round(opening_balance, 2),
+        "opening_balance_side": ob_side,
+        "left_rows": left_rows,
+        "right_rows": right_rows,
+        "left_total":  round(left_total, 2),
+        "right_total": round(right_total, 2),
+        "closing_balance": round(closing_balance, 2),
+        "closing_balance_side": cb_side,
+    }
+
+    # Generate Google Doc
+    doc_url = None
+    if _docs_get_generator is not None:
+        try:
+            token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+            if token_doc:
+                doc_data = {**result, "_type": payload.type}
+                doc_url = await asyncio.to_thread(_create_reconciliation_doc_sync, doc_data, token_doc)
+        except Exception as _de:
+            logging.getLogger(__name__).error(f"reconciliation doc failed: {_de}", exc_info=True)
+
+    return {**result, "doc_url": doc_url}
+
+
 # ====== Notes ======
 class Note(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
