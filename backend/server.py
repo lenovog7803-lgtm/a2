@@ -2640,11 +2640,16 @@ async def generate_reconciliation(payload: ReconciliationRequest):
              "unload_date": {"$gte": date_from, "$lte": date_to}},
             {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1},
         ).sort("unload_date", 1).to_list(10000)
+
+        print(f"[rec_debug] Ищу поступления: client_id={cid}, date_from={date_from!r}, date_to={date_to!r}")
+        all_payments = await db.payments_in.find({"client_id": cid}).to_list(100)
+        print(f"[rec_debug] Все поступления клиента: {len(all_payments)}, данные: {[{k: v for k, v in p.items() if k != '_id'} for p in all_payments]}")
         cursor = db.payments_in.find({
             "client_id": cid,
             "date": {"$gte": date_from, "$lte": date_to},
         }).sort("date", 1)
         period_pmts = await cursor.to_list(length=1000)
+        print(f"[rec_debug] Поступления за период: {len(period_pmts)}, date_from type={type(date_from).__name__}")
 
         right_rows = [
             {"date": _fmt_date(o.get("unload_date", "")),
