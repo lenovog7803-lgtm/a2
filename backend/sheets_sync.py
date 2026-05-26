@@ -45,7 +45,7 @@ CLIENT_HEADERS = [
 ]
 
 CARRIER_HEADERS = [
-    "Компания", "Водитель", "Телефон",
+    "Компания", "Водитель", "Телефон", "Email",
     "ИНН", "КПП", "Юр. адрес",
     "Банк", "Расч. счёт", "БИК", "Корр. счёт",
     "Тип ТС", "Гос.номер", "Грузоподъёмность, т", "Объём, м³",
@@ -135,6 +135,7 @@ def carrier_row(c: Dict[str, Any]) -> List[str]:
         str(c.get("company_name", "")),
         str(c.get("driver_name", "")),
         str(c.get("phone", "")),
+        str(c.get("email", "")),
         str(c.get("inn", "")),
         str(c.get("kpp", "")),
         str(c.get("legal_address", "")),

@@ -20,7 +20,7 @@ export default function NewCarrier() {
   const [saving, setSaving] = useState(false);
   const [basisOpen, setBasisOpen] = useState(false);
   const [data, setData] = useState<any>({
-    company_name: '', driver_name: '', phone: '', inn: '', kpp: '',
+    company_name: '', driver_name: '', phone: '', email: '', inn: '', kpp: '',
     legal_address: '', postal_address: '', director: '', basis: '',
     bank_name: '', bank_account: '', bank_bik: '', bank_corr_account: '',
     vehicle_type: '', plate: '', capacity_tons: 0, capacity_m3: 0, rating: 5,
@@ -54,6 +54,7 @@ export default function NewCarrier() {
         <Field label="Компания / ИП" value={data.company_name} onChangeText={(v: string) => update({ company_name: v })} testID="new-carrier-name" />
         <Field label="Водитель / контакт" value={data.driver_name} onChangeText={(v: string) => update({ driver_name: v })} />
         <Field label="Телефон" keyboardType="phone-pad" value={data.phone} onChangeText={(v: string) => update({ phone: v })} />
+        <Field label="Email" keyboardType="email-address" autoCapitalize="none" value={data.email} onChangeText={(v: string) => update({ email: v })} />
 
         <Text style={styles.groupLabel}>РЕКВИЗИТЫ</Text>
         <Field label="ИНН" keyboardType="numeric" value={data.inn} onChangeText={(v: string) => update({ inn: v })} />

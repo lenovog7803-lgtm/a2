@@ -409,6 +409,7 @@ class Carrier(BaseModel):
     company_name: str
     driver_name: Optional[str] = ""
     phone: Optional[str] = ""
+    email: Optional[str] = ""
     inn: Optional[str] = ""
     kpp: Optional[str] = ""
     legal_address: Optional[str] = ""
@@ -434,6 +435,7 @@ class CarrierPayload(BaseModel):
     company_name: str
     driver_name: Optional[str] = ""
     phone: Optional[str] = ""
+    email: Optional[str] = ""
     inn: Optional[str] = ""
     kpp: Optional[str] = ""
     legal_address: Optional[str] = ""

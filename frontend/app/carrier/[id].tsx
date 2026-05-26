@@ -112,6 +112,11 @@ export default function CarrierDetail() {
                   <Text style={styles.callText}>{carrier.phone}</Text>
                 </TouchableOpacity>
               )}
+              {!!carrier.email && (
+                <TouchableOpacity style={[styles.callBtn, { backgroundColor: theme.colors.surfaceElevated, marginTop: 6 }]} onPress={() => Linking.openURL(`mailto:${carrier.email}`)} activeOpacity={0.7}>
+                  <Text style={[styles.callText, { color: theme.colors.textPrimary }]}>{carrier.email}</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {(carrier.vehicle_type || carrier.plate) && (
@@ -184,6 +189,7 @@ export default function CarrierDetail() {
             <Field label="Компания / ИП" value={carrier.company_name} onChangeText={(v: string) => update({ company_name: v })} />
             <Field label="Водитель / контакт" value={carrier.driver_name} onChangeText={(v: string) => update({ driver_name: v })} />
             <Field label="Телефон" keyboardType="phone-pad" value={carrier.phone} onChangeText={(v: string) => update({ phone: v })} />
+            <Field label="Email" keyboardType="email-address" autoCapitalize="none" value={carrier.email || ''} onChangeText={(v: string) => update({ email: v })} />
 
             <Text style={styles.groupLabel}>ТРАНСПОРТ</Text>
             <Text style={styles.miniLabel}>ТИП ТС</Text>

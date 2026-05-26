@@ -137,14 +137,16 @@ def carrier_cells(cr: Dict[str, Any]) -> Dict[int, Any]:
     return {
         1:  cr.get('company_name', ''),
         2:  cr.get('driver_name', ''),
-        3:  cr.get('vehicle_type', ''),
-        4:  cr.get('capacity_tons', '') or '',
-        5:  cr.get('legal_address', ''),
-        6:  cr.get('plate', ''),
-        7:  cr.get('inn', ''),
-        9:  cr.get('bank_account', ''),
-        10: cr.get('bank_name', ''),
-        11: cr.get('bank_bik', ''),
+        3:  cr.get('phone', ''),
+        4:  cr.get('email', ''),
+        5:  cr.get('vehicle_type', ''),
+        6:  cr.get('capacity_tons', '') or '',
+        7:  cr.get('legal_address', ''),
+        8:  cr.get('plate', ''),
+        9:  cr.get('inn', ''),
+        11: cr.get('bank_account', ''),
+        12: cr.get('bank_name', ''),
+        13: cr.get('bank_bik', ''),
     }
 
 
