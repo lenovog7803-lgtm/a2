@@ -1868,6 +1868,65 @@ async def dashboard(period: str = "all"):
     }
 
 
+# ====== Monthly Goals ======
+class GoalsPayload(BaseModel):
+    month: str
+    profit_goal: float = 7000
+    trips_goal: int = 45
+    margin_goal: float = 230
+    new_clients_goal: int = 9
+
+
+@api_router.get("/goals")
+async def get_goals(month: str, current_user: dict = Depends(_require_user)):
+    try:
+        y, m = int(month[:4]), int(month[5:7])
+    except Exception:
+        raise HTTPException(400, "Invalid month format, expected YYYY-MM")
+
+    month_start_str = f"{y}-{m:02d}-01"
+    month_end_str = f"{y + 1}-01-01" if m == 12 else f"{y}-{m + 1:02d}-01"
+
+    doc = await db.monthly_goals.find_one({"month": month}, {"_id": 0})
+    if not doc:
+        py, pm = (y - 1, 12) if m == 1 else (y, m - 1)
+        prev_doc = await db.monthly_goals.find_one({"month": f"{py:04d}-{pm:02d}"}, {"_id": 0})
+        if prev_doc:
+            doc = {**prev_doc, "month": month}
+        else:
+            doc = {"month": month, "profit_goal": 7000, "trips_goal": 45, "margin_goal": 230, "new_clients_goal": 9}
+
+    orders = await db.orders.find({
+        "unload_date": {"$gte": month_start_str, "$lt": month_end_str},
+        "status": {"$ne": "cancelled"},
+        "deleted": {"$ne": True},
+    }).to_list(10000)
+
+    profit_fact = sum((o.get("client_rate", 0) - o.get("carrier_rate", 0)) * 0.8 for o in orders)
+    trips_fact = len(orders)
+    margin_fact = round(profit_fact / trips_fact, 1) if trips_fact > 0 else 0
+
+    new_clients_fact = await db.clients.count_documents({
+        "created_at": {"$gte": month_start_str, "$lt": month_end_str},
+        "deleted": {"$ne": True},
+    })
+
+    return {
+        **doc,
+        "profit_fact": round(profit_fact, 1),
+        "trips_fact": trips_fact,
+        "margin_fact": margin_fact,
+        "new_clients_fact": new_clients_fact,
+    }
+
+
+@api_router.post("/goals")
+async def save_goals(payload: GoalsPayload, current_user: dict = Depends(_require_user)):
+    doc = payload.dict()
+    await db.monthly_goals.replace_one({"month": payload.month}, doc, upsert=True)
+    return doc
+
+
 # ====== App Settings ======
 _DEFAULT_RATE_MINIMUMS = [
     {"route": "Москва↔Минск",       "cost": 720,  "current": 50,  "threshold": 865,  "status": "red"},

@@ -172,6 +172,10 @@ export const api = {
     create: () => req('/backup/create', { method: 'POST' }),
     restore: (id: string) => req(`/backup/restore/${id}`, { method: 'POST' }),
   },
+  goals: {
+    get: (month: string) => req(`/goals?month=${encodeURIComponent(month)}`),
+    save: (data: any) => req('/goals', { method: 'POST', body: JSON.stringify(data) }),
+  },
   analytics: (month?: string) => req(`/analytics${month ? `?month=${encodeURIComponent(month)}` : ''}`),
   settings: {
     get: () => req('/settings'),

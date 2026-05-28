@@ -7,7 +7,6 @@ import { Pencil, Check, X } from 'lucide-react-native';
 import { theme, formatShort } from '../theme';
 import { api } from '../api';
 
-// ─── Static plan data ─────────────────────────────────────────────────────────
 const PLAN_MONTHS = [
   { ym: '2026-06', label: 'Июнь',    marginGoal: 7500,  tripsGoal: 35, milestone: 'Старт outbound' },
   { ym: '2026-07', label: 'Июль',    marginGoal: 8500,  tripsGoal: 40, milestone: 'Пик сезона' },
@@ -21,13 +20,18 @@ const TOP_STAR_CLIENTS = ['Криспи Ритейл', 'БИМ текст'];
 const BEST_ROUTE = 'Ульяновск–Минск';
 
 const MONTHS_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+const MONTHS_FULL = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 
 const currentYM = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
+const monthLabel = (ym: string) => {
+  const [y, m] = ym.split('-');
+  return `${MONTHS_FULL[parseInt(m, 10) - 1]} ${y}`;
+};
+
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
     <View style={s.pbTrack}>
@@ -49,7 +53,6 @@ function MarginBadge({ pct }: { pct: number }) {
   );
 }
 
-// ─── Editable Goal Card ────────────────────────────────────────────────────────
 function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
   title: string; fact: number; goal: number; unit: string;
   onEditGoal?: (newGoal: number) => void;
@@ -57,6 +60,8 @@ function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
 }) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(String(Math.round(goal)));
+
+  useEffect(() => { setEditVal(String(Math.round(goal))); }, [goal]);
 
   const pct = goal > 0 ? Math.min(Math.round((fact / goal) * 100), 100) : 0;
   const done = pct >= 100;
@@ -73,11 +78,9 @@ function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
     <View style={[s.goalCard, done && { borderColor: theme.colors.profit + '50' }]}>
       <View style={s.goalHeader}>
         <Text style={s.goalTitle} numberOfLines={2}>{title}</Text>
-        <View style={[s.goalBadge, { backgroundColor: done ? theme.colors.profit + '20' : theme.colors.info + '20' }]}>
-          <Text style={[s.goalBadgeTxt, { color: done ? theme.colors.profit : theme.colors.info }]}>
-            {done ? 'выполнено' : 'в процессе'}
-          </Text>
-        </View>
+        <TouchableOpacity onPress={() => onEditGoal ? setEditing(true) : null} activeOpacity={onEditGoal ? 0.6 : 1} style={{ padding: 2 }}>
+          {!!onEditGoal && <Pencil size={12} color={theme.colors.textTertiary} strokeWidth={1.8} />}
+        </TouchableOpacity>
       </View>
 
       <Text style={[s.goalFact, { color: done ? theme.colors.profit : theme.colors.textPrimary }]}>
@@ -101,10 +104,14 @@ function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
           </TouchableOpacity>
         </View>
       ) : (
-        <TouchableOpacity style={s.goalSubRow} onPress={() => onEditGoal ? setEditing(true) : null} activeOpacity={onEditGoal ? 0.6 : 1}>
+        <View style={s.goalSubRow}>
           <Text style={s.goalSub}>из {fmt(goal)} {unit}</Text>
-          {!!onEditGoal && <Pencil size={11} color={theme.colors.textTertiary} strokeWidth={1.8} />}
-        </TouchableOpacity>
+          <View style={[s.goalBadge, { backgroundColor: done ? theme.colors.profit + '20' : theme.colors.info + '20' }]}>
+            <Text style={[s.goalBadgeTxt, { color: done ? theme.colors.profit : theme.colors.info }]}>
+              {done ? 'выполнено' : 'в процессе'}
+            </Text>
+          </View>
+        </View>
       )}
 
       <ProgressBar pct={pct} color={barColor} />
@@ -113,15 +120,18 @@ function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
   );
 }
 
-// ─── Main component ─────────────────────────────────────────────────────────────
 export default function AnalyticsTab() {
-  const [selectedPeriod, setSelectedPeriod] = useState<string>('all');
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(currentYM());
   const [data, setData] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [goalsData, setGoalsData] = useState<any>(null);
+  const [goalsLoading, setGoalsLoading] = useState(false);
   const [editingRates, setEditingRates] = useState(false);
   const [draftRates, setDraftRates] = useState<any[]>([]);
   const [savingSettings, setSavingSettings] = useState(false);
+
+  const effectiveMonth = selectedPeriod === 'all' ? currentYM() : selectedPeriod;
 
   const loadSettings = useCallback(async () => {
     try {
@@ -139,16 +149,35 @@ export default function AnalyticsTab() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => {
-    loadSettings();
+  const fetchGoals = useCallback(async (month: string) => {
+    setGoalsLoading(true);
+    try {
+      const g = await api.goals.get(month);
+      setGoalsData(g);
+    } catch {
+      setGoalsData(null);
+    } finally {
+      setGoalsLoading(false);
+    }
   }, []);
 
+  useEffect(() => { loadSettings(); }, []);
   useEffect(() => { fetchData(selectedPeriod); }, [selectedPeriod]);
+  useEffect(() => { fetchGoals(effectiveMonth); }, [effectiveMonth]);
 
   const saveGoal = async (key: string, value: number) => {
-    const updated = { ...settings, [key]: value };
-    setSettings(updated);
-    try { await api.settings.update({ [key]: value }); } catch {}
+    if (!goalsData) return;
+    const updated = { ...goalsData, [key]: value };
+    setGoalsData(updated);
+    try {
+      await api.goals.save({
+        month: effectiveMonth,
+        profit_goal: updated.profit_goal ?? 7000,
+        trips_goal: updated.trips_goal ?? 45,
+        margin_goal: updated.margin_goal ?? 230,
+        new_clients_goal: updated.new_clients_goal ?? 9,
+      });
+    } catch {}
   };
 
   const startEditRates = () => {
@@ -174,17 +203,12 @@ export default function AnalyticsTab() {
     : `${MONTHS_SHORT[parseInt(selectedPeriod.slice(5, 7), 10) - 1]} ${selectedPeriod.slice(0, 4)}`;
 
   const summary = data?.summary || {};
-  const goals = data?.goals || {};
   const clients: any[] = data?.clients || [];
   const routes: any[] = data?.routes || [];
   const lossTrips: any[] = data?.loss_trips || [];
   const totalLoss = lossTrips.reduce((acc: number, t: any) => acc + (t.loss || 0), 0);
   const monthlyMap: Record<string, any> = Object.fromEntries(monthly.map((m: any) => [m.month, m]));
 
-  const marginGoal = settings?.margin_goal ?? 10000;
-  const newClientsGoal = settings?.new_clients_goal ?? 9;
-  const tripsGoal = settings?.trips_goal ?? 45;
-  const avgMarginGoal = settings?.avg_margin_goal ?? 230;
   const rateMinimums: any[] = settings?.rate_minimums ?? [];
 
   if (loading && !data) {
@@ -193,7 +217,7 @@ export default function AnalyticsTab() {
 
   return (
     <View>
-      {/* ── СЕКЦИЯ 1: Переключатель периода ────────────────────────────────── */}
+      {/* ── Период ─────────────────────────────────────────────────────────── */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.pillsScroll}
         contentContainerStyle={s.pillsContent}>
         {[{ id: 'all', label: 'Все время' }, ...availableMonths.slice().reverse().map(ym => ({
@@ -209,22 +233,47 @@ export default function AnalyticsTab() {
 
       {loading && <ActivityIndicator size="small" color={theme.colors.accent} style={{ marginBottom: 8 }} />}
 
-      {/* ── СЕКЦИЯ 2: Карточки целей (текущий месяц) ────────────────────────── */}
-      <SectionLabel>ЦЕЛИ ТЕКУЩЕГО МЕСЯЦА</SectionLabel>
+      {/* ── Цели месяца ────────────────────────────────────────────────────── */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 8 }}>
+        <Text style={s.sectionLabel}>
+          {'ЦЕЛИ — ' + monthLabel(effectiveMonth).toUpperCase()}
+        </Text>
+        {goalsLoading && <ActivityIndicator size="small" color={theme.colors.accent} />}
+      </View>
       <View style={s.goalGrid}>
-        <GoalCard title="Прибыль месяца" fact={goals.margin_fact ?? 0} goal={marginGoal} unit="BYN"
+        <GoalCard
+          title="Прибыль месяца"
+          fact={goalsData?.profit_fact ?? 0}
+          goal={goalsData?.profit_goal ?? 7000}
+          unit="BYN"
           formatFn={n => Math.round(n).toLocaleString('ru-RU')}
-          onEditGoal={v => saveGoal('margin_goal', v)} />
-        <GoalCard title="Новые клиенты" fact={goals.new_clients_fact ?? 0} goal={newClientsGoal} unit="план на мес."
-          onEditGoal={v => saveGoal('new_clients_goal', v)} />
-        <GoalCard title="Рейсов в месяц" fact={goals.trips_fact ?? 0} goal={tripsGoal} unit="план"
-          onEditGoal={v => saveGoal('trips_goal', v)} />
-        <GoalCard title="Ср. маржа / рейс" fact={goals.avg_margin_fact ?? 0} goal={avgMarginGoal} unit="BYN цель"
+          onEditGoal={v => saveGoal('profit_goal', v)}
+        />
+        <GoalCard
+          title="Новые клиенты"
+          fact={goalsData?.new_clients_fact ?? 0}
+          goal={goalsData?.new_clients_goal ?? 9}
+          unit="план на мес."
+          onEditGoal={v => saveGoal('new_clients_goal', v)}
+        />
+        <GoalCard
+          title="Рейсов в месяц"
+          fact={goalsData?.trips_fact ?? 0}
+          goal={goalsData?.trips_goal ?? 45}
+          unit="план"
+          onEditGoal={v => saveGoal('trips_goal', v)}
+        />
+        <GoalCard
+          title="Ср. прибыль / рейс"
+          fact={goalsData?.margin_fact ?? 0}
+          goal={goalsData?.margin_goal ?? 230}
+          unit="BYN цель"
           formatFn={n => Math.round(n).toLocaleString('ru-RU')}
-          onEditGoal={v => saveGoal('avg_margin_goal', v)} />
+          onEditGoal={v => saveGoal('margin_goal', v)}
+        />
       </View>
 
-      {/* ── СЕКЦИЯ 3: Сводные метрики ───────────────────────────────────────── */}
+      {/* ── Финансовый итог ─────────────────────────────────────────────────── */}
       <SectionLabel>ФИНАНСОВЫЙ ИТОГ — {periodLabel.toUpperCase()}</SectionLabel>
       <View style={s.summaryGrid}>
         {[
@@ -244,7 +293,7 @@ export default function AnalyticsTab() {
         ))}
       </View>
 
-      {/* ── СЕКЦИЯ 4: Топ маршруты ─────────────────────────────────────────── */}
+      {/* ── Топ маршруты ───────────────────────────────────────────────────── */}
       {routes.length > 0 && (
         <>
           <SectionLabel>ТОП МАРШРУТЫ ПО МАРЖЕ</SectionLabel>
@@ -279,7 +328,7 @@ export default function AnalyticsTab() {
         </>
       )}
 
-      {/* ── СЕКЦИЯ 5: Топ клиенты ──────────────────────────────────────────── */}
+      {/* ── Топ клиенты ────────────────────────────────────────────────────── */}
       {clients.length > 0 && (
         <>
           <SectionLabel>КЛИЕНТЫ ПО МАРЖИНАЛЬНОСТИ</SectionLabel>
@@ -316,7 +365,7 @@ export default function AnalyticsTab() {
         </>
       )}
 
-      {/* ── СЕКЦИЯ 6: Убыточные рейсы ──────────────────────────────────────── */}
+      {/* ── Убыточные рейсы ────────────────────────────────────────────────── */}
       {lossTrips.length > 0 && (
         <>
           <Text style={s.lossTitle}>⚠ Убыточные рейсы — требуют внимания</Text>
@@ -350,7 +399,7 @@ export default function AnalyticsTab() {
         </>
       )}
 
-      {/* ── СЕКЦИЯ 7: План на 6 месяцев ────────────────────────────────────── */}
+      {/* ── Бизнес-план ────────────────────────────────────────────────────── */}
       <SectionLabel>БИЗНЕС-ПЛАН ИЮНЬ–НОЯБРЬ 2026</SectionLabel>
       <View style={s.planGrid}>
         {PLAN_MONTHS.map(pm => {
@@ -388,7 +437,7 @@ export default function AnalyticsTab() {
         })}
       </View>
 
-      {/* ── СЕКЦИЯ 8: Минимальные ставки ───────────────────────────────────── */}
+      {/* ── Минимальные ставки ──────────────────────────────────────────────── */}
       <View style={s.rateHeader}>
         <View style={{ flex: 1 }}>
           <SectionLabel>МИНИМАЛЬНЫЕ СТАВКИ ПО МАРШРУТАМ</SectionLabel>
@@ -478,7 +527,6 @@ export default function AnalyticsTab() {
   );
 }
 
-// ─── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   loadingWrap: { paddingVertical: 60, alignItems: 'center' },
 
@@ -499,7 +547,7 @@ const s = StyleSheet.create({
   goalBadgeTxt: { fontSize: 9, fontWeight: '700' },
   goalFact: { fontSize: 26, fontWeight: '800', letterSpacing: -1, color: theme.colors.textPrimary },
   goalSubRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2, marginBottom: 10 },
-  goalSub: { fontSize: 10, color: theme.colors.textTertiary },
+  goalSub: { fontSize: 10, color: theme.colors.textTertiary, flex: 1 },
   goalEditRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: 10 },
   goalEditInput: { flex: 1, borderWidth: 1, borderColor: theme.colors.accent, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, color: theme.colors.textPrimary, fontSize: 13, fontWeight: '700' },
   goalEditBtn: { width: 28, height: 28, borderRadius: 8, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' },
@@ -526,8 +574,8 @@ const s = StyleSheet.create({
 
   badge: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 },
   badgeTxt: { fontSize: 10, fontWeight: '700' },
-  goldBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, backgroundColor: theme.colors.accentBright + '25' },
-  goldBadgeTxt: { color: theme.colors.accentBright, fontSize: 10, fontWeight: '700' },
+  goldBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, backgroundColor: (theme.colors as any).accentBright + '25' },
+  goldBadgeTxt: { color: (theme.colors as any).accentBright, fontSize: 10, fontWeight: '700' },
 
   lossTitle: { fontSize: 13, fontWeight: '800', color: theme.colors.loss, marginBottom: 4, marginTop: 8 },
   lossSub: { fontSize: 12, color: theme.colors.textSecondary, marginBottom: 10 },
