@@ -365,17 +365,6 @@ export default function OrderDetail() {
           docDate={order.docs_from_carrier_date}
           testID="doc-from-carrier"
         />
-        <DocToggle
-          label="Письмо на оплату от перевозчика"
-          value={order.letter_from_carrier_received}
-          onToggle={() => {
-            const next = !order.letter_from_carrier_received;
-            update({ letter_from_carrier_received: next });
-          }}
-          onText="Получено"
-          offText="Не получено"
-          testID="letter-from-carrier"
-        />
 
         <Field label="Заметки" multiline value={order.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top', marginTop: 16 }} />
 

@@ -503,7 +503,6 @@ class Order(BaseModel):
     created_by: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
     is_overdue: Optional[bool] = False
-    letter_from_carrier_received: bool = False
     carrier_payment_days: Optional[int] = 20
     carrier_payment_deadline: Optional[str] = ""
     carrier_payment_reminder_date: Optional[str] = ""
@@ -547,7 +546,6 @@ class OrderPayload(BaseModel):
     doc_url_carrier: Optional[str] = ""
     doc_url_act: Optional[str] = ""
     assigned_to: Optional[str] = ""
-    letter_from_carrier_received: bool = False
     carrier_payment_days: Optional[int] = 20
 
 
@@ -591,7 +589,6 @@ class OrderUpdate(BaseModel):
     calendar_event_id: Optional[str] = None
     calendar_event_url: Optional[str] = None
     assigned_to: Optional[str] = None
-    letter_from_carrier_received: Optional[bool] = None
     carrier_payment_days: Optional[int] = None
     carrier_payment_deadline: Optional[str] = None
     carrier_payment_reminder_date: Optional[str] = None
@@ -1193,7 +1190,7 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     if update_data.get("carrier_paid") is True and "carrier_paid_date" not in update_data:
         if not old_doc.get("carrier_paid"):
             update_data["carrier_paid_date"] = today
-    if update_data.get("letter_from_carrier_received") and not old_doc.get("letter_from_carrier_received"):
+    if update_data.get("docs_from_carrier_received") and not old_doc.get("docs_from_carrier_received"):
         days = update_data.get("carrier_payment_days") or old_doc.get("carrier_payment_days") or 20
         received_date = datetime.now(timezone.utc)
         payment_deadline = add_business_days(received_date, days)
@@ -1317,7 +1314,7 @@ async def duplicate_order(order_id: str, background_tasks: BackgroundTasks,
     exclude = {"_id", "order_number", "created_at", "status", "client_paid", "carrier_paid",
                "client_paid_date", "carrier_paid_date", "calendar_event_id",
                "letter_to_client_sent", "letter_from_client_received", "is_overdue",
-               "letter_from_carrier_received", "carrier_payment_deadline", "carrier_payment_reminder_date"}
+               "carrier_payment_deadline", "carrier_payment_reminder_date"}
     new_data = {k: v for k, v in doc.items() if k not in exclude}
     new_data["id"] = str(uuid.uuid4())
     new_data["order_number"] = next_number

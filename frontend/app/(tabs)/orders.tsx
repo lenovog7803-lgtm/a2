@@ -283,7 +283,7 @@ function OrderCard({ order, onPress, testID }: any) {
         <View style={{ width: 12 }} />
         <View style={[styles.payDot, { backgroundColor: order.carrier_paid ? theme.colors.profit : theme.colors.surfaceHigh }]} />
         <Text style={[styles.payText, { color: order.carrier_paid ? theme.colors.profit : theme.colors.textTertiary }]}>{order.carrier_paid ? 'Перевозчик оплачен' : 'Долг перевозчику'}</Text>
-        {!order.carrier_paid && order.letter_from_carrier_received && order.carrier_payment_deadline && (() => {
+        {!order.carrier_paid && order.docs_from_carrier_received && order.carrier_payment_deadline && (() => {
           const dl = countBusinessDays(new Date(), new Date(order.carrier_payment_deadline));
           const color = dl <= 3 ? '#FF3B30' : dl <= 5 ? '#FF9500' : theme.colors.textTertiary;
           return <Text style={[styles.payText, { color, marginLeft: 4 }]}>{`💸 ${dl} дн.`}</Text>;
