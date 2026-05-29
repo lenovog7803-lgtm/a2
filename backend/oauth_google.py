@@ -88,7 +88,11 @@ def fetch_token(code: str, state: str, redirect_uri: Optional[str] = None) -> Di
     return token
 
 
-def make_user_credentials(token_doc: Dict[str, Any]) -> UserCredentials:
+def make_user_credentials(token_doc: Dict[str, Any]) -> Tuple[UserCredentials, Optional[str]]:
+    """Returns (credentials, new_access_token_or_None).
+    Always forces a refresh when refresh_token is present so callers get a
+    non-expired token and can persist the new access_token back to the DB.
+    """
     creds = UserCredentials(
         token=token_doc.get("access_token"),
         refresh_token=token_doc.get("refresh_token"),
@@ -97,6 +101,13 @@ def make_user_credentials(token_doc: Dict[str, Any]) -> UserCredentials:
         client_secret=_client_secret(),
         scopes=SCOPES,
     )
-    if not creds.valid:
-        creds.refresh(Request())
-    return creds
+    new_token: Optional[str] = None
+    if creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            new_token = creds.token
+        except Exception as e:
+            logger.warning(f"Token refresh failed: {e}")
+    elif not creds.valid:
+        logger.warning("No refresh_token and credentials are invalid")
+    return creds, new_token

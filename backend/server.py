@@ -241,6 +241,41 @@ async def _purge_old_trash():
     logging.getLogger(__name__).info("Trash auto-purge completed")
 
 
+async def _token_refresh_loop():
+    """Refresh the stored Google OAuth token every 30 minutes so it never expires."""
+    while True:
+        await asyncio.sleep(1800)  # 30 minutes
+        try:
+            token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+            if not token_doc or not token_doc.get("refresh_token"):
+                continue
+            from google.oauth2.credentials import Credentials
+            from google.auth.transport.requests import Request
+            import os as _os
+            creds = Credentials(
+                token=token_doc.get("access_token"),
+                refresh_token=token_doc.get("refresh_token"),
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=_os.environ.get("GOOGLE_OAUTH_CLIENT_ID"),
+                client_secret=_os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
+                scopes=[
+                    "https://www.googleapis.com/auth/documents",
+                    "https://www.googleapis.com/auth/drive",
+                    "https://www.googleapis.com/auth/tasks",
+                    "https://www.googleapis.com/auth/calendar",
+                    "https://www.googleapis.com/auth/calendar.events",
+                ],
+            )
+            await asyncio.to_thread(creds.refresh, Request())
+            await db.oauth_tokens.update_one(
+                {"_id": "google"},
+                {"$set": {"access_token": creds.token, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            logging.getLogger(__name__).info("Google OAuth token refreshed automatically")
+        except Exception as e:
+            logging.getLogger(__name__).error(f"_token_refresh_loop: refresh failed: {e}")
+
+
 async def _backup_loop():
     last_date = None
     while True:
@@ -277,6 +312,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_trash_purge_loop())
+    asyncio.create_task(_token_refresh_loop())
     count = await db.users.count_documents({"role": "admin"})
     if count == 0:
         admin = {
@@ -2671,11 +2707,11 @@ def _fill_table_rows(docs_svc, doc_id: str, left_rows: list, right_rows: list):
         ]}).execute()
 
 
-def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
+def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> tuple:
     from googleapiclient.discovery import build
     from oauth_google import make_user_credentials
 
-    creds = make_user_credentials(token_doc)
+    creds, new_token = make_user_credentials(token_doc)
 
     docs_svc  = build("docs",  "v1", credentials=creds)
     drive_svc = build("drive", "v3", credentials=creds)
@@ -2751,7 +2787,7 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> str:
     # Fill table rows (insertTableRow + insertText + deleteTableRow for placeholder)
     _fill_table_rows(docs_svc, doc_id, data.get("left_rows", []), data.get("right_rows", []))
 
-    return f"https://docs.google.com/document/d/{doc_id}/edit"
+    return f"https://docs.google.com/document/d/{doc_id}/edit", new_token
 
 
 @api_router.post("/reconciliation/generate")
@@ -2920,8 +2956,13 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             print(f"[reconciliation] no oauth token")
         else:
             print(f"[reconciliation] calling _create_reconciliation_doc_sync")
-            doc_url = await asyncio.to_thread(_create_reconciliation_doc_sync, result, token_doc)
+            doc_url, new_token = await asyncio.to_thread(_create_reconciliation_doc_sync, result, token_doc)
             print(f"[reconciliation] doc_url={doc_url}")
+            if new_token:
+                await db.oauth_tokens.update_one(
+                    {"_id": "google"},
+                    {"$set": {"access_token": new_token, "updated_at": datetime.now(timezone.utc).isoformat()}},
+                )
     except Exception as _de:
         doc_error = str(_de)
         logging.getLogger(__name__).error(f"reconciliation doc failed: {_de}", exc_info=True)
