@@ -1236,7 +1236,8 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     if update_data.get("carrier_paid") is True and "carrier_paid_date" not in update_data:
         if not old_doc.get("carrier_paid"):
             update_data["carrier_paid_date"] = today
-    if update_data.get("docs_from_carrier_received") and not old_doc.get("docs_from_carrier_received"):
+    carrier_already_paid = update_data.get("carrier_paid") or old_doc.get("carrier_paid")
+    if update_data.get("docs_from_carrier_received") and not old_doc.get("docs_from_carrier_received") and not carrier_already_paid:
         days = update_data.get("carrier_payment_days") or old_doc.get("carrier_payment_days") or 20
         received_date = datetime.now(timezone.utc)
         payment_deadline = add_business_days(received_date, days)
