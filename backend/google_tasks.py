@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 logger = logging.getLogger(__name__)
 
 TASK_LIST_NAME = "CRM Tasks"
+PAYMENT_LIST_NAME = "Оплаты перевозчиков"
 
 
 def _build_service(token_doc: Dict[str, Any]):
@@ -34,13 +35,18 @@ def _build_service(token_doc: Dict[str, Any]):
     return build("tasks", "v1", credentials=creds, cache_discovery=False)
 
 
-def _get_or_create_tasklist(service) -> str:
-    result = service.tasklists().list(maxResults=100).execute()
-    for tl in result.get("items", []):
-        if tl.get("title") == TASK_LIST_NAME:
-            return tl["id"]
-    new_list = service.tasklists().insert(body={"title": TASK_LIST_NAME}).execute()
-    return new_list["id"]
+def get_or_create_tasklist(service, title: str = TASK_LIST_NAME) -> str:
+    """Find tasklist by title or create it. Returns tasklist id."""
+    try:
+        result = service.tasklists().list(maxResults=100).execute()
+        for tl in result.get("items", []):
+            if tl.get("title") == title:
+                return tl["id"]
+        new_list = service.tasklists().insert(body={"title": title}).execute()
+        return new_list["id"]
+    except Exception as e:
+        logger.error(f"get_or_create_tasklist({title!r}) error: {e}")
+        return "@default"
 
 
 def _due_rfc3339(due_date: str, due_time: str) -> Optional[str]:
@@ -65,10 +71,13 @@ def _task_body(task: dict) -> dict:
 
 
 def create_google_task(task: dict, token_doc: Dict[str, Any]) -> Optional[str]:
-    """Create task in Google Tasks. Returns google_task_id or None."""
+    """Create task in Google Tasks. Returns google_task_id or None.
+    payment/reminder task_types go into PAYMENT_LIST_NAME list.
+    """
     try:
         service = _build_service(token_doc)
-        tasklist_id = _get_or_create_tasklist(service)
+        list_name = PAYMENT_LIST_NAME if task.get("task_type") in ("payment", "reminder") else TASK_LIST_NAME
+        tasklist_id = get_or_create_tasklist(service, list_name)
         result = service.tasks().insert(tasklist=tasklist_id, body=_task_body(task)).execute()
         return result.get("id")
     except Exception as e:
@@ -79,7 +88,8 @@ def create_google_task(task: dict, token_doc: Dict[str, Any]) -> Optional[str]:
 def update_google_task(google_task_id: str, task: dict, token_doc: Dict[str, Any]):
     try:
         service = _build_service(token_doc)
-        tasklist_id = _get_or_create_tasklist(service)
+        list_name = PAYMENT_LIST_NAME if task.get("task_type") in ("payment", "reminder") else TASK_LIST_NAME
+        tasklist_id = get_or_create_tasklist(service, list_name)
         body = _task_body(task)
         body["id"] = google_task_id
         service.tasks().update(
@@ -92,7 +102,7 @@ def update_google_task(google_task_id: str, task: dict, token_doc: Dict[str, Any
 def delete_google_task(google_task_id: str, token_doc: Dict[str, Any]):
     try:
         service = _build_service(token_doc)
-        tasklist_id = _get_or_create_tasklist(service)
+        tasklist_id = get_or_create_tasklist(service)
         service.tasks().delete(tasklist=tasklist_id, task=google_task_id).execute()
     except Exception as e:
         logger.error(f"delete_google_task failed: {e}")
