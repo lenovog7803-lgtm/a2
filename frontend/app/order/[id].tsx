@@ -309,12 +309,9 @@ export default function OrderDetail() {
           }}
           amount={formatMoney(order.carrier_rate)}
           paidDate={order.carrier_paid_date || (order.carrier_paid ? order.created_at?.slice(0, 10) : '')}
+          daysLeft={daysLeft}
+          deadlineColor={deadlineColor}
         />
-        {daysLeft !== null && !order.carrier_paid && (
-          <Text style={{ fontSize: 11, color: deadlineColor, marginTop: -4, marginBottom: 8, marginLeft: 2 }}>
-            {`До оплаты: ${daysLeft} раб. дн. (${formatDate(order.carrier_payment_deadline)})`}
-          </Text>
-        )}
 
         <Text style={styles.groupLabel}>ДОКУМЕНТЫ</Text>
         <DocToggle
@@ -454,7 +451,7 @@ function DocGenButton({ label, url }: any) {
   );
 }
 
-function DocToggle({ label, value, onToggle, onText, offText, amount, paidDate, docDate, testID }: any) {
+function DocToggle({ label, value, onToggle, onText, offText, amount, paidDate, docDate, daysLeft, deadlineColor, testID }: any) {
   const display = value ? (onText || 'Готово') : (offText || 'Ждём');
   const formattedPaidDate = paidDate ? paidDate.slice(0, 10).split('-').reverse().join('.') : null;
   const formattedDocDate = docDate ? docDate.slice(0, 10).split('-').reverse().join('.') : null;
@@ -469,6 +466,11 @@ function DocToggle({ label, value, onToggle, onText, offText, amount, paidDate, 
       </View>
       <View style={{ alignItems: 'flex-end', gap: 2 }}>
         {!!amount && <Text style={styles.toggleAmt}>{amount}</Text>}
+        {!value && daysLeft !== null && daysLeft !== undefined && (
+          <View style={{ backgroundColor: (deadlineColor || theme.colors.textSecondary) + '18', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: deadlineColor || theme.colors.textSecondary }}>{`${daysLeft} дн.`}</Text>
+          </View>
+        )}
         {value && !!formattedPaidDate && (
           <Text style={styles.toggleDate}>оплачено {formattedPaidDate}</Text>
         )}
