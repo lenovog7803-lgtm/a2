@@ -946,12 +946,16 @@ async def _bg_gt_create(task_obj: dict):
     try:
         token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
         if not token_doc:
+            logging.getLogger(__name__).warning("_bg_gt_create: no Google token in DB")
             return
         gid = await asyncio.to_thread(_gt_create, task_obj, token_doc)
         if gid:
             await db.tasks.update_one({"id": task_obj["id"]}, {"$set": {"google_task_id": gid}})
+            logging.getLogger(__name__).info(f"_bg_gt_create: synced task {task_obj.get('id')} → gid={gid}")
+        else:
+            logging.getLogger(__name__).warning(f"_bg_gt_create: create_google_task returned None for task {task_obj.get('id')}")
     except Exception as e:
-        logging.getLogger(__name__).error(f"_bg_gt_create failed: {e}")
+        logging.getLogger(__name__).error(f"_bg_gt_create failed: {e}", exc_info=True)
 
 
 async def _bg_gt_update(task_obj: dict):
@@ -1033,28 +1037,34 @@ def add_business_days(start_date: datetime, days: int) -> datetime:
 async def _bg_carrier_payment_calendar(deadline_str: str, reminder_str: str, carrier_name: str,
                                         order_number: str, carrier_rate: float, reminder_days_before: int,
                                         deadline_display: str):
-    if _gc_simple is None:
+    try:
+        from google_calendar import create_simple_calendar_event as _create_simple
+    except Exception as _ie:
+        logging.getLogger(__name__).warning(f"create_simple_calendar_event unavailable: {_ie}")
         return
     try:
         token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
         if not token_doc:
+            logging.getLogger(__name__).warning("_bg_carrier_payment_calendar: no Google token in DB")
             return
-        await asyncio.to_thread(
-            _gc_simple,
+        r1 = await asyncio.to_thread(
+            _create_simple,
             f"💰 Оплатить перевозчика: {carrier_name}",
             deadline_str,
             f"Заявка {order_number}, сумма {carrier_rate} BYN",
             token_doc,
         )
-        await asyncio.to_thread(
-            _gc_simple,
+        logging.getLogger(__name__).info(f"carrier payment calendar event (deadline): {r1}")
+        r2 = await asyncio.to_thread(
+            _create_simple,
             f"⚠️ Через {reminder_days_before} дня оплатить: {carrier_name}",
             reminder_str,
             f"Срок оплаты: {deadline_display}",
             token_doc,
         )
+        logging.getLogger(__name__).info(f"carrier payment calendar event (reminder): {r2}")
     except Exception as e:
-        logging.getLogger(__name__).error(f"_bg_carrier_payment_calendar failed: {e}")
+        logging.getLogger(__name__).error(f"_bg_carrier_payment_calendar failed: {e}", exc_info=True)
 
 
 # ====== Task CRUD endpoints ======
@@ -1204,7 +1214,8 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
         carrier_name = old_doc.get("carrier_name") or ""
         order_number = old_doc.get("order_number") or ""
         carrier_rate = old_doc.get("carrier_rate") or 0
-        for task_data in [
+        _created_by = (current_user or {}).get("id", "")
+        for task_fields in [
             {
                 "id": str(uuid.uuid4()),
                 "title": f"Оплатить перевозчика: {carrier_name} — заявка {order_number}",
@@ -1214,6 +1225,7 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
                 "status": "pending",
                 "description": f"Заявка {order_number}, сумма: {carrier_rate} BYN. Срок: {deadline_display}",
                 "order_id": order_id,
+                "created_by": _created_by,
                 "created_at": now_iso(),
                 "google_task_id": None,
             },
@@ -1226,12 +1238,14 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
                 "status": "pending",
                 "description": f"Срок оплаты: {deadline_display}. Заявка {order_number}",
                 "order_id": order_id,
+                "created_by": _created_by,
                 "created_at": now_iso(),
                 "google_task_id": None,
             },
         ]:
-            await db.tasks.insert_one(task_data)
-            background_tasks.add_task(_bg_gt_create, task_data)
+            obj = Task(**task_fields)
+            await db.tasks.insert_one(obj.dict())
+            background_tasks.add_task(_bg_gt_create, obj.dict())
         background_tasks.add_task(
             _bg_carrier_payment_calendar,
             deadline_str, reminder_str, carrier_name, order_number,
