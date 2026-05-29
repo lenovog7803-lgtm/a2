@@ -2841,11 +2841,20 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             raise HTTPException(404, "Клиент не найден")
         cp_name = payload.counterparty_name or cp_doc.get("name", "")
 
-        prior_orders = await db.orders.find(
-            {"client_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
-             "unload_date": {"$lt": date_from}},
-            {"_id": 0, "client_rate": 1},
+        all_client_orders = await db.orders.find(
+            {"$or": [{"client_id": cid}, {"client_name": cp_name}],
+             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"}},
+            {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1},
         ).to_list(10000)
+        print(f"[rec_debug] Всего заявок клиента: {len(all_client_orders)} (client_id={cid!r} OR client_name={cp_name!r})")
+
+        prior_orders = [o for o in all_client_orders if _norm_date(o.get("unload_date", "")) < date_from]
+        period_orders = sorted(
+            [o for o in all_client_orders
+             if date_from <= _norm_date(o.get("unload_date", "")) <= date_to],
+            key=lambda o: _norm_date(o.get("unload_date", "")),
+        )
+        print(f"[rec_debug] До периода: {len(prior_orders)}, в периоде: {len(period_orders)}")
 
         all_client_pmts = await db.payments_in.find(
             {"$or": [{"client_id": cid}, {"client_name": cp_name}]}
@@ -2854,12 +2863,6 @@ async def generate_reconciliation(payload: ReconciliationRequest):
 
         prior_pmts_amt = sum(p.get("amount", 0) for p in all_client_pmts if _norm_date(p.get("date", "")) < date_from)
         opening_balance = sum(o.get("client_rate", 0) for o in prior_orders) - prior_pmts_amt
-
-        period_orders = await db.orders.find(
-            {"client_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
-             "unload_date": {"$gte": date_from, "$lte": date_to}},
-            {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1},
-        ).sort("unload_date", 1).to_list(10000)
 
         period_pmts = [p for p in all_client_pmts if date_from <= _norm_date(p.get("date", "")) <= date_to]
         print(f"[rec_debug] Поступления за период: {len(period_pmts)}")
@@ -2890,11 +2893,20 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             raise HTTPException(404, "Перевозчик не найден")
         cp_name = payload.counterparty_name or cp_doc.get("company_name", "")
 
-        prior_orders = await db.orders.find(
-            {"carrier_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
-             "unload_date": {"$lt": date_from}},
-            {"_id": 0, "carrier_rate": 1},
+        all_carrier_orders = await db.orders.find(
+            {"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
+             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"}},
+            {"_id": 0, "order_number": 1, "unload_date": 1, "carrier_rate": 1},
         ).to_list(10000)
+        print(f"[rec_debug] Всего заявок перевозчика: {len(all_carrier_orders)} (carrier_id={cid!r} OR carrier_name={cp_name!r})")
+
+        prior_orders = [o for o in all_carrier_orders if _norm_date(o.get("unload_date", "")) < date_from]
+        period_orders = sorted(
+            [o for o in all_carrier_orders
+             if date_from <= _norm_date(o.get("unload_date", "")) <= date_to],
+            key=lambda o: _norm_date(o.get("unload_date", "")),
+        )
+        print(f"[rec_debug] До периода: {len(prior_orders)}, в периоде: {len(period_orders)}")
 
         all_carrier_pmts = await db.payments_out.find(
             {"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}]}
@@ -2903,12 +2915,6 @@ async def generate_reconciliation(payload: ReconciliationRequest):
 
         prior_pmts_amt = sum(p.get("amount", 0) for p in all_carrier_pmts if _norm_date(p.get("date", "")) < date_from)
         opening_balance = sum(o.get("carrier_rate", 0) for o in prior_orders) - prior_pmts_amt
-
-        period_orders = await db.orders.find(
-            {"carrier_id": cid, "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
-             "unload_date": {"$gte": date_from, "$lte": date_to}},
-            {"_id": 0, "order_number": 1, "unload_date": 1, "carrier_rate": 1},
-        ).sort("unload_date", 1).to_list(10000)
 
         period_pmts = [p for p in all_carrier_pmts if date_from <= _norm_date(p.get("date", "")) <= date_to]
         print(f"[rec_debug] Списания за период: {len(period_pmts)}")
