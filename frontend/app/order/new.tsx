@@ -19,7 +19,7 @@ const EMPTY: any = {
   route_from: '', route_to: '', route_from_address: '', route_to_address: '',
   load_date: '', unload_date: '',
   driver_name: '', driver_phone: '', vehicle_type: '', vehicle_plate: '',
-  client_rate: 0, carrier_rate: 0,
+  client_rate: 0, carrier_rate: 0, carrier_payment_days: 20,
   status: 'new', client_paid: false, carrier_paid: false,
   docs_to_client_sent: false, docs_from_client_received: false,
   docs_to_carrier_sent: false, docs_from_carrier_received: false,
@@ -179,6 +179,7 @@ export default function NewOrder() {
           <View style={{ flex: 1 }}><Field label="Ставка клиента, Br" keyboardType="numeric" value={String(data.client_rate || '')} onChangeText={(v: string) => update({ client_rate: parseFloat(v) || 0 })} /></View>
           <View style={{ flex: 1 }}><Field label="Ставка перев., Br" keyboardType="numeric" value={String(data.carrier_rate || '')} onChangeText={(v: string) => update({ carrier_rate: parseFloat(v) || 0 })} /></View>
         </View>
+        <Field label="Банковских дней на оплату перевозчика" keyboardType="numeric" value={String(data.carrier_payment_days ?? 20)} onChangeText={(v: string) => update({ carrier_payment_days: parseInt(v) || 20 })} />
         <Field label="Груз" value={data.cargo} onChangeText={(v: string) => update({ cargo: v })} />
         <Field label="Заметки" multiline value={data.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 70, textAlignVertical: 'top' }} />
 

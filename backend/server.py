@@ -65,9 +65,10 @@ except Exception as _e:  # pragma: no cover
 try:
     from google_calendar import (create_calendar_event as _gc_create,
                                   update_calendar_event as _gc_update,
-                                  delete_calendar_event as _gc_delete)
+                                  delete_calendar_event as _gc_delete,
+                                  create_simple_calendar_event as _gc_simple)
 except Exception as _e:  # pragma: no cover
-    _gc_create = _gc_update = _gc_delete = None
+    _gc_create = _gc_update = _gc_delete = _gc_simple = None
     logging.getLogger(__name__).warning(f"google_calendar import failed: {_e}")
 
 try:
@@ -502,6 +503,10 @@ class Order(BaseModel):
     created_by: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
     is_overdue: Optional[bool] = False
+    letter_from_carrier_received: bool = False
+    carrier_payment_days: Optional[int] = 20
+    carrier_payment_deadline: Optional[str] = ""
+    carrier_payment_reminder_date: Optional[str] = ""
 
 
 class OrderPayload(BaseModel):
@@ -542,6 +547,8 @@ class OrderPayload(BaseModel):
     doc_url_carrier: Optional[str] = ""
     doc_url_act: Optional[str] = ""
     assigned_to: Optional[str] = ""
+    letter_from_carrier_received: bool = False
+    carrier_payment_days: Optional[int] = 20
 
 
 class OrderUpdate(BaseModel):
@@ -584,6 +591,10 @@ class OrderUpdate(BaseModel):
     calendar_event_id: Optional[str] = None
     calendar_event_url: Optional[str] = None
     assigned_to: Optional[str] = None
+    letter_from_carrier_received: Optional[bool] = None
+    carrier_payment_days: Optional[int] = None
+    carrier_payment_deadline: Optional[str] = None
+    carrier_payment_reminder_date: Optional[str] = None
 
 
 class Lead(BaseModel):
@@ -1012,6 +1023,43 @@ async def _bg_cal_delete(event_id: str):
         logging.getLogger(__name__).error(f"_bg_cal_delete failed: {e}")
 
 
+def add_business_days(start_date: datetime, days: int) -> datetime:
+    current = start_date
+    added = 0
+    while added < days:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            added += 1
+    return current
+
+
+async def _bg_carrier_payment_calendar(deadline_str: str, reminder_str: str, carrier_name: str,
+                                        order_number: str, carrier_rate: float, reminder_days_before: int,
+                                        deadline_display: str):
+    if _gc_simple is None:
+        return
+    try:
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            return
+        await asyncio.to_thread(
+            _gc_simple,
+            f"💰 Оплатить перевозчика: {carrier_name}",
+            deadline_str,
+            f"Заявка {order_number}, сумма {carrier_rate} BYN",
+            token_doc,
+        )
+        await asyncio.to_thread(
+            _gc_simple,
+            f"⚠️ Через {reminder_days_before} дня оплатить: {carrier_name}",
+            reminder_str,
+            f"Срок оплаты: {deadline_display}",
+            token_doc,
+        )
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_carrier_payment_calendar failed: {e}")
+
+
 # ====== Task CRUD endpoints ======
 @api_router.get("/tasks", response_model=List[Task])
 async def list_tasks(current_user: Optional[dict] = Depends(_get_user_from_token)):
@@ -1145,6 +1193,53 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     if update_data.get("carrier_paid") is True and "carrier_paid_date" not in update_data:
         if not old_doc.get("carrier_paid"):
             update_data["carrier_paid_date"] = today
+    if update_data.get("letter_from_carrier_received") and not old_doc.get("letter_from_carrier_received"):
+        days = update_data.get("carrier_payment_days") or old_doc.get("carrier_payment_days") or 20
+        received_date = datetime.now(timezone.utc)
+        payment_deadline = add_business_days(received_date, days)
+        reminder_days_before = 5 if days > 15 else 3
+        reminder_date = add_business_days(received_date, days - reminder_days_before)
+        deadline_str = payment_deadline.strftime("%Y-%m-%d")
+        reminder_str = reminder_date.strftime("%Y-%m-%d")
+        deadline_display = payment_deadline.strftime("%d.%m.%Y")
+        update_data["carrier_payment_deadline"] = deadline_str
+        update_data["carrier_payment_reminder_date"] = reminder_str
+        carrier_name = old_doc.get("carrier_name") or ""
+        order_number = old_doc.get("order_number") or ""
+        carrier_rate = old_doc.get("carrier_rate") or 0
+        for task_data in [
+            {
+                "id": str(uuid.uuid4()),
+                "title": f"Оплатить перевозчика: {carrier_name} — заявка {order_number}",
+                "task_type": "payment",
+                "due_date": deadline_str,
+                "due_time": "10:00",
+                "status": "pending",
+                "description": f"Заявка {order_number}, сумма: {carrier_rate} BYN. Срок: {deadline_display}",
+                "order_id": order_id,
+                "created_at": now_iso(),
+                "google_task_id": None,
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "title": f"⚠️ Через {reminder_days_before} дня оплатить перевозчика: {carrier_name}",
+                "task_type": "reminder",
+                "due_date": reminder_str,
+                "due_time": "09:00",
+                "status": "pending",
+                "description": f"Срок оплаты: {deadline_display}. Заявка {order_number}",
+                "order_id": order_id,
+                "created_at": now_iso(),
+                "google_task_id": None,
+            },
+        ]:
+            await db.tasks.insert_one(task_data)
+            background_tasks.add_task(_bg_gt_create, task_data)
+        background_tasks.add_task(
+            _bg_carrier_payment_calendar,
+            deadline_str, reminder_str, carrier_name, order_number,
+            carrier_rate, reminder_days_before, deadline_display,
+        )
     if update_data:
         await db.orders.update_one({"id": order_id}, {"$set": update_data})
         # Log changes
@@ -1221,7 +1316,8 @@ async def duplicate_order(order_id: str, background_tasks: BackgroundTasks,
     next_number = f"З-{max_num + 1:03d}/{year}"
     exclude = {"_id", "order_number", "created_at", "status", "client_paid", "carrier_paid",
                "client_paid_date", "carrier_paid_date", "calendar_event_id",
-               "letter_to_client_sent", "letter_from_client_received", "is_overdue"}
+               "letter_to_client_sent", "letter_from_client_received", "is_overdue",
+               "letter_from_carrier_received", "carrier_payment_deadline", "carrier_payment_reminder_date"}
     new_data = {k: v for k, v in doc.items() if k not in exclude}
     new_data["id"] = str(uuid.uuid4())
     new_data["order_number"] = next_number

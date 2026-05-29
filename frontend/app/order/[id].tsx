@@ -18,6 +18,22 @@ const daysSince = (dateStr: string): number => {
   return Math.floor((Date.now() - d) / (1000 * 60 * 60 * 24));
 };
 
+const countBusinessDays = (from: Date, to: Date): number => {
+  let count = 0;
+  const cur = new Date(from);
+  while (cur < to) {
+    cur.setDate(cur.getDate() + 1);
+    if (cur.getDay() !== 0 && cur.getDay() !== 6) count++;
+  }
+  return count;
+};
+
+const formatDate = (iso: string): string => {
+  if (!iso) return '';
+  const d = iso.slice(0, 10).split('-');
+  return `${d[2]}.${d[1]}.${d[0]}`;
+};
+
 export default function OrderDetail() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -161,6 +177,13 @@ export default function OrderDetail() {
   const overdue = !order.client_paid && daysSince(order.load_date) >= 15;
   const days = daysSince(order.load_date);
 
+  const daysLeft = order.carrier_payment_deadline
+    ? countBusinessDays(new Date(), new Date(order.carrier_payment_deadline))
+    : null;
+  const deadlineColor = daysLeft !== null
+    ? (daysLeft <= 3 ? '#FF3B30' : daysLeft <= 5 ? '#FF9500' : theme.colors.textSecondary)
+    : theme.colors.textSecondary;
+
   const formatCreatedAt = (iso: string) => {
     if (!iso) return '—';
     const d = iso.slice(0, 10).split('-');
@@ -271,6 +294,12 @@ export default function OrderDetail() {
           amount={formatMoney(order.client_rate)}
           paidDate={order.client_paid_date || (order.client_paid ? order.created_at?.slice(0, 10) : '')}
         />
+        <Field
+          label="Банковских дней на оплату перевозчика"
+          keyboardType="numeric"
+          value={String(order.carrier_payment_days ?? 20)}
+          onChangeText={(v: string) => update({ carrier_payment_days: parseInt(v) || 20 })}
+        />
         <DocToggle
           label="Перевозчик оплачен"
           value={order.carrier_paid}
@@ -281,6 +310,11 @@ export default function OrderDetail() {
           amount={formatMoney(order.carrier_rate)}
           paidDate={order.carrier_paid_date || (order.carrier_paid ? order.created_at?.slice(0, 10) : '')}
         />
+        {daysLeft !== null && !order.carrier_paid && (
+          <Text style={{ fontSize: 11, color: deadlineColor, marginTop: -4, marginBottom: 8, marginLeft: 2 }}>
+            {`До оплаты: ${daysLeft} раб. дн. (${formatDate(order.carrier_payment_deadline)})`}
+          </Text>
+        )}
 
         <Text style={styles.groupLabel}>ДОКУМЕНТЫ</Text>
         <DocToggle
@@ -330,6 +364,17 @@ export default function OrderDetail() {
           offText="Не получены"
           docDate={order.docs_from_carrier_date}
           testID="doc-from-carrier"
+        />
+        <DocToggle
+          label="Письмо на оплату от перевозчика"
+          value={order.letter_from_carrier_received}
+          onToggle={() => {
+            const next = !order.letter_from_carrier_received;
+            update({ letter_from_carrier_received: next });
+          }}
+          onText="Получено"
+          offText="Не получено"
+          testID="letter-from-carrier"
         />
 
         <Field label="Заметки" multiline value={order.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top', marginTop: 16 }} />

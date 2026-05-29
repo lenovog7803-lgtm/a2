@@ -32,6 +32,16 @@ const daysSince = (dateStr: string): number => {
   return Math.floor((Date.now() - d) / (1000 * 60 * 60 * 24));
 };
 
+const countBusinessDays = (from: Date, to: Date): number => {
+  let count = 0;
+  const cur = new Date(from);
+  while (cur < to) {
+    cur.setDate(cur.getDate() + 1);
+    if (cur.getDay() !== 0 && cur.getDay() !== 6) count++;
+  }
+  return count;
+};
+
 const isOverdue = (o: any) => !o.client_paid && daysSince(o.load_date) >= 15;
 
 export default function Orders() {
@@ -273,6 +283,11 @@ function OrderCard({ order, onPress, testID }: any) {
         <View style={{ width: 12 }} />
         <View style={[styles.payDot, { backgroundColor: order.carrier_paid ? theme.colors.profit : theme.colors.surfaceHigh }]} />
         <Text style={[styles.payText, { color: order.carrier_paid ? theme.colors.profit : theme.colors.textTertiary }]}>{order.carrier_paid ? 'Перевозчик оплачен' : 'Долг перевозчику'}</Text>
+        {!order.carrier_paid && order.letter_from_carrier_received && order.carrier_payment_deadline && (() => {
+          const dl = countBusinessDays(new Date(), new Date(order.carrier_payment_deadline));
+          const color = dl <= 3 ? '#FF3B30' : dl <= 5 ? '#FF9500' : theme.colors.textTertiary;
+          return <Text style={[styles.payText, { color, marginLeft: 4 }]}>{`💸 ${dl} дн.`}</Text>;
+        })()}
       </View>
     </TouchableOpacity>
   );

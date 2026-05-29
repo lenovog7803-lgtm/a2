@@ -115,3 +115,22 @@ def delete_calendar_event(event_id: str, token_doc: Dict[str, Any]) -> None:
         service.events().delete(calendarId="primary", eventId=event_id).execute()
     except Exception as e:
         logger.error(f"delete_calendar_event failed: {e}")
+
+
+def create_simple_calendar_event(title: str, date: str, description: str, token_doc: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Create a simple all-day event with arbitrary title/date/description."""
+    try:
+        service = _build_service(token_doc)
+        end_dt = datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)
+        body = {
+            "summary": title,
+            "description": description,
+            "start": {"date": date},
+            "end": {"date": end_dt.strftime("%Y-%m-%d")},
+            "colorId": "11",
+        }
+        result = service.events().insert(calendarId="primary", body=body).execute()
+        return {"event_id": result.get("id", ""), "html_link": result.get("htmlLink", "")}
+    except Exception as e:
+        logger.error(f"create_simple_calendar_event failed: {e}")
+        return None
