@@ -1,36 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Tabs, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { Platform, StyleSheet, View, Text, TouchableOpacity } from 'react-native';
-import { LayoutDashboard, Package, Users, Truck, CheckSquare, Phone, DollarSign } from 'lucide-react-native';
+import { LayoutDashboard, Navigation, Users, BarChart2 } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export default function TabsLayout() {
-  const [role, setRole] = useState<string>('');
+export default function TruckLayout() {
   const router = useRouter();
 
-  useEffect(() => {
-    AsyncStorage.getItem('user_role').then(r => setRole(r || '')).catch(() => {});
-  }, []);
-
-  const isManager = role === 'manager';
-
-  const switchToTruck = async () => {
-    await AsyncStorage.setItem('app_mode', 'truck');
-    router.replace('/(truck)/dashboard');
+  const switchToExp = async () => {
+    await AsyncStorage.setItem('app_mode', 'exp');
+    router.replace('/(tabs)/dashboard');
   };
 
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.modeBar}>
         <View style={styles.modeToggle}>
-          <View style={[styles.modeBtn, styles.modeBtnActive]}>
-            <Text style={[styles.modeBtnText, styles.modeBtnTextActive]}>Экспедирование</Text>
-          </View>
-          <TouchableOpacity style={styles.modeBtn} onPress={switchToTruck}>
-            <Text style={styles.modeBtnText}>Моя Машина</Text>
+          <TouchableOpacity style={styles.modeBtn} onPress={switchToExp}>
+            <Text style={styles.modeBtnText}>Экспедирование</Text>
           </TouchableOpacity>
+          <View style={[styles.modeBtn, styles.modeBtnActive]}>
+            <Text style={[styles.modeBtnText, styles.modeBtnTextActive]}>Моя Машина</Text>
+          </View>
         </View>
       </View>
       <Tabs
@@ -57,18 +50,10 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="finance"
+          name="trips"
           options={{
-            title: 'Финансы',
-            href: isManager ? null : undefined,
-            tabBarIcon: ({ color }) => <DollarSign size={20} color={color} strokeWidth={1.6} />,
-          }}
-        />
-        <Tabs.Screen
-          name="orders"
-          options={{
-            title: 'Заявки',
-            tabBarIcon: ({ color }) => <Package size={20} color={color} strokeWidth={1.6} />,
+            title: 'Рейсы',
+            tabBarIcon: ({ color }) => <Navigation size={20} color={color} strokeWidth={1.6} />,
           }}
         />
         <Tabs.Screen
@@ -79,24 +64,10 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="carriers"
+          name="finances"
           options={{
-            title: 'Перевозчики',
-            tabBarIcon: ({ color }) => <Truck size={20} color={color} strokeWidth={1.6} />,
-          }}
-        />
-        <Tabs.Screen
-          name="tasks"
-          options={{
-            title: 'Задачи',
-            tabBarIcon: ({ color }) => <CheckSquare size={20} color={color} strokeWidth={1.6} />,
-          }}
-        />
-        <Tabs.Screen
-          name="leads"
-          options={{
-            title: 'Обзвон',
-            tabBarIcon: ({ color }) => <Phone size={20} color={color} strokeWidth={1.6} />,
+            title: 'Финансы',
+            tabBarIcon: ({ color }) => <BarChart2 size={20} color={color} strokeWidth={1.6} />,
           }}
         />
       </Tabs>

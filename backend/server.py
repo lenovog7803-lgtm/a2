@@ -3149,6 +3149,313 @@ async def restore_backup(backup_id: str, current_user: dict = Depends(_require_u
     return {"ok": True, "restored_at": now_iso()}
 
 
+# ====== TRUCK MODULE ======
+
+_TRUCK_FINANCIALS_DEFAULTS = {
+    "base_rent": 1900,
+    "base_rate_threshold": 2500,
+    "bonus_split_pct": 50,
+    "driver_fix_salary": 1200,
+    "driver_per_trip": 150,
+    "fszn_pct": 35,
+    "to_kasko_monthly": 875,
+    "fuel_rate_per_100km": 15,
+    "fuel_price_per_liter": 2.1,
+    "tax_ip_pct": 20,
+    "mgr_fix": 600,
+    "mgr_pct": 5,
+    "mgr_fszn_pct": 35,
+    "investor_company_name": "",
+    "machine_cost": 89000,
+}
+
+
+def _calc_investor_rate(rate_client: float, settings: dict):
+    base_rent = settings.get("base_rent", 1900)
+    threshold = settings.get("base_rate_threshold", 2500)
+    split_pct = settings.get("bonus_split_pct", 50)
+    if rate_client <= threshold:
+        return base_rent, 0.0
+    bonus = round((rate_client - threshold) * split_pct / 100)
+    return base_rent + bonus, float(bonus)
+
+
+def _calc_fuel(mileage: float, settings: dict):
+    rate = settings.get("fuel_rate_per_100km", 15)
+    price = settings.get("fuel_price_per_liter", 2.1)
+    liters = mileage * rate / 100
+    cost = liters * price
+    return round(liters, 1), round(cost, 2)
+
+
+def _add_business_days_truck(start: datetime, days: int) -> datetime:
+    cur = start
+    added = 0
+    while added < days:
+        cur += timedelta(days=1)
+        if cur.weekday() < 5:
+            added += 1
+    return cur
+
+
+async def _next_truck_trip_number() -> str:
+    import re as _re
+    year = datetime.now(timezone.utc).year
+    docs = await db.truck_trips.find({}, {"_id": 0, "trip_number": 1}).to_list(5000)
+    pattern = _re.compile(r"ТМ-(\d+)/(\d{4})")
+    max_num = 0
+    for d in docs:
+        m = pattern.search(d.get("trip_number", "") or "")
+        if m:
+            n, y = int(m.group(1)), int(m.group(2))
+            if y == year and n > max_num:
+                max_num = n
+    return f"ТМ-{max_num + 1:03d}/{year}"
+
+
+async def _get_truck_settings() -> dict:
+    doc = await db.truck_financials.find_one({"_id": "main"}, {"_id": 0})
+    if not doc:
+        return dict(_TRUCK_FINANCIALS_DEFAULTS)
+    result = dict(_TRUCK_FINANCIALS_DEFAULTS)
+    result.update(doc)
+    return result
+
+
+def _enrich_truck_trip(trip: dict, settings: dict) -> dict:
+    rate_client = trip.get("rate_client") or 0
+    mileage = trip.get("mileage") or 0
+    rate_investor, bonus = _calc_investor_rate(rate_client, settings)
+    fuel_plan, fuel_cost_plan = _calc_fuel(mileage, settings)
+    trip["rate_investor"] = rate_investor
+    trip["bonus_amount"] = bonus
+    trip["fuel_liters_plan"] = fuel_plan
+    trip["fuel_cost_plan"] = fuel_cost_plan
+    return trip
+
+
+@api_router.get("/truck/trips")
+async def list_truck_trips(status: Optional[str] = None, month: Optional[str] = None,
+                            client_id: Optional[str] = None):
+    q: dict = {"deleted": {"$ne": True}}
+    if status:
+        q["status"] = status
+    if client_id:
+        q["client_id"] = client_id
+    if month:
+        q["$or"] = [
+            {"date_loading": {"$regex": f"^{month}"}},
+            {"date_created": {"$regex": f"^{month}"}},
+        ]
+    docs = await db.truck_trips.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    settings = await _get_truck_settings()
+    return [_enrich_truck_trip(d, settings) for d in docs]
+
+
+@api_router.post("/truck/trips")
+async def create_truck_trip(request: Request):
+    data = await request.json()
+    settings = await _get_truck_settings()
+    data["id"] = str(uuid.uuid4())
+    data.setdefault("trip_number", await _next_truck_trip_number())
+    data.setdefault("created_at", now_iso())
+    data.setdefault("date_created", now_iso())
+    data.setdefault("status", "новая")
+    data.setdefault("payment_client_status", "не оплачен")
+    data.setdefault("payment_investor_status", "не выплачено")
+    data.setdefault("carrier_payment_days", 20)
+    data.setdefault("deleted", False)
+    data.setdefault("documents_sent_client", False)
+    data.setdefault("documents_received_investor", False)
+    data = _enrich_truck_trip(data, settings)
+    await db.truck_trips.insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+
+@api_router.get("/truck/trips/{trip_id}")
+async def get_truck_trip(trip_id: str):
+    doc = await db.truck_trips.find_one({"id": trip_id, "deleted": {"$ne": True}}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Trip not found")
+    settings = await _get_truck_settings()
+    return _enrich_truck_trip(doc, settings)
+
+
+@api_router.put("/truck/trips/{trip_id}")
+async def update_truck_trip(trip_id: str, request: Request, background_tasks: BackgroundTasks):
+    data = await request.json()
+    old_doc = await db.truck_trips.find_one({"id": trip_id}, {"_id": 0})
+    if not old_doc:
+        raise HTTPException(404, "Trip not found")
+    settings = await _get_truck_settings()
+    data = _enrich_truck_trip(data, settings)
+    # Handle investor payment deadline when docs received
+    if data.get("documents_received_investor") and not old_doc.get("documents_received_investor"):
+        days = data.get("carrier_payment_days") or old_doc.get("carrier_payment_days") or 20
+        deadline = _add_business_days_truck(datetime.now(timezone.utc), days)
+        data["investor_payment_deadline"] = deadline.isoformat()
+        # Create reminder task
+        deadline_str = deadline.strftime("%Y-%m-%d")
+        trip_number = old_doc.get("trip_number", "")
+        investor_name = settings.get("investor_company_name", "Инвестор")
+        rate_investor = data.get("rate_investor") or old_doc.get("rate_investor") or 0
+        task_obj = {
+            "id": str(uuid.uuid4()),
+            "title": f"Выплатить инвестору: {investor_name} — рейс {trip_number}",
+            "task_type": "payment",
+            "due_date": deadline_str,
+            "due_time": "10:00",
+            "status": "pending",
+            "description": f"Рейс {trip_number}, сумма: {rate_investor} BYN. Срок: {deadline.strftime('%d.%m.%Y')}",
+            "created_by": "",
+            "created_at": now_iso(),
+            "google_task_id": None,
+        }
+        await db.tasks.insert_one(task_obj)
+        background_tasks.add_task(_bg_gt_create, task_obj)
+    await db.truck_trips.update_one({"id": trip_id}, {"$set": data})
+    doc = await db.truck_trips.find_one({"id": trip_id}, {"_id": 0})
+    return _enrich_truck_trip(doc, settings)
+
+
+@api_router.delete("/truck/trips/{trip_id}")
+async def delete_truck_trip(trip_id: str):
+    await db.truck_trips.update_one({"id": trip_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
+    return {"ok": True}
+
+
+@api_router.get("/truck/clients")
+async def list_truck_clients():
+    docs = await db.truck_clients.find({"is_active": {"$ne": False}}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return docs
+
+
+@api_router.post("/truck/clients")
+async def create_truck_client(request: Request):
+    data = await request.json()
+    data["id"] = str(uuid.uuid4())
+    data.setdefault("created_at", now_iso())
+    data.setdefault("is_active", True)
+    await db.truck_clients.insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+
+@api_router.get("/truck/clients/{client_id}")
+async def get_truck_client(client_id: str):
+    doc = await db.truck_clients.find_one({"id": client_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Client not found")
+    return doc
+
+
+@api_router.put("/truck/clients/{client_id}")
+async def update_truck_client(client_id: str, request: Request):
+    data = await request.json()
+    await db.truck_clients.update_one({"id": client_id}, {"$set": data})
+    doc = await db.truck_clients.find_one({"id": client_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Client not found")
+    return doc
+
+
+@api_router.get("/truck/financials")
+async def get_truck_financials():
+    return await _get_truck_settings()
+
+
+@api_router.put("/truck/financials")
+async def update_truck_financials(request: Request):
+    data = await request.json()
+    await db.truck_financials.update_one({"_id": "main"}, {"$set": data}, upsert=True)
+    return await _get_truck_settings()
+
+
+@api_router.get("/truck/analytics")
+async def truck_analytics(period: str = "current"):
+    now_dt = datetime.now(timezone.utc)
+    cur_ym = now_dt.strftime("%Y-%m")
+    py, pm = (now_dt.year - 1, 12) if now_dt.month == 1 else (now_dt.year, now_dt.month - 1)
+    prev_ym = f"{py:04d}-{pm:02d}"
+
+    all_trips = await db.truck_trips.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
+    settings = await _get_truck_settings()
+
+    if period == "current":
+        trips = [t for t in all_trips if (t.get("date_loading") or t.get("date_created", ""))[:7] == cur_ym]
+    elif period == "previous":
+        trips = [t for t in all_trips if (t.get("date_loading") or t.get("date_created", ""))[:7] == prev_ym]
+    else:
+        trips = all_trips
+
+    trips = [_enrich_truck_trip(t, settings) for t in trips]
+
+    trips_count = len(trips)
+    revenue = sum(t.get("rate_client") or 0 for t in trips)
+    investor_total = sum(t.get("rate_investor") or 0 for t in trips)
+    fuel_total = sum((t.get("fuel_cost_fact") or t.get("fuel_cost_plan") or 0) for t in trips)
+    driver_salary_total = sum(t.get("driver_salary_trip") or 0 for t in trips)
+    margin_ip = revenue - investor_total
+    tax_ip_pct = settings.get("tax_ip_pct", 20)
+    tax = round(margin_ip * tax_ip_pct / 100, 2)
+    net_ip = round(margin_ip - tax, 2)
+    to_kasko = settings.get("to_kasko_monthly", 875)
+    fszn_pct = settings.get("fszn_pct", 35)
+    fszn = round(driver_salary_total * fszn_pct / 100, 2)
+    investor_net = round(investor_total - fuel_total - driver_salary_total - fszn - to_kasko, 2)
+    debt_to_investor = sum(
+        (t.get("rate_investor") or 0) for t in trips
+        if t.get("payment_investor_status") != "выплачено"
+    )
+
+    machine_cost = settings.get("machine_cost", 89000)
+    all_enriched = [_enrich_truck_trip(t, settings) for t in all_trips]
+    # Estimate monthly avg investor net from all trips grouped by month
+    monthly_map: dict = {}
+    for t in all_enriched:
+        ym = (t.get("date_loading") or t.get("date_created", ""))[:7]
+        if ym and len(ym) == 7:
+            if ym not in monthly_map:
+                monthly_map[ym] = 0.0
+            inv = (t.get("rate_investor") or 0) - (t.get("fuel_cost_fact") or t.get("fuel_cost_plan") or 0) - (t.get("driver_salary_trip") or 0)
+            monthly_map[ym] += inv
+    if monthly_map:
+        avg_monthly = sum(monthly_map.values()) / len(monthly_map)
+        payback_months_total = round(machine_cost / avg_monthly) if avg_monthly > 0 else 0
+    else:
+        avg_monthly = 0
+        payback_months_total = 0
+
+    first_trip_ym = min(monthly_map.keys()) if monthly_map else cur_ym
+    from_year, from_month = int(first_trip_ym[:4]), int(first_trip_ym[5:7])
+    payback_months_elapsed = (now_dt.year - from_year) * 12 + (now_dt.month - from_month)
+
+    unpaid_trips = [
+        {"id": t.get("id"), "trip_number": t.get("trip_number"), "route": t.get("route"),
+         "rate_investor": t.get("rate_investor"), "date_loading": t.get("date_loading")}
+        for t in all_enriched if t.get("payment_investor_status") != "выплачено"
+    ]
+
+    return {
+        "period": period,
+        "trips_count": trips_count,
+        "revenue": revenue,
+        "investor_total": investor_total,
+        "fuel_total": fuel_total,
+        "driver_salary_total": driver_salary_total,
+        "fszn": fszn,
+        "to_kasko": to_kasko,
+        "margin_ip": margin_ip,
+        "tax": tax,
+        "net_ip": net_ip,
+        "investor_net": investor_net,
+        "debt_to_investor": debt_to_investor,
+        "payback_months_elapsed": payback_months_elapsed,
+        "payback_months_total": payback_months_total,
+        "unpaid_trips": unpaid_trips,
+        "trips_detail": trips,
+    }
+
+
 @api_router.get("/")
 async def root():
     return {"message": "Logistics CRM API"}

@@ -183,4 +183,31 @@ export const api = {
   },
   seed: () => req('/seed', { method: 'POST' }),
   globalSearch: (q: string) => req(`/search?q=${encodeURIComponent(q)}`),
+  truck: {
+    trips: {
+      list: (params?: { status?: string; month?: string; client_id?: string }) => {
+        const p = new URLSearchParams();
+        if (params?.status) p.append('status', params.status);
+        if (params?.month) p.append('month', params.month);
+        if (params?.client_id) p.append('client_id', params.client_id);
+        const qs = p.toString();
+        return req(`/truck/trips${qs ? '?' + qs : ''}`);
+      },
+      get: (id: string) => req(`/truck/trips/${id}`),
+      create: (data: any) => req('/truck/trips', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: string, data: any) => req(`/truck/trips/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      remove: (id: string) => req(`/truck/trips/${id}`, { method: 'DELETE' }),
+    },
+    clients: {
+      list: () => req('/truck/clients'),
+      get: (id: string) => req(`/truck/clients/${id}`),
+      create: (data: any) => req('/truck/clients', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: string, data: any) => req(`/truck/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    },
+    financials: {
+      get: () => req('/truck/financials'),
+      update: (data: any) => req('/truck/financials', { method: 'PUT', body: JSON.stringify(data) }),
+    },
+    analytics: (period: string) => req(`/truck/analytics?period=${encodeURIComponent(period)}`),
+  },
 };
