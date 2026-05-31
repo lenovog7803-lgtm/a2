@@ -8,27 +8,16 @@ import { ChevronLeft } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 
-const STATUSES = ['новая', 'забрали', 'доставлено', 'отменён'];
+const STATUSES = ['новая', 'забрали', 'доставлено'];
 
 export default function NewTruckTrip() {
   const router = useRouter();
   const [trucks, setTrucks] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<any>({
-    truck_id: '',
-    truck_name: '',
-    driver_name: '',
-    driver_phone: '',
-    date_loading: '',
-    date_unloading: '',
-    mileage: '',
-    status: 'новая',
-    carrier_payment_days: '20',
-    fuel_liters_fact: '',
-    documents_sent_client: false,
-    documents_received_client: false,
-    payment_investor_status: 'не выплачено',
-    notes: '',
+    truck_id: '', truck_name: '', driver_name: '', driver_phone: '',
+    date_loading: '', date_unloading: '', mileage: '',
+    status: 'новая', notes: '',
   });
 
   useEffect(() => {
@@ -38,19 +27,14 @@ export default function NewTruckTrip() {
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
   const selectTruck = (t: any) => {
-    set('truck_id', t.id);
-    set('truck_name', t.name || '');
-    set('driver_name', t.driver_name || '');
-    set('driver_phone', t.driver_phone || '');
+    set('truck_id', t.id); set('truck_name', t.name || '');
+    set('driver_name', t.driver_name || ''); set('driver_phone', t.driver_phone || '');
   };
 
   const save = async () => {
     setSaving(true);
     try {
-      const payload: any = { ...form };
-      ['mileage', 'fuel_liters_fact', 'carrier_payment_days'].forEach(k => {
-        if (payload[k] !== '') payload[k] = Number(payload[k]);
-      });
+      const payload = { ...form, mileage: form.mileage ? Number(form.mileage) : 0 };
       const trip = await api.truck.trips.create(payload) as any;
       router.replace(`/truck-trip/${trip.id}`);
     } catch (e: any) { Alert.alert('Ошибка', e.message); }
@@ -66,104 +50,54 @@ export default function NewTruckTrip() {
           {saving ? <ActivityIndicator size="small" color="#000" /> : <Text style={styles.saveBtnText}>Создать</Text>}
         </TouchableOpacity>
       </View>
-
       <ScrollView contentContainerStyle={styles.content}>
-        <Sec title="Машина">
+        <S title="Машина">
           {trucks.length > 0 ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {trucks.map(t => (
-                  <TouchableOpacity
-                    key={t.id}
-                    style={[styles.chip, form.truck_id === t.id && styles.chipActive]}
-                    onPress={() => selectTruck(t)}
-                  >
-                    <Text style={[styles.chipText, form.truck_id === t.id && styles.chipTextActive]}>
-                      {t.name} · {t.plate}
-                    </Text>
+                  <TouchableOpacity key={t.id} style={[styles.chip, form.truck_id === t.id && styles.chipActive]} onPress={() => selectTruck(t)}>
+                    <Text style={[styles.chipText, form.truck_id === t.id && styles.chipTextActive]}>{t.name} · {t.plate}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
             </ScrollView>
           ) : (
-            <Text style={styles.hint}>Нет машин — сначала добавьте в «Финансы → Машины»</Text>
+            <Text style={styles.hint}>Нет машин — добавьте в Финансы → Машины</Text>
           )}
           <F label="Водитель" value={form.driver_name} onChange={v => set('driver_name', v)} />
-          <F label="Телефон водителя" value={form.driver_phone} onChange={v => set('driver_phone', v)} keyboardType="phone-pad" />
-        </Sec>
-
-        <Sec title="Даты и пробег">
-          <F label="Дата загрузки" value={form.date_loading} onChange={v => set('date_loading', v)} placeholder="2026-06-01" />
-          <F label="Дата выгрузки" value={form.date_unloading} onChange={v => set('date_unloading', v)} placeholder="2026-06-03" />
+        </S>
+        <S title="Даты и пробег">
+          <F label="Дата погрузки" value={form.date_loading} onChange={v => set('date_loading', v)} placeholder="2026-06-01" />
+          <F label="Дата разгрузки" value={form.date_unloading} onChange={v => set('date_unloading', v)} placeholder="2026-06-03" />
           <F label="Пробег, км" value={form.mileage} onChange={v => set('mileage', v)} keyboardType="numeric" />
-          <F label="Топливо факт, л" value={form.fuel_liters_fact} onChange={v => set('fuel_liters_fact', v)} keyboardType="numeric" />
-        </Sec>
-
-        <Sec title="Статус">
-          <Pick options={STATUSES} value={form.status} onChange={v => set('status', v)} />
-        </Sec>
-
-        <Sec title="Документы">
-          <Chk label="Документы высланы клиентам" value={form.documents_sent_client} onChange={v => set('documents_sent_client', v)} />
-          <Chk label="Документы получены от клиента" value={form.documents_received_client} onChange={v => set('documents_received_client', v)} />
-          <F label="Банковских дней на выплату инвестору" value={form.carrier_payment_days} onChange={v => set('carrier_payment_days', v)} keyboardType="numeric" />
-        </Sec>
-
-        <Sec title="Примечания">
-          <TextInput
-            style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
-            value={form.notes}
-            onChangeText={v => set('notes', v)}
-            multiline
-            placeholder="Заметки..."
-            placeholderTextColor={theme.colors.textTertiary}
-          />
-        </Sec>
+        </S>
+        <S title="Статус">
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {STATUSES.map(s => (
+                <TouchableOpacity key={s} style={[styles.chip, form.status === s && styles.chipActive]} onPress={() => set('status', s)}>
+                  <Text style={[styles.chipText, form.status === s && styles.chipTextActive]}>{s}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        </S>
+        <S title="Примечания">
+          <TextInput style={[styles.input, { height: 70, textAlignVertical: 'top' }]} value={form.notes} onChangeText={v => set('notes', v)} multiline placeholderTextColor={theme.colors.textTertiary} />
+        </S>
       </ScrollView>
     </View>
   );
 }
 
-function Sec({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.sec}>
-      <Text style={styles.secTitle}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-
+function S({ title, children }: any) { return <View style={styles.sec}><Text style={styles.secTitle}>{title}</Text>{children}</View>; }
 function F({ label, value, onChange, placeholder, keyboardType }: any) {
   return (
     <View style={styles.fieldRow}>
       <Text style={styles.label}>{label}</Text>
       <TextInput style={styles.input} value={String(value ?? '')} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={theme.colors.textTertiary} keyboardType={keyboardType || 'default'} />
     </View>
-  );
-}
-
-function Pick({ options, value, onChange }: any) {
-  return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        {options.map((o: string) => (
-          <TouchableOpacity key={o} style={[styles.chip, value === o && styles.chipActive]} onPress={() => onChange(o)}>
-            <Text style={[styles.chipText, value === o && styles.chipTextActive]}>{o}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </ScrollView>
-  );
-}
-
-function Chk({ label, value, onChange }: any) {
-  return (
-    <TouchableOpacity style={styles.checkRow} onPress={() => onChange(!value)}>
-      <View style={[styles.checkbox, value && styles.checkboxActive]}>
-        {value && <Text style={{ color: '#000', fontSize: 11, fontWeight: '700' }}>✓</Text>}
-      </View>
-      <Text style={styles.checkLabel}>{label}</Text>
-    </TouchableOpacity>
   );
 }
 
@@ -178,14 +112,10 @@ const styles = StyleSheet.create({
   secTitle: { fontSize: 11, fontWeight: '700', color: theme.colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 },
   fieldRow: { marginBottom: 10 },
   label: { fontSize: 12, color: theme.colors.textTertiary, fontWeight: '600', marginBottom: 4 },
-  input: { backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 12, paddingVertical: 11, fontSize: 15, color: theme.colors.textPrimary },
+  input: { backgroundColor: theme.colors.surfaceElevated, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: theme.colors.textPrimary },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
   chipActive: { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
   chipText: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '600' },
   chipTextActive: { color: '#000' },
-  checkRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
-  checkbox: { width: 20, height: 20, borderRadius: 5, borderWidth: 2, borderColor: theme.colors.borderStrong, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
-  checkboxActive: { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
-  checkLabel: { fontSize: 14, color: theme.colors.textPrimary },
   hint: { fontSize: 13, color: theme.colors.textTertiary, marginBottom: 8 },
 });

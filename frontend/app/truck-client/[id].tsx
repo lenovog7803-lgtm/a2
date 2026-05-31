@@ -18,7 +18,7 @@ const FIELDS = [
   { key: 'bank', label: 'Банк' },
   { key: 'rs', label: 'Расчётный счёт' },
   { key: 'bik', label: 'БИК' },
-  { key: 'director', label: 'Директор / подписант' },
+  { key: 'director', label: 'Директор' },
   { key: 'industry', label: 'Отрасль' },
 ];
 
@@ -33,7 +33,7 @@ export default function TruckClientDetail() {
   useEffect(() => {
     api.truck.clients.get(id!).then((d: any) => {
       setForm(d);
-      setHistory(d.routes_history || []);
+      setHistory(d.orders_history || []);
     }).catch(() => Alert.alert('Ошибка')).finally(() => setLoading(false));
   }, [id]);
 
@@ -74,27 +74,24 @@ export default function TruckClientDetail() {
         ))}
         <View style={styles.fieldRow}>
           <Text style={styles.label}>Примечания</Text>
-          <TextInput
-            style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
-            value={form.notes ?? ''}
-            onChangeText={v => set('notes', v)}
-            multiline
-            placeholderTextColor={theme.colors.textTertiary}
-          />
+          <TextInput style={[styles.input, { height: 80, textAlignVertical: 'top' }]} value={form.notes ?? ''} onChangeText={v => set('notes', v)} multiline placeholderTextColor={theme.colors.textTertiary} />
         </View>
 
         {history.length > 0 && (
           <View style={styles.historyBlock}>
-            <Text style={styles.historyTitle}>История маршрутов</Text>
-            {history.map((r, i) => (
-              <View key={i} style={styles.historyRow}>
+            <Text style={styles.historyTitle}>ИСТОРИЯ ЗАЯВОК</Text>
+            {history.map((o, i) => (
+              <TouchableOpacity key={i} style={styles.historyRow} onPress={() => router.push(`/truck-order/${o.id}`)}>
                 <MapPin size={12} color={theme.colors.accent} />
                 <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={styles.historyRoute}>{r.route || '—'}</Text>
-                  <Text style={styles.historyDate}>{(r.created_at || '').slice(0, 10)}</Text>
+                  <Text style={styles.historyOrder}>{o.order_number || '—'}</Text>
+                  <Text style={styles.historyRoute}>
+                    {o.city_loading && o.city_unloading ? `${o.city_loading} → ${o.city_unloading}` : '—'}
+                  </Text>
+                  <Text style={styles.historyDate}>{(o.created_at || '').slice(0, 10)}</Text>
                 </View>
-                <Text style={styles.historyRate}>{formatMoney(r.rate_client ?? 0)}</Text>
-              </View>
+                <Text style={styles.historyRate}>{formatMoney(o.rate_client ?? 0)}</Text>
+              </TouchableOpacity>
             ))}
           </View>
         )}
@@ -113,11 +110,12 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 60 },
   fieldRow: { marginBottom: 12 },
   label: { fontSize: 12, color: theme.colors.textTertiary, fontWeight: '600', marginBottom: 4 },
-  input: { backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 12, paddingVertical: 11, fontSize: 15, color: theme.colors.textPrimary },
+  input: { backgroundColor: theme.colors.surfaceElevated, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: theme.colors.textPrimary },
   historyBlock: { marginTop: 8, backgroundColor: theme.colors.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: theme.colors.border },
-  historyTitle: { fontSize: 11, fontWeight: '700', color: theme.colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 },
-  historyRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  historyRoute: { fontSize: 13, fontWeight: '600', color: theme.colors.textPrimary },
+  historyTitle: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 12 },
+  historyRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  historyOrder: { fontSize: 13, fontWeight: '700', color: theme.colors.accent },
+  historyRoute: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 1 },
   historyDate: { fontSize: 11, color: theme.colors.textTertiary, marginTop: 1 },
-  historyRate: { fontSize: 13, fontWeight: '700', color: theme.colors.accent },
+  historyRate: { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary },
 });

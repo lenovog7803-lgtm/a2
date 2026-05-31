@@ -25,8 +25,8 @@ export default function RootLayout() {
           <Stack.Screen name="truck-trip/[id]" />
           <Stack.Screen name="truck-client/new" />
           <Stack.Screen name="truck-client/[id]" />
-          <Stack.Screen name="truck-route/new" />
-          <Stack.Screen name="truck-route/[id]" />
+          <Stack.Screen name="truck-order/new" />
+          <Stack.Screen name="truck-order/[id]" />
           <Stack.Screen name="truck-truck/new" />
           <Stack.Screen name="truck-truck/[id]" />
         </Stack>

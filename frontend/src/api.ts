@@ -203,11 +203,12 @@ export const api = {
       update: (id: string, data: any) => req(`/truck/trips/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
       remove: (id: string) => req(`/truck/trips/${id}`, { method: 'DELETE' }),
     },
-    routes: {
-      list: (trip_id: string) => req(`/truck/trips/${trip_id}/routes`),
-      create: (trip_id: string, data: any) => req(`/truck/trips/${trip_id}/routes`, { method: 'POST', body: JSON.stringify(data) }),
-      update: (id: string, data: any) => req(`/truck/routes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-      remove: (id: string) => req(`/truck/routes/${id}`, { method: 'DELETE' }),
+    orders: {
+      list: (trip_id: string) => req(`/truck/trips/${trip_id}/orders`),
+      get: (id: string) => req(`/truck/orders/${id}`),
+      create: (trip_id: string, data: any) => req(`/truck/trips/${trip_id}/orders`, { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: string, data: any) => req(`/truck/orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      remove: (id: string) => req(`/truck/orders/${id}`, { method: 'DELETE' }),
     },
     clients: {
       list: () => req('/truck/clients'),

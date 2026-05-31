@@ -3149,46 +3149,83 @@ async def restore_backup(backup_id: str, current_user: dict = Depends(_require_u
     return {"ok": True, "restored_at": now_iso()}
 
 
-# ====== TRUCK MODULE v2 ======
+# ====== TRUCK MODULE v3 ======
 
-_TRUCK_FINANCIALS_DEFAULTS = {
+_TRUCK_FIN_DEFAULTS = {
     "base_rent": 1900,
     "base_rate_threshold": 2500,
     "bonus_split_pct": 50,
-    "driver_fix_salary": 1200,
-    "driver_per_trip": 150,
-    "fszn_pct": 35,
-    "to_kasko_monthly": 875,
     "fuel_rate_per_100km": 15,
     "fuel_price_per_liter": 2.1,
     "tax_ip_pct": 20,
-    "mgr_fix": 600,
-    "mgr_pct": 5,
-    "mgr_fszn_pct": 35,
     "investor_company_name": "",
     "machine_cost": 89000,
 }
 
 
-def _calc_investor_rate_v2(rate_total: float, settings: dict):
-    base_rent = settings.get("base_rent", 1900)
-    threshold = settings.get("base_rate_threshold", 2500)
-    split_pct = settings.get("bonus_split_pct", 50)
+async def _get_truck_fin() -> dict:
+    doc = await db.truck_financials.find_one({"_id": "main"}, {"_id": 0})
+    result = dict(_TRUCK_FIN_DEFAULTS)
+    if doc:
+        result.update(doc)
+    return result
+
+
+async def _recalc_trip(trip_id: str) -> tuple:
+    orders = await db.truck_orders.find(
+        {"trip_id": trip_id, "deleted": {"$ne": True}}, {"_id": 0}
+    ).to_list(1000)
+    rate_total = sum(o.get("rate_client", 0) for o in orders)
+    fin = await _get_truck_fin()
+    threshold = fin.get("base_rate_threshold", 2500)
+    base_rent = fin.get("base_rent", 1900)
+    bonus_pct = fin.get("bonus_split_pct", 50)
     if rate_total <= threshold:
-        return base_rent, 0.0
-    bonus = round((rate_total - threshold) * split_pct / 100)
-    return base_rent + bonus, float(bonus)
+        rate_investor = base_rent
+        bonus = 0.0
+    else:
+        bonus = round((rate_total - threshold) * bonus_pct / 100)
+        rate_investor = base_rent + bonus
+    await db.truck_trips.update_one(
+        {"id": trip_id},
+        {"$set": {"rate_total": rate_total, "rate_investor": rate_investor, "bonus_amount": float(bonus)}},
+    )
+    return rate_total, rate_investor, float(bonus)
 
 
-def _calc_fuel_v2(mileage: float, settings: dict):
-    rate = settings.get("fuel_rate_per_100km", 15)
-    price = settings.get("fuel_price_per_liter", 2.1)
-    liters = mileage * rate / 100
-    cost = liters * price
-    return round(liters, 1), round(cost, 2)
+async def _next_trip_number() -> str:
+    docs = await db.truck_trips.find(
+        {"deleted": {"$ne": True}}, {"_id": 0, "trip_number": 1, "created_at": 1}
+    ).sort("created_at", -1).to_list(1)
+    if docs and docs[0].get("trip_number"):
+        try:
+            num = int(str(docs[0]["trip_number"]).lstrip("Р")) + 1
+        except Exception:
+            num = 1
+    else:
+        num = 1
+    return f"Р{num}"
 
 
-def _add_business_days_v2(start: datetime, days: int) -> datetime:
+async def _next_truck_order_number() -> str:
+    import re as _re
+    year = datetime.now(timezone.utc).year
+    pattern = _re.compile(r"ТМ-(\d+)/" + str(year))
+    docs = await db.truck_orders.find(
+        {"order_number": {"$regex": f"/{year}$"}},
+        {"_id": 0, "order_number": 1},
+    ).to_list(5000)
+    max_num = 0
+    for d in docs:
+        m = pattern.search(d.get("order_number", "") or "")
+        if m:
+            n = int(m.group(1))
+            if n > max_num:
+                max_num = n
+    return f"ТМ-{max_num + 1:03d}/{year}"
+
+
+def _add_bdays(start: datetime, days: int) -> datetime:
     cur = start
     added = 0
     while added < days:
@@ -3198,56 +3235,16 @@ def _add_business_days_v2(start: datetime, days: int) -> datetime:
     return cur
 
 
-async def _next_truck_trip_number_v2() -> str:
-    import re as _re
-    year = datetime.now(timezone.utc).year
-    docs = await db.truck_trips.find({}, {"_id": 0, "trip_number": 1}).to_list(5000)
-    pattern = _re.compile(r"ТМ-(\d+)/(\d{4})")
-    max_num = 0
-    for d in docs:
-        m = pattern.search(d.get("trip_number", "") or "")
-        if m:
-            n, y = int(m.group(1)), int(m.group(2))
-            if y == year and n > max_num:
-                max_num = n
-    return f"ТМ-{max_num + 1:03d}/{year}"
-
-
-async def _get_truck_settings_v2() -> dict:
-    doc = await db.truck_financials.find_one({"_id": "main"}, {"_id": 0})
-    if not doc:
-        return dict(_TRUCK_FINANCIALS_DEFAULTS)
-    result = dict(_TRUCK_FINANCIALS_DEFAULTS)
-    result.update(doc)
-    return result
-
-
-async def _recalc_trip_from_routes(trip_id: str, mileage: float, fuel_liters_fact: float, settings: dict) -> dict:
-    routes = await db.truck_routes.find({"trip_id": trip_id, "deleted": {"$ne": True}}, {"_id": 0}).to_list(100)
-    rate_total = sum(r.get("rate_client", 0) for r in routes)
-    rate_investor, bonus = _calc_investor_rate_v2(rate_total, settings)
-    fuel_plan, fuel_cost_plan = _calc_fuel_v2(mileage, settings)
-    fuel_cost_fact = round(fuel_liters_fact * settings.get("fuel_price_per_liter", 2.1), 2) if fuel_liters_fact else 0
-    return {
-        "rate_total": rate_total,
-        "rate_investor": rate_investor,
-        "bonus_amount": bonus,
-        "fuel_liters_plan": fuel_plan,
-        "fuel_cost_plan": fuel_cost_plan,
-        "fuel_cost_fact": fuel_cost_fact,
-    }
-
-
-# ──────────────── TRUCKS (vehicles) ────────────────
+# ──────────────── TRUCKS (machines) ────────────────
 
 @api_router.get("/truck/trucks")
-async def list_truck_trucks():
-    docs = await db.truck_trucks.find({"is_active": {"$ne": False}, "deleted": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_trucks():
+    docs = await db.truck_trucks.find({"deleted": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return docs
 
 
 @api_router.post("/truck/trucks")
-async def create_truck_truck(request: Request):
+async def create_truck(request: Request):
     data = await request.json()
     data["id"] = str(uuid.uuid4())
     data.setdefault("created_at", now_iso())
@@ -3258,25 +3255,26 @@ async def create_truck_truck(request: Request):
 
 
 @api_router.put("/truck/trucks/{truck_id}")
-async def update_truck_truck(truck_id: str, request: Request):
+async def update_truck(truck_id: str, request: Request):
     data = await request.json()
+    data.pop("_id", None)
     await db.truck_trucks.update_one({"id": truck_id}, {"$set": data})
     doc = await db.truck_trucks.find_one({"id": truck_id}, {"_id": 0})
     if not doc:
-        raise HTTPException(404, "Truck not found")
+        raise HTTPException(404, "Not found")
     return doc
 
 
 @api_router.delete("/truck/trucks/{truck_id}")
-async def delete_truck_truck(truck_id: str):
-    await db.truck_trucks.update_one({"id": truck_id}, {"$set": {"deleted": True, "is_active": False, "deleted_at": now_iso()}})
+async def delete_truck(truck_id: str):
+    await db.truck_trucks.update_one({"id": truck_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
     return {"ok": True}
 
 
 # ──────────────── TRIPS ────────────────
 
 @api_router.get("/truck/trips")
-async def list_truck_trips_v2(status: Optional[str] = None, month: Optional[str] = None):
+async def list_truck_trips(status: Optional[str] = None, month: Optional[str] = None):
     q: dict = {"deleted": {"$ne": True}}
     if status:
         q["status"] = status
@@ -3286,199 +3284,212 @@ async def list_truck_trips_v2(status: Optional[str] = None, month: Optional[str]
             {"created_at": {"$regex": f"^{month}"}},
         ]
     docs = await db.truck_trips.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
-    settings = await _get_truck_settings_v2()
-    result = []
+    # Attach order count and preview
     for d in docs:
-        routes = await db.truck_routes.find({"trip_id": d["id"], "deleted": {"$ne": True}}, {"_id": 0, "rate_client": 1, "client_name": 1, "route": 1}).to_list(100)
-        d["routes_count"] = len(routes)
-        d["routes_preview"] = routes[:3]
-        result.append(d)
-    return result
+        orders = await db.truck_orders.find(
+            {"trip_id": d["id"], "deleted": {"$ne": True}},
+            {"_id": 0, "order_number": 1, "client_name": 1, "city_loading": 1, "city_unloading": 1, "rate_client": 1},
+        ).to_list(100)
+        d["orders_count"] = len(orders)
+        d["orders_preview"] = orders[:3]
+    return docs
 
 
 @api_router.post("/truck/trips")
-async def create_truck_trip_v2(request: Request):
+async def create_truck_trip(request: Request):
     data = await request.json()
-    settings = await _get_truck_settings_v2()
     data["id"] = str(uuid.uuid4())
-    data.setdefault("trip_number", await _next_truck_trip_number_v2())
+    data.setdefault("trip_number", await _next_trip_number())
     data.setdefault("created_at", now_iso())
     data.setdefault("status", "новая")
-    data.setdefault("rate_total", 0)
-    data.setdefault("rate_investor", settings.get("base_rent", 1900))
-    data.setdefault("bonus_amount", 0)
-    data.setdefault("mileage", 0)
-    data.setdefault("fuel_liters_plan", 0)
-    data.setdefault("fuel_liters_fact", 0)
-    data.setdefault("fuel_cost_plan", 0)
-    data.setdefault("fuel_cost_fact", 0)
-    data.setdefault("carrier_payment_days", 20)
-    data.setdefault("payment_investor_status", "не выплачено")
-    data.setdefault("documents_sent_client", False)
-    data.setdefault("documents_received_client", False)
+    data.setdefault("rate_total", 0.0)
+    data.setdefault("rate_investor", _TRUCK_FIN_DEFAULTS["base_rent"])
+    data.setdefault("bonus_amount", 0.0)
+    data.setdefault("mileage", 0.0)
+    data.setdefault("fuel_liters_plan", 0.0)
+    data.setdefault("fuel_liters_fact", 0.0)
+    data.setdefault("fuel_cost_plan", 0.0)
+    data.setdefault("fuel_cost_fact", 0.0)
     data.setdefault("deleted", False)
+    # Auto fuel plan
+    fin = await _get_truck_fin()
+    mileage = float(data.get("mileage") or 0)
+    if mileage > 0:
+        liters_plan = round(mileage * fin["fuel_rate_per_100km"] / 100, 1)
+        data["fuel_liters_plan"] = liters_plan
+        data["fuel_cost_plan"] = round(liters_plan * fin["fuel_price_per_liter"], 2)
     await db.truck_trips.insert_one(data)
     return {k: v for k, v in data.items() if k != "_id"}
 
 
 @api_router.get("/truck/trips/{trip_id}")
-async def get_truck_trip_v2(trip_id: str):
+async def get_truck_trip(trip_id: str):
     doc = await db.truck_trips.find_one({"id": trip_id, "deleted": {"$ne": True}}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Trip not found")
-    routes = await db.truck_routes.find({"trip_id": trip_id, "deleted": {"$ne": True}}, {"_id": 0}).sort("created_at", 1).to_list(100)
-    doc["routes"] = routes
+    orders = await db.truck_orders.find(
+        {"trip_id": trip_id, "deleted": {"$ne": True}}, {"_id": 0}
+    ).sort("created_at", 1).to_list(100)
+    doc["orders"] = orders
     return doc
 
 
 @api_router.put("/truck/trips/{trip_id}")
-async def update_truck_trip_v2(trip_id: str, request: Request, background_tasks: BackgroundTasks):
+async def update_truck_trip(trip_id: str, request: Request):
     data = await request.json()
-    old_doc = await db.truck_trips.find_one({"id": trip_id}, {"_id": 0})
-    if not old_doc:
+    data.pop("_id", None)
+    data.pop("orders", None)
+    old = await db.truck_trips.find_one({"id": trip_id}, {"_id": 0})
+    if not old:
         raise HTTPException(404, "Trip not found")
-    settings = await _get_truck_settings_v2()
-    mileage = data.get("mileage") or old_doc.get("mileage") or 0
-    fuel_fact = data.get("fuel_liters_fact") or old_doc.get("fuel_liters_fact") or 0
-    recalc = await _recalc_trip_from_routes(trip_id, mileage, fuel_fact, settings)
-    data.update(recalc)
-
-    # Truck → auto-fill driver
-    truck_id = data.get("truck_id") or old_doc.get("truck_id")
-    if truck_id and (data.get("truck_id") != old_doc.get("truck_id") or not old_doc.get("driver_name")):
-        truck_doc = await db.truck_trucks.find_one({"id": truck_id}, {"_id": 0})
-        if truck_doc:
-            data.setdefault("truck_name", truck_doc.get("name", ""))
-            data.setdefault("driver_name", truck_doc.get("driver_name", ""))
-            data.setdefault("driver_phone", truck_doc.get("driver_phone", ""))
-
-    # Document received → schedule investor payment
-    if data.get("documents_received_client") and not old_doc.get("documents_received_client"):
-        days = data.get("carrier_payment_days") or old_doc.get("carrier_payment_days") or 20
-        deadline = _add_business_days_v2(datetime.now(timezone.utc), days)
-        reminder_days = 5 if days > 15 else 3
-        reminder = _add_business_days_v2(datetime.now(timezone.utc), days - reminder_days)
-        deadline_str = deadline.strftime("%Y-%m-%d")
-        reminder_str = reminder.strftime("%Y-%m-%d")
-        data["investor_payment_deadline"] = deadline.isoformat()
-        trip_number = old_doc.get("trip_number", "")
-        investor_name = settings.get("investor_company_name", "Инвестор")
-        rate_investor = data.get("rate_investor") or old_doc.get("rate_investor") or 0
-        for task_fields in [
-            {
-                "id": str(uuid.uuid4()),
-                "title": f"Выплатить инвестору: {investor_name} — рейс {trip_number}",
-                "task_type": "payment",
-                "due_date": deadline_str,
-                "due_time": "10:00",
-                "status": "pending",
-                "description": f"Рейс {trip_number}, сумма: {rate_investor} BYN. Срок: {deadline.strftime('%d.%m.%Y')}",
-                "created_by": "",
-                "created_at": now_iso(),
-                "google_task_id": None,
-            },
-            {
-                "id": str(uuid.uuid4()),
-                "title": f"⚠️ Через {reminder_days} дня выплатить инвестору — рейс {trip_number}",
-                "task_type": "reminder",
-                "due_date": reminder_str,
-                "due_time": "09:00",
-                "status": "pending",
-                "description": f"Срок выплаты: {deadline.strftime('%d.%m.%Y')}",
-                "created_by": "",
-                "created_at": now_iso(),
-                "google_task_id": None,
-            },
-        ]:
-            await db.tasks.insert_one(task_fields)
-            background_tasks.add_task(_bg_gt_create, task_fields)
-
+    # Recalc fuel plan if mileage changed
+    mileage = float(data.get("mileage") or old.get("mileage") or 0)
+    fuel_fact = float(data.get("fuel_liters_fact") or old.get("fuel_liters_fact") or 0)
+    fin = await _get_truck_fin()
+    if mileage > 0:
+        lp = round(mileage * fin["fuel_rate_per_100km"] / 100, 1)
+        data["fuel_liters_plan"] = lp
+        data["fuel_cost_plan"] = round(lp * fin["fuel_price_per_liter"], 2)
+    if fuel_fact > 0:
+        data["fuel_cost_fact"] = round(fuel_fact * fin["fuel_price_per_liter"], 2)
     await db.truck_trips.update_one({"id": trip_id}, {"$set": data})
     doc = await db.truck_trips.find_one({"id": trip_id}, {"_id": 0})
-    routes = await db.truck_routes.find({"trip_id": trip_id, "deleted": {"$ne": True}}, {"_id": 0}).to_list(100)
-    doc["routes"] = routes
+    orders = await db.truck_orders.find({"trip_id": trip_id, "deleted": {"$ne": True}}, {"_id": 0}).to_list(100)
+    doc["orders"] = orders
     return doc
 
 
 @api_router.delete("/truck/trips/{trip_id}")
-async def delete_truck_trip_v2(trip_id: str):
+async def delete_truck_trip(trip_id: str):
     await db.truck_trips.update_one({"id": trip_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
     return {"ok": True}
 
 
-# ──────────────── ROUTES ────────────────
+# ──────────────── ORDERS in trips ────────────────
 
-@api_router.get("/truck/trips/{trip_id}/routes")
-async def list_trip_routes(trip_id: str):
-    docs = await db.truck_routes.find({"trip_id": trip_id, "deleted": {"$ne": True}}, {"_id": 0}).sort("created_at", 1).to_list(100)
+@api_router.get("/truck/trips/{trip_id}/orders")
+async def list_trip_orders(trip_id: str):
+    docs = await db.truck_orders.find(
+        {"trip_id": trip_id, "deleted": {"$ne": True}}, {"_id": 0}
+    ).sort("created_at", 1).to_list(100)
     return docs
 
 
-@api_router.post("/truck/trips/{trip_id}/routes")
-async def create_trip_route(trip_id: str, request: Request):
+@api_router.post("/truck/trips/{trip_id}/orders")
+async def create_trip_order(trip_id: str, request: Request, background_tasks: BackgroundTasks):
     trip = await db.truck_trips.find_one({"id": trip_id}, {"_id": 0})
     if not trip:
         raise HTTPException(404, "Trip not found")
     data = await request.json()
     data["id"] = str(uuid.uuid4())
     data["trip_id"] = trip_id
+    data.setdefault("order_number", await _next_truck_order_number())
     data.setdefault("created_at", now_iso())
     data.setdefault("deleted", False)
-    data.setdefault("payment_client_status", "не оплачен")
-    data.setdefault("documents_sent", False)
-    data.setdefault("documents_received", False)
-    await db.truck_routes.insert_one(data)
-    # Recalculate trip
-    settings = await _get_truck_settings_v2()
-    mileage = trip.get("mileage") or 0
-    fuel_fact = trip.get("fuel_liters_fact") or 0
-    recalc = await _recalc_trip_from_routes(trip_id, mileage, fuel_fact, settings)
-    await db.truck_trips.update_one({"id": trip_id}, {"$set": recalc})
+    data.setdefault("payment_status", "не оплачен")
+    data.setdefault("carrier_payment_days", 20)
+    data.setdefault("documents_sent_client", False)
+    data.setdefault("documents_received_client", False)
+    # Inherit truck info from trip if not set
+    if not data.get("truck_id"):
+        data.setdefault("truck_id", trip.get("truck_id", ""))
+        data.setdefault("truck_name", trip.get("truck_name", ""))
+        data.setdefault("driver_name", trip.get("driver_name", ""))
+    await db.truck_orders.insert_one(data)
+    # Recalculate trip totals
+    await _recalc_trip(trip_id)
     return {k: v for k, v in data.items() if k != "_id"}
 
 
-@api_router.put("/truck/routes/{route_id}")
-async def update_trip_route(route_id: str, request: Request):
-    data = await request.json()
-    old = await db.truck_routes.find_one({"id": route_id}, {"_id": 0})
-    if not old:
-        raise HTTPException(404, "Route not found")
-    await db.truck_routes.update_one({"id": route_id}, {"$set": data})
-    doc = await db.truck_routes.find_one({"id": route_id}, {"_id": 0})
-    # Recalculate parent trip
-    trip_id = doc.get("trip_id") or old.get("trip_id")
-    if trip_id:
-        trip = await db.truck_trips.find_one({"id": trip_id}, {"_id": 0})
-        if trip:
-            settings = await _get_truck_settings_v2()
-            recalc = await _recalc_trip_from_routes(trip_id, trip.get("mileage") or 0, trip.get("fuel_liters_fact") or 0, settings)
-            await db.truck_trips.update_one({"id": trip_id}, {"$set": recalc})
+@api_router.get("/truck/orders/{order_id}")
+async def get_truck_order(order_id: str):
+    doc = await db.truck_orders.find_one({"id": order_id, "deleted": {"$ne": True}}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Order not found")
     return doc
 
 
-@api_router.delete("/truck/routes/{route_id}")
-async def delete_trip_route(route_id: str):
-    doc = await db.truck_routes.find_one({"id": route_id}, {"_id": 0})
-    await db.truck_routes.update_one({"id": route_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
+@api_router.put("/truck/orders/{order_id}")
+async def update_truck_order(order_id: str, request: Request, background_tasks: BackgroundTasks):
+    data = await request.json()
+    data.pop("_id", None)
+    old = await db.truck_orders.find_one({"id": order_id}, {"_id": 0})
+    if not old:
+        raise HTTPException(404, "Order not found")
+
+    # When documents received from client → schedule payment
+    if data.get("documents_received_client") and not old.get("documents_received_client"):
+        days = int(data.get("carrier_payment_days") or old.get("carrier_payment_days") or 20)
+        deadline = _add_bdays(datetime.now(timezone.utc), days)
+        reminder_days = 5 if days > 15 else 3
+        reminder = _add_bdays(datetime.now(timezone.utc), days - reminder_days)
+        deadline_str = deadline.strftime("%Y-%m-%d")
+        reminder_str = reminder.strftime("%Y-%m-%d")
+        data["payment_deadline"] = deadline.isoformat()
+        data["payment_reminder_date"] = reminder.isoformat()
+        order_number = old.get("order_number", "")
+        client_name = old.get("client_name") or data.get("client_name", "")
+        rate_client = old.get("rate_client") or data.get("rate_client", 0)
+        # CRM task
+        try:
+            for task_fields in [
+                {
+                    "id": str(uuid.uuid4()),
+                    "title": f"Оплата от клиента: {client_name} — {order_number}",
+                    "task_type": "payment",
+                    "due_date": deadline_str,
+                    "due_time": "10:00",
+                    "status": "pending",
+                    "description": f"Заявка {order_number}, сумма: {rate_client} BYN. Срок: {deadline.strftime('%d.%m.%Y')}",
+                    "created_by": "",
+                    "created_at": now_iso(),
+                    "google_task_id": None,
+                },
+                {
+                    "id": str(uuid.uuid4()),
+                    "title": f"⚠️ Через {reminder_days} дня оплата: {client_name} — {order_number}",
+                    "task_type": "reminder",
+                    "due_date": reminder_str,
+                    "due_time": "09:00",
+                    "status": "pending",
+                    "description": f"Срок оплаты: {deadline.strftime('%d.%m.%Y')}",
+                    "created_by": "",
+                    "created_at": now_iso(),
+                    "google_task_id": None,
+                },
+            ]:
+                await db.tasks.insert_one(task_fields)
+                background_tasks.add_task(_bg_gt_create, task_fields)
+        except Exception as _e:
+            logging.getLogger(__name__).error(f"truck order task creation failed: {_e}")
+
+    await db.truck_orders.update_one({"id": order_id}, {"$set": data})
+    doc = await db.truck_orders.find_one({"id": order_id}, {"_id": 0})
+    trip_id = doc.get("trip_id") or old.get("trip_id")
+    if trip_id:
+        await _recalc_trip(trip_id)
+    return doc
+
+
+@api_router.delete("/truck/orders/{order_id}")
+async def delete_truck_order(order_id: str):
+    doc = await db.truck_orders.find_one({"id": order_id}, {"_id": 0})
+    await db.truck_orders.update_one({"id": order_id}, {"$set": {"deleted": True, "deleted_at": now_iso()}})
     if doc and doc.get("trip_id"):
-        trip = await db.truck_trips.find_one({"id": doc["trip_id"]}, {"_id": 0})
-        if trip:
-            settings = await _get_truck_settings_v2()
-            recalc = await _recalc_trip_from_routes(doc["trip_id"], trip.get("mileage") or 0, trip.get("fuel_liters_fact") or 0, settings)
-            await db.truck_trips.update_one({"id": doc["trip_id"]}, {"$set": recalc})
+        await _recalc_trip(doc["trip_id"])
     return {"ok": True}
 
 
 # ──────────────── TRUCK CLIENTS ────────────────
 
 @api_router.get("/truck/clients")
-async def list_truck_clients_v2():
+async def list_truck_clients():
     docs = await db.truck_clients.find({"deleted": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return docs
 
 
 @api_router.post("/truck/clients")
-async def create_truck_client_v2(request: Request):
+async def create_truck_client(request: Request):
     data = await request.json()
     data["id"] = str(uuid.uuid4())
     data.setdefault("created_at", now_iso())
@@ -3488,18 +3499,22 @@ async def create_truck_client_v2(request: Request):
 
 
 @api_router.get("/truck/clients/{client_id}")
-async def get_truck_client_v2(client_id: str):
+async def get_truck_client(client_id: str):
     doc = await db.truck_clients.find_one({"id": client_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Client not found")
-    routes = await db.truck_routes.find({"client_id": client_id, "deleted": {"$ne": True}}, {"_id": 0, "trip_id": 1, "route": 1, "rate_client": 1, "created_at": 1}).sort("created_at", -1).to_list(50)
-    doc["routes_history"] = routes
+    history = await db.truck_orders.find(
+        {"client_id": client_id, "deleted": {"$ne": True}},
+        {"_id": 0, "order_number": 1, "trip_id": 1, "city_loading": 1, "city_unloading": 1, "rate_client": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(50)
+    doc["orders_history"] = history
     return doc
 
 
 @api_router.put("/truck/clients/{client_id}")
-async def update_truck_client_v2(client_id: str, request: Request):
+async def update_truck_client(client_id: str, request: Request):
     data = await request.json()
+    data.pop("_id", None)
     await db.truck_clients.update_one({"id": client_id}, {"$set": data})
     doc = await db.truck_clients.find_one({"id": client_id}, {"_id": 0})
     if not doc:
@@ -3510,107 +3525,135 @@ async def update_truck_client_v2(client_id: str, request: Request):
 # ──────────────── FINANCIALS & ANALYTICS ────────────────
 
 @api_router.get("/truck/financials")
-async def get_truck_financials_v2():
-    return await _get_truck_settings_v2()
+async def get_truck_financials():
+    return await _get_truck_fin()
 
 
 @api_router.put("/truck/financials")
-async def update_truck_financials_v2(request: Request):
+async def update_truck_financials(request: Request):
     data = await request.json()
+    data.pop("_id", None)
     await db.truck_financials.update_one({"_id": "main"}, {"$set": data}, upsert=True)
-    return await _get_truck_settings_v2()
+    return await _get_truck_fin()
 
 
 @api_router.get("/truck/analytics")
-async def truck_analytics_v2(period: str = "current"):
+async def truck_analytics(period: str = "current"):
     now_dt = datetime.now(timezone.utc)
     cur_ym = now_dt.strftime("%Y-%m")
     py, pm = (now_dt.year - 1, 12) if now_dt.month == 1 else (now_dt.year, now_dt.month - 1)
     prev_ym = f"{py:04d}-{pm:02d}"
 
-    all_trips = await db.truck_trips.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
-    settings = await _get_truck_settings_v2()
-
-    if period == "current":
-        trips = [t for t in all_trips if (t.get("date_loading") or t.get("created_at", ""))[:7] == cur_ym]
-    elif period == "previous":
-        trips = [t for t in all_trips if (t.get("date_loading") or t.get("created_at", ""))[:7] == prev_ym]
-    elif len(period) == 7 and period[4] == '-':
-        trips = [t for t in all_trips if (t.get("date_loading") or t.get("created_at", ""))[:7] == period]
-    else:
-        trips = all_trips
-
-    trips_count = len(trips)
-    revenue = sum(t.get("rate_total") or 0 for t in trips)
-    investor_total = sum(t.get("rate_investor") or 0 for t in trips)
-    fuel_total = sum((t.get("fuel_cost_fact") or t.get("fuel_cost_plan") or 0) for t in trips)
-    driver_salary_total = sum((t.get("driver_salary_trip") or 0) for t in trips)
-    trips_count_all = len([t for t in all_trips if not t.get("driver_salary_trip")])
-    driver_per_trip = settings.get("driver_per_trip", 150)
-    if driver_salary_total == 0:
-        driver_salary_total = trips_count * driver_per_trip
-
-    margin_ip = revenue - investor_total
-    tax_ip_pct = settings.get("tax_ip_pct", 20)
-    tax = round(margin_ip * tax_ip_pct / 100, 2)
-    net_ip = round(margin_ip - tax, 2)
-    to_kasko = settings.get("to_kasko_monthly", 875)
-    fszn_pct = settings.get("fszn_pct", 35)
-    fszn = round(driver_salary_total * fszn_pct / 100, 2)
-    investor_net = round(investor_total - fuel_total - driver_salary_total - fszn - to_kasko, 2)
-    debt_to_investor = sum(
-        (t.get("rate_investor") or 0) for t in all_trips
-        if t.get("payment_investor_status") != "выплачено" and not t.get("deleted")
-    )
-
-    machine_cost = settings.get("machine_cost", 89000)
-    monthly_map: dict = {}
+    # Available months
+    all_trips = await db.truck_trips.find({"deleted": {"$ne": True}}, {"_id": 0, "id": 1, "created_at": 1, "date_loading": 1}).to_list(5000)
+    months_set = set()
     for t in all_trips:
         ym = (t.get("date_loading") or t.get("created_at", ""))[:7]
         if ym and len(ym) == 7:
-            if ym not in monthly_map:
-                monthly_map[ym] = 0.0
-            inv = (t.get("rate_investor") or 0) - (t.get("fuel_cost_fact") or t.get("fuel_cost_plan") or 0) - (t.get("driver_salary_trip") or driver_per_trip)
-            monthly_map[ym] += inv
-    if monthly_map:
-        avg_monthly = sum(monthly_map.values()) / len(monthly_map)
-        payback_months_total = round(machine_cost / avg_monthly) if avg_monthly > 0 else 0
+            months_set.add(ym)
+    available_months = sorted(months_set, reverse=True)[:24]
+
+    # Determine filter
+    if period == "current":
+        filter_ym = cur_ym
+    elif period == "previous":
+        filter_ym = prev_ym
+    elif len(period) == 7 and period[4] == '-':
+        filter_ym = period
     else:
-        avg_monthly = 0
-        payback_months_total = 0
+        filter_ym = None  # all
 
-    first_trip_ym = min(monthly_map.keys()) if monthly_map else cur_ym
-    from_year, from_month = int(first_trip_ym[:4]), int(first_trip_ym[5:7])
-    payback_months_elapsed = (now_dt.year - from_year) * 12 + (now_dt.month - from_month)
+    q_trips: dict = {"deleted": {"$ne": True}}
+    if filter_ym:
+        q_trips["$or"] = [
+            {"date_loading": {"$regex": f"^{filter_ym}"}},
+            {"created_at": {"$regex": f"^{filter_ym}"}},
+        ]
 
-    unpaid_trips = [
-        {"id": t.get("id"), "trip_number": t.get("trip_number"), "route": t.get("route"),
-         "rate_investor": t.get("rate_investor"), "date_loading": t.get("date_loading")}
-        for t in all_trips
-        if t.get("payment_investor_status") != "выплачено" and not t.get("deleted")
+    trips = await db.truck_trips.find(q_trips, {"_id": 0}).to_list(5000)
+    trip_ids = [t["id"] for t in trips]
+
+    q_orders: dict = {"deleted": {"$ne": True}}
+    if trip_ids:
+        q_orders["trip_id"] = {"$in": trip_ids}
+    orders = await db.truck_orders.find(q_orders, {"_id": 0}).to_list(10000) if trip_ids else []
+
+    fin = await _get_truck_fin()
+    trips_count = len(trips)
+    orders_count = len(orders)
+    revenue = sum(o.get("rate_client", 0) for o in orders)
+    investor_total = sum(t.get("rate_investor", 0) for t in trips)
+    bonus_total = sum(t.get("bonus_amount", 0) for t in trips)
+    fuel_total = sum(
+        (t.get("fuel_cost_fact") or t.get("fuel_cost_plan") or 0) for t in trips
+    )
+    margin_ip = revenue - investor_total
+    tax_pct = fin.get("tax_ip_pct", 20)
+    tax = round(margin_ip * tax_pct / 100, 2)
+    net_ip = round(margin_ip - tax, 2)
+
+    # Overdue orders (payment_deadline < today, not paid)
+    today_str = now_dt.strftime("%Y-%m-%d")
+    overdue_orders = [
+        {"id": o.get("id"), "order_number": o.get("order_number"), "client_name": o.get("client_name"),
+         "rate_client": o.get("rate_client"), "payment_deadline": o.get("payment_deadline"),
+         "trip_id": o.get("trip_id")}
+        for o in await db.truck_orders.find(
+            {"deleted": {"$ne": True}, "payment_status": {"$ne": "оплачен"},
+             "payment_deadline": {"$lt": today_str, "$ne": None, "$exists": True}},
+            {"_id": 0}
+        ).to_list(100)
+        if o.get("payment_deadline", "") < today_str
     ]
+
+    # No-docs orders
+    no_docs = [
+        {"id": o.get("id"), "order_number": o.get("order_number"), "client_name": o.get("client_name"), "trip_id": o.get("trip_id")}
+        for o in await db.truck_orders.find(
+            {"deleted": {"$ne": True}, "documents_sent_client": False},
+            {"_id": 0}
+        ).to_list(100)
+    ]
+
+    # Debt (all time, not paid)
+    all_orders_unpaid = await db.truck_orders.find(
+        {"deleted": {"$ne": True}, "payment_status": {"$ne": "оплачен"}},
+        {"_id": 0, "rate_client": 1}
+    ).to_list(10000)
+    debt_total = sum(o.get("rate_client", 0) for o in all_orders_unpaid)
+
+    # Payback
+    machine_cost = fin.get("machine_cost", 89000)
+    all_trips_full = await db.truck_trips.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
+    monthly_net: dict = {}
+    for t in all_trips_full:
+        ym = (t.get("date_loading") or t.get("created_at", ""))[:7]
+        if ym and len(ym) == 7:
+            monthly_net[ym] = monthly_net.get(ym, 0) + (t.get("rate_investor", 0) - (t.get("fuel_cost_fact") or t.get("fuel_cost_plan") or 0))
+    avg_monthly = sum(monthly_net.values()) / len(monthly_net) if monthly_net else 0
+    payback_total = round(machine_cost / avg_monthly) if avg_monthly > 0 else 0
+    first_ym = min(monthly_net.keys()) if monthly_net else cur_ym
+    payback_elapsed = (now_dt.year - int(first_ym[:4])) * 12 + (now_dt.month - int(first_ym[5:7]))
 
     return {
         "period": period,
+        "available_months": available_months,
         "trips_count": trips_count,
+        "orders_count": orders_count,
         "revenue": revenue,
         "investor_total": investor_total,
+        "bonus_total": bonus_total,
         "fuel_total": fuel_total,
-        "driver_salary_total": driver_salary_total,
-        "fszn": fszn,
-        "to_kasko": to_kasko,
         "margin_ip": margin_ip,
         "tax": tax,
         "net_ip": net_ip,
-        "investor_net": investor_net,
-        "debt_to_investor": debt_to_investor,
-        "payback_months_elapsed": payback_months_elapsed,
-        "payback_months_total": payback_months_total,
-        "unpaid_trips": unpaid_trips,
+        "debt_total": debt_total,
+        "overdue_orders": overdue_orders,
+        "no_docs_orders": no_docs,
+        "payback_elapsed": payback_elapsed,
+        "payback_total": payback_total,
     }
 
-
-@api_router.get("/")
 async def root():
     return {"message": "Logistics CRM API"}
 
