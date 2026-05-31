@@ -184,12 +184,17 @@ export const api = {
   seed: () => req('/seed', { method: 'POST' }),
   globalSearch: (q: string) => req(`/search?q=${encodeURIComponent(q)}`),
   truck: {
+    trucks: {
+      list: () => req('/truck/trucks'),
+      create: (data: any) => req('/truck/trucks', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: string, data: any) => req(`/truck/trucks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      remove: (id: string) => req(`/truck/trucks/${id}`, { method: 'DELETE' }),
+    },
     trips: {
-      list: (params?: { status?: string; month?: string; client_id?: string }) => {
+      list: (params?: { status?: string; month?: string }) => {
         const p = new URLSearchParams();
         if (params?.status) p.append('status', params.status);
         if (params?.month) p.append('month', params.month);
-        if (params?.client_id) p.append('client_id', params.client_id);
         const qs = p.toString();
         return req(`/truck/trips${qs ? '?' + qs : ''}`);
       },
@@ -197,6 +202,12 @@ export const api = {
       create: (data: any) => req('/truck/trips', { method: 'POST', body: JSON.stringify(data) }),
       update: (id: string, data: any) => req(`/truck/trips/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
       remove: (id: string) => req(`/truck/trips/${id}`, { method: 'DELETE' }),
+    },
+    routes: {
+      list: (trip_id: string) => req(`/truck/trips/${trip_id}/routes`),
+      create: (trip_id: string, data: any) => req(`/truck/trips/${trip_id}/routes`, { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: string, data: any) => req(`/truck/routes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      remove: (id: string) => req(`/truck/routes/${id}`, { method: 'DELETE' }),
     },
     clients: {
       list: () => req('/truck/clients'),

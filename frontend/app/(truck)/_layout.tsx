@@ -1,31 +1,28 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Tabs, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import { Platform, StyleSheet, View, Text, TouchableOpacity } from 'react-native';
-import { LayoutDashboard, Navigation, Users, BarChart2 } from 'lucide-react-native';
+import {
+  Platform, StyleSheet, View, Text, TouchableOpacity, Modal,
+  TouchableWithoutFeedback,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LayoutDashboard, Navigation, Users, BarChart2, Menu } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function TruckLayout() {
+  const [modeVisible, setModeVisible] = useState(false);
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const switchToExp = async () => {
     await AsyncStorage.setItem('app_mode', 'exp');
+    setModeVisible(false);
     router.replace('/(tabs)/dashboard');
   };
 
   return (
     <View style={{ flex: 1 }}>
-      <View style={styles.modeBar}>
-        <View style={styles.modeToggle}>
-          <TouchableOpacity style={styles.modeBtn} onPress={switchToExp}>
-            <Text style={styles.modeBtnText}>Экспедирование</Text>
-          </TouchableOpacity>
-          <View style={[styles.modeBtn, styles.modeBtnActive]}>
-            <Text style={[styles.modeBtnText, styles.modeBtnTextActive]}>Моя Машина</Text>
-          </View>
-        </View>
-      </View>
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -71,42 +68,39 @@ export default function TruckLayout() {
           }}
         />
       </Tabs>
+
+      <TouchableOpacity
+        style={[styles.menuFab, { top: insets.top + 10 }]}
+        onPress={() => setModeVisible(true)}
+        activeOpacity={0.7}
+      >
+        <Menu size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+      </TouchableOpacity>
+
+      <Modal transparent visible={modeVisible} animationType="fade" onRequestClose={() => setModeVisible(false)}>
+        <TouchableWithoutFeedback onPress={() => setModeVisible(false)}>
+          <View style={styles.overlay}>
+            <TouchableWithoutFeedback>
+              <View style={[styles.modeSheet, { top: insets.top + 8, right: 12 }]}>
+                <Text style={styles.sheetTitle}>Режим работы</Text>
+                <TouchableOpacity style={styles.modeItem} onPress={switchToExp}>
+                  <Text style={styles.modeItemIcon}>✅</Text>
+                  <Text style={styles.modeItemText}>Экспедирование</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.modeItem, styles.modeItemActive]} onPress={() => setModeVisible(false)}>
+                  <Text style={styles.modeItemIcon}>🚛</Text>
+                  <Text style={[styles.modeItemText, styles.modeItemTextActive]}>Моя Машина</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  modeBar: {
-    backgroundColor: theme.colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    paddingTop: Platform.OS === 'ios' ? 52 : 12,
-    paddingBottom: 8,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  modeToggle: {
-    flexDirection: 'row',
-    backgroundColor: theme.colors.surfaceElevated,
-    borderRadius: 8,
-    padding: 3,
-  },
-  modeBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  modeBtnActive: {
-    backgroundColor: theme.colors.accent,
-  },
-  modeBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: theme.colors.textSecondary,
-  },
-  modeBtnTextActive: {
-    color: '#000',
-  },
   tabBar: {
     position: 'absolute',
     borderTopWidth: 1,
@@ -117,8 +111,42 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     paddingTop: 10,
   },
-  tabBg: {
-    flex: 1,
-    backgroundColor: 'rgba(10,10,12,0.92)',
+  tabBg: { flex: 1, backgroundColor: 'rgba(10,10,12,0.92)' },
+  menuFab: {
+    position: 'absolute',
+    right: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: theme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 999,
   },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  modeSheet: {
+    position: 'absolute',
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    minWidth: 220,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  sheetTitle: {
+    fontSize: 11, fontWeight: '700', color: theme.colors.textTertiary,
+    textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, paddingHorizontal: 4,
+  },
+  modeItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 8 },
+  modeItemActive: { backgroundColor: theme.colors.accent + '20' },
+  modeItemIcon: { fontSize: 16 },
+  modeItemText: { fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary },
+  modeItemTextActive: { color: theme.colors.accent },
 });

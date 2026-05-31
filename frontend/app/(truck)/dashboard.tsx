@@ -4,7 +4,8 @@ import {
   ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { AlertTriangle, CheckCircle2, Navigation, FileText } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AlertTriangle, Plus, FileText, Navigation } from 'lucide-react-native';
 import { theme, formatMoney } from '../../src/theme';
 import { api } from '../../src/api';
 
@@ -24,7 +25,7 @@ function GoalCard({ label, fact, goal, unit = '' }: { label: string; fact: numbe
         / {unit === 'BYN' ? formatMoney(goal) : String(goal)}
       </Text>
       <View style={styles.progressBg}>
-        <View style={[styles.progressFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: color }]} />
+        <View style={[styles.progressFill, { width: `${Math.round(pct * 100)}%` as any, backgroundColor: color }]} />
       </View>
     </View>
   );
@@ -32,90 +33,103 @@ function GoalCard({ label, fact, goal, unit = '' }: { label: string; fact: numbe
 
 export default function TruckDashboard() {
   const router = useRouter();
-  const [data, setData] = useState<any>(null);
-  const [trips, setTrips] = useState<any[]>([]);
+  const insets = useSafeAreaInsets();
+  const [analytics, setAnalytics] = useState<any>(null);
+  const [recentTrips, setRecentTrips] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
     try {
-      const [analytics, tripsData] = await Promise.all([
+      const [a, trips] = await Promise.all([
         api.truck.analytics('current'),
         api.truck.trips.list(),
       ]);
-      setData(analytics);
-      setTrips((tripsData as any[]).slice(0, 5));
+      setAnalytics(a);
+      setRecentTrips((trips as any[]).slice(0, 5));
     } catch {}
     setLoading(false);
     setRefreshing(false);
   };
 
   useFocusEffect(useCallback(() => { setLoading(true); load(); }, []));
-
   const onRefresh = () => { setRefreshing(true); load(); };
 
   if (loading) return <View style={styles.center}><ActivityIndicator color={theme.colors.accent} /></View>;
 
-  const needInvestor = (data?.unpaid_trips ?? []).filter((t: any) => !t.payment_investor_status || t.payment_investor_status !== 'выплачено');
-  const noDocsTrips = trips.filter((t: any) => !t.documents_sent_client);
+  const unpaidTrips: any[] = analytics?.unpaid_trips ?? [];
+  const noDocsTrips = recentTrips.filter((t: any) => !t.documents_sent_client);
+  const needAttention = [...noDocsTrips.slice(0, 3), ...unpaidTrips.slice(0, 3)];
 
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 16 }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accent} />}
     >
-      <Text style={styles.title}>Моя Машина</Text>
-      <Text style={styles.subtitle}>Текущий месяц</Text>
-
-      <View style={styles.goalsRow}>
-        <GoalCard label="Рейсов" fact={data?.trips_count ?? 0} goal={TRIPS_GOAL} />
-        <GoalCard label="Выручка" fact={data?.revenue ?? 0} goal={REVENUE_GOAL} unit="BYN" />
-      </View>
-      <View style={styles.goalsRow}>
-        <GoalCard label="Мне чистыми" fact={data?.net_ip ?? 0} goal={Math.round(REVENUE_GOAL * 0.1)} unit="BYN" />
-        <GoalCard label="Инвестору" fact={data?.investor_total ?? 0} goal={Math.round(REVENUE_GOAL * 0.8)} unit="BYN" />
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={styles.kicker}>МОЯ МАШИНА</Text>
+          <Text style={styles.title}>Дашборд</Text>
+        </View>
+        <TouchableOpacity style={styles.addBtn} onPress={() => router.push('/truck-trip/new')}>
+          <Plus size={20} color="#000" strokeWidth={2.2} />
+        </TouchableOpacity>
       </View>
 
-      {/* Требуют внимания */}
-      {(needInvestor.length > 0 || noDocsTrips.length > 0) && (
+      <View style={styles.goalsRow}>
+        <GoalCard label="Рейсов" fact={analytics?.trips_count ?? 0} goal={TRIPS_GOAL} />
+        <GoalCard label="Выручка" fact={analytics?.revenue ?? 0} goal={REVENUE_GOAL} unit="BYN" />
+      </View>
+      <View style={styles.goalsRow}>
+        <GoalCard label="Мне чистыми" fact={analytics?.net_ip ?? 0} goal={1500} unit="BYN" />
+        <GoalCard label="Инвестору" fact={analytics?.investor_total ?? 0} goal={12000} unit="BYN" />
+      </View>
+
+      {needAttention.length > 0 && (
         <View style={styles.attentionBlock}>
-          <Text style={styles.sectionTitle}>Требуют внимания</Text>
-          {noDocsTrips.map((t: any) => (
-            <TouchableOpacity key={t.id} style={styles.attentionRow} onPress={() => router.push(`/truck-trip/${t.id}`)}>
-              <FileText size={16} color={theme.colors.warning} />
+          <Text style={styles.sectionLabel}>ТРЕБУЮТ ВНИМАНИЯ</Text>
+          {noDocsTrips.slice(0, 3).map((t: any) => (
+            <TouchableOpacity key={`d-${t.id}`} style={styles.attentionRow} onPress={() => router.push(`/truck-trip/${t.id}`)}>
+              <FileText size={14} color={theme.colors.warning} />
               <Text style={styles.attentionText}>{t.trip_number} — не отправлены документы</Text>
             </TouchableOpacity>
           ))}
-          {needInvestor.slice(0, 5).map((t: any) => (
-            <TouchableOpacity key={t.id} style={styles.attentionRow} onPress={() => router.push(`/truck-trip/${t.id}`)}>
-              <AlertTriangle size={16} color={theme.colors.loss} />
+          {unpaidTrips.slice(0, 3).map((t: any) => (
+            <TouchableOpacity key={`u-${t.id}`} style={styles.attentionRow} onPress={() => router.push(`/truck-trip/${t.id}`)}>
+              <AlertTriangle size={14} color={theme.colors.loss} />
               <Text style={styles.attentionText}>{t.trip_number} — не выплачена аренда инвестору</Text>
             </TouchableOpacity>
           ))}
         </View>
       )}
 
-      {/* Последние рейсы */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Последние рейсы</Text>
+          <Text style={styles.sectionLabel}>ПОСЛЕДНИЕ РЕЙСЫ</Text>
           <TouchableOpacity onPress={() => router.push('/(truck)/trips')}>
-            <Text style={styles.seeAll}>Все</Text>
+            <Text style={styles.seeAll}>Все →</Text>
           </TouchableOpacity>
         </View>
-        {trips.length === 0 && <Text style={styles.empty}>Нет рейсов</Text>}
-        {trips.map((t: any) => (
-          <TouchableOpacity key={t.id} style={styles.tripRow} onPress={() => router.push(`/truck-trip/${t.id}`)}>
+        {recentTrips.length === 0 && (
+          <TouchableOpacity style={styles.emptyCard} onPress={() => router.push('/truck-trip/new')}>
+            <Navigation size={24} color={theme.colors.textTertiary} />
+            <Text style={styles.emptyText}>Нет рейсов. Создать первый →</Text>
+          </TouchableOpacity>
+        )}
+        {recentTrips.map((t: any) => (
+          <TouchableOpacity key={t.id} style={styles.tripCard} onPress={() => router.push(`/truck-trip/${t.id}`)}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.tripNumber}>{t.trip_number}</Text>
-              <Text style={styles.tripRoute}>{t.route || '—'}</Text>
+              <Text style={styles.tripNum}>{t.trip_number}</Text>
+              <Text style={styles.tripMeta}>{t.truck_name || '—'} · {t.driver_name || '—'}</Text>
+              <Text style={styles.tripRoutes}>{t.routes_count ?? 0} маршрутов</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={styles.tripRate}>{formatMoney(t.rate_client)}</Text>
-              <View style={[styles.statusBadge, { backgroundColor: statusBgColor(t.status) }]}>
-                <Text style={styles.statusText}>{t.status}</Text>
-              </View>
+              <Text style={styles.tripRate}>{formatMoney(t.rate_total)}</Text>
+              <Text style={[styles.tripStatus, { color: statusColor(t.status) }]}>{t.status}</Text>
+              {(t.bonus_amount ?? 0) > 0 && (
+                <Text style={styles.tripBonus}>🎁 +{formatMoney(t.bonus_amount)}</Text>
+              )}
             </View>
           </TouchableOpacity>
         ))}
@@ -124,47 +138,54 @@ export default function TruckDashboard() {
   );
 }
 
-function statusBgColor(s: string) {
+function statusColor(s: string) {
   switch (s) {
-    case 'выполнен': return 'rgba(0,230,118,0.15)';
-    case 'в работе': return 'rgba(245,158,11,0.15)';
-    case 'отменён': return 'rgba(255,59,48,0.15)';
-    default: return 'rgba(96,165,250,0.15)';
+    case 'доставлено': return theme.colors.profit;
+    case 'забрали': return theme.colors.warning;
+    case 'отменён': return theme.colors.loss;
+    default: return theme.colors.info;
   }
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.bg },
-  content: { padding: 16, paddingBottom: 100 },
+  content: { paddingHorizontal: 20, paddingBottom: 100 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.colors.bg },
-  title: { fontSize: 24, fontWeight: '700', color: theme.colors.textPrimary, marginBottom: 2, marginTop: 8 },
-  subtitle: { fontSize: 13, color: theme.colors.textTertiary, marginBottom: 16 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 4 },
+  title: { fontSize: 32, fontWeight: '300', letterSpacing: -1, color: theme.colors.textPrimary },
+  addBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
   goalsRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
   goalCard: {
     flex: 1, backgroundColor: theme.colors.surface, borderRadius: 12, padding: 12,
     borderWidth: 1, borderColor: theme.colors.border,
   },
-  goalLabel: { fontSize: 11, color: theme.colors.textTertiary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.6 },
-  goalFact: { fontSize: 20, fontWeight: '700', marginTop: 4 },
-  goalGoal: { fontSize: 11, color: theme.colors.textTertiary, marginTop: 1 },
+  goalLabel: { fontSize: 10, color: theme.colors.textTertiary, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
+  goalFact: { fontSize: 18, fontWeight: '700', marginTop: 4 },
+  goalGoal: { fontSize: 10, color: theme.colors.textTertiary, marginTop: 1 },
   progressBg: { height: 3, backgroundColor: theme.colors.border, borderRadius: 2, marginTop: 8 },
   progressFill: { height: 3, borderRadius: 2 },
-  section: { marginTop: 20 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary },
-  seeAll: { fontSize: 13, color: theme.colors.accent },
-  empty: { color: theme.colors.textTertiary, fontSize: 14, textAlign: 'center', paddingVertical: 12 },
-  tripRow: {
-    flexDirection: 'row', alignItems: 'center', padding: 12,
-    backgroundColor: theme.colors.surface, borderRadius: 10, marginBottom: 8,
-    borderWidth: 1, borderColor: theme.colors.border,
-  },
-  tripNumber: { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary },
-  tripRoute: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
-  tripRate: { fontSize: 14, fontWeight: '700', color: theme.colors.accent },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginTop: 4 },
-  statusText: { fontSize: 10, fontWeight: '600', color: theme.colors.textSecondary },
-  attentionBlock: { marginTop: 16, backgroundColor: theme.colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: theme.colors.border },
+  attentionBlock: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 20 },
   attentionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
   attentionText: { fontSize: 13, color: theme.colors.textPrimary, flex: 1 },
+  section: { marginTop: 4 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  sectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary },
+  seeAll: { fontSize: 13, color: theme.colors.accent },
+  emptyCard: {
+    backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20,
+    borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', gap: 8,
+  },
+  emptyText: { color: theme.colors.textTertiary, fontSize: 14 },
+  tripCard: {
+    flexDirection: 'row', alignItems: 'center', padding: 14,
+    backgroundColor: theme.colors.surface, borderRadius: 12, marginBottom: 8,
+    borderWidth: 1, borderColor: theme.colors.border,
+  },
+  tripNum: { fontSize: 14, fontWeight: '700', color: theme.colors.accent },
+  tripMeta: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
+  tripRoutes: { fontSize: 11, color: theme.colors.textTertiary, marginTop: 1 },
+  tripRate: { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary },
+  tripStatus: { fontSize: 11, fontWeight: '600', marginTop: 2 },
+  tripBonus: { fontSize: 10, color: theme.colors.accentBright, marginTop: 1 },
 });
