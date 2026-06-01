@@ -144,9 +144,11 @@ export default function OrderDetail() {
       { text: 'Удалить', style: 'destructive', onPress: async () => {
         try {
           await api.orders.delete(order.id);
-          router.back();
+          Alert.alert('Готово', 'Заявка удалена', [
+            { text: 'OK', onPress: () => router.back() },
+          ]);
         } catch (e: any) {
-          Alert.alert('Ошибка', e.message);
+          Alert.alert('Ошибка удаления', e?.message || JSON.stringify(e));
         }
       }},
     ]);

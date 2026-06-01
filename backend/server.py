@@ -1328,26 +1328,30 @@ async def get_order_logs(order_id: str):
 
 @api_router.delete("/orders/{order_id}")
 async def delete_order(order_id: str, background_tasks: BackgroundTasks):
-    # Try by UUID `id` field (primary); fall back to order_number search
-    doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    # Primary lookup by UUID `id` string field (how the app stores orders)
+    doc = await db.orders.find_one({"id": order_id})
     if not doc:
-        # Last-resort: maybe the client sent order_number instead of id
-        doc = await db.orders.find_one({"order_number": order_id}, {"_id": 0})
+        # Fallback: order imported from Sheets may only have order_number
+        doc = await db.orders.find_one({"order_number": order_id})
     if not doc:
-        logging.getLogger(__name__).warning(f"[delete_order] id={order_id!r} — not found in DB")
+        logging.getLogger(__name__).warning(f"[delete_order] {order_id!r} not found")
         raise HTTPException(status_code=404, detail="Заявка не найдена")
 
-    real_id = doc.get("id", order_id)
+    # Already soft-deleted — idempotent, return success
+    if doc.get("deleted"):
+        return {"ok": True}
+
     deleted_at = now_iso()
     result = await db.orders.update_one(
-        {"id": real_id},
+        {"_id": doc["_id"]},  # use Mongo _id for exact match, no ambiguity
         {"$set": {"deleted": True, "deleted_at": deleted_at}},
     )
     logging.getLogger(__name__).info(
-        f"[delete_order] id={real_id!r} modified={result.modified_count}"
+        f"[delete_order] order_number={doc.get('order_number')!r} "
+        f"id={doc.get('id')!r} matched={result.matched_count} modified={result.modified_count}"
     )
-    if result.modified_count == 0:
-        raise HTTPException(status_code=500, detail="Не удалось пометить заявку как удалённую")
+    if result.matched_count == 0:
+        raise HTTPException(status_code=500, detail="Не удалось удалить заявку")
 
     if doc.get("order_number"):
         background_tasks.add_task(_bg_delete_order_row, doc["order_number"])
