@@ -138,21 +138,40 @@ export default function OrderDetail() {
     finally { setSaving(false); }
   };
 
-  const remove = () => {
-    Alert.alert('Удалить заявку?', order?.order_number || '', [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: async () => {
-        try {
-          await api.orders.delete(order.id);
-          Alert.alert('Готово', 'Заявка удалена', [
-            { text: 'OK', onPress: () => router.back() },
-          ]);
-        } catch (e: any) {
-          Alert.alert('Ошибка удаления', e?.message || JSON.stringify(e));
-        }
-      }},
-    ]);
+  const handleDelete = async () => {
+    if (Platform.OS === 'web') {
+      if (!window.confirm(`Удалить заявку ${order?.order_number || ''}?`)) return;
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        Alert.alert('Удалить заявку?', order?.order_number || '', [
+          { text: 'Отмена', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
+          { text: 'Удалить', style: 'destructive', onPress: () => resolve() },
+        ]);
+      }).catch(() => { throw new Error('cancelled'); });
+    }
+
+    try {
+      console.log('Deleting order:', id);
+      const result = await api.orders.remove(id!);
+      console.log('Delete result:', result);
+      if (Platform.OS === 'web') {
+        window.alert('Заявка удалена');
+      } else {
+        Alert.alert('Готово', 'Заявка удалена');
+      }
+      router.replace('/(tabs)/orders' as any);
+    } catch (e: any) {
+      if (e?.message === 'cancelled') return;
+      console.error('Delete error:', e);
+      if (Platform.OS === 'web') {
+        window.alert('Ошибка: ' + (e?.message || JSON.stringify(e)));
+      } else {
+        Alert.alert('Ошибка удаления', e?.message || 'Не удалось удалить');
+      }
+    }
   };
+
+  const remove = () => { handleDelete(); };
 
   const duplicateOrder = () => {
     router.push({ pathname: '/order/new', params: { duplicateFrom: id } } as any);
