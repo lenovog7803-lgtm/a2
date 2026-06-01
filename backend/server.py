@@ -1328,14 +1328,27 @@ async def get_order_logs(order_id: str):
 
 @api_router.delete("/orders/{order_id}")
 async def delete_order(order_id: str, background_tasks: BackgroundTasks):
+    # Try by UUID `id` field (primary); fall back to order_number search
     doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not doc:
-        print(f"[delete_order] id={order_id} not found")
-        return {"ok": True}
+        # Last-resort: maybe the client sent order_number instead of id
+        doc = await db.orders.find_one({"order_number": order_id}, {"_id": 0})
+    if not doc:
+        logging.getLogger(__name__).warning(f"[delete_order] id={order_id!r} — not found in DB")
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+    real_id = doc.get("id", order_id)
     deleted_at = now_iso()
-    print(f"[delete_order] id={order_id} setting deleted=True deleted_at={deleted_at}")
-    result = await db.orders.update_one({"id": order_id}, {"$set": {"deleted": True, "deleted_at": deleted_at}})
-    print(f"[delete_order] modified_count={result.modified_count}")
+    result = await db.orders.update_one(
+        {"id": real_id},
+        {"$set": {"deleted": True, "deleted_at": deleted_at}},
+    )
+    logging.getLogger(__name__).info(
+        f"[delete_order] id={real_id!r} modified={result.modified_count}"
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=500, detail="Не удалось пометить заявку как удалённую")
+
     if doc.get("order_number"):
         background_tasks.add_task(_bg_delete_order_row, doc["order_number"])
     if doc.get("calendar_event_id"):

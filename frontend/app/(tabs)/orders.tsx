@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput, Modal, TouchableWithoutFeedback } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, ArrowRight, MapPin, Calendar, AlertTriangle, Filter as FilterIcon, RefreshCw, Search } from 'lucide-react-native';
+import { Plus, ArrowRight, MapPin, Calendar, AlertTriangle, Filter as FilterIcon, RefreshCw, Search, Menu } from 'lucide-react-native';
 import { theme, formatMoney, statusLabels, statusColors } from '../../src/theme';
 import { api } from '../../src/api';
 import { Badge } from '../../src/components/Badge';
@@ -57,6 +57,7 @@ export default function Orders() {
   const [showFilters, setShowFilters] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [modeVisible, setModeVisible] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -131,6 +132,9 @@ export default function Orders() {
             <Text style={styles.title}>Заявки</Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity testID="mode-btn" onPress={() => setModeVisible(true)} style={styles.iconBtn} activeOpacity={0.7}>
+              <Menu size={18} color={theme.colors.textSecondary} strokeWidth={1.6} />
+            </TouchableOpacity>
             <TouchableOpacity testID="sync-btn" onPress={syncAndReload} disabled={syncing} style={styles.iconBtn} activeOpacity={0.7}>
               {syncing ? <ActivityIndicator size="small" color={theme.colors.accent} /> : <RefreshCw size={18} color={theme.colors.textSecondary} strokeWidth={1.6} />}
             </TouchableOpacity>
@@ -235,6 +239,26 @@ export default function Orders() {
           ListEmptyComponent={<Text style={styles.empty}>Нет заявок по фильтру</Text>}
         />
       )}
+
+      <Modal transparent visible={modeVisible} animationType="fade" onRequestClose={() => setModeVisible(false)}>
+        <TouchableWithoutFeedback onPress={() => setModeVisible(false)}>
+          <View style={styles.modeOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={[styles.modeSheet, { top: insets.top + 60, right: 20 }]}>
+                <Text style={styles.modeSheetTitle}>Режим работы</Text>
+                <TouchableOpacity style={[styles.modeItem, styles.modeItemActive]} onPress={() => setModeVisible(false)} activeOpacity={0.7}>
+                  <Text style={styles.modeItemIcon}>✅</Text>
+                  <Text style={[styles.modeItemText, styles.modeItemTextActive]}>Экспедирование</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modeItem} onPress={() => { setModeVisible(false); router.replace('/(truck)/dashboard' as any); }} activeOpacity={0.7}>
+                  <Text style={styles.modeItemIcon}>🚛</Text>
+                  <Text style={styles.modeItemText}>Моя Машина</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     </View>
   );
 }
@@ -338,4 +362,29 @@ const styles = StyleSheet.create({
 
   searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginTop: 12 },
   searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
+
+  modeOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  modeSheet: {
+    position: 'absolute',
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    minWidth: 220,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  modeSheetTitle: {
+    fontSize: 11, fontWeight: '700', color: theme.colors.textTertiary,
+    textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingHorizontal: 4,
+  },
+  modeItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 8 },
+  modeItemActive: { backgroundColor: theme.colors.accent + '20' },
+  modeItemIcon: { fontSize: 16 },
+  modeItemText: { fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary },
+  modeItemTextActive: { color: theme.colors.accent },
 });
