@@ -71,6 +71,7 @@ function FinanceInner() {
   // Payments In state
   const [paymentsIn, setPaymentsIn] = useState<any[]>([]);
   const [piModalVisible, setPiModalVisible] = useState(false);
+  const [piEditId, setPiEditId] = useState<string | null>(null);
   const [piPpNumber, setPiPpNumber] = useState('');
   const [piDate, setPiDate] = useState(todayISO);
   const [piAmount, setPiAmount] = useState('');
@@ -83,6 +84,7 @@ function FinanceInner() {
   // Payments Out state
   const [paymentsOut, setPaymentsOut] = useState<any[]>([]);
   const [poModalVisible, setPoModalVisible] = useState(false);
+  const [poEditId, setPoEditId] = useState<string | null>(null);
   const [poPpNumber, setPoPpNumber] = useState('');
   const [poDate, setPoDate] = useState(todayISO);
   const [poAmount, setPoAmount] = useState('');
@@ -216,19 +218,41 @@ function FinanceInner() {
     ]);
   };
 
+  const closePiModal = () => {
+    setPiModalVisible(false); setPiEditId(null);
+    setPiPpNumber(''); setPiAmount(''); setPiNotes('');
+    setPiClientId(''); setPiClientName(''); setPiDate(todayISO());
+  };
+
+  const openEditPaymentIn = (p: any) => {
+    setPiEditId(p.id);
+    setPiPpNumber(p.pp_number || '');
+    setPiDate(p.date || todayISO());
+    setPiAmount(String(p.amount || ''));
+    setPiClientId(p.client_id || '');
+    setPiClientName(p.client_name || '');
+    setPiNotes(p.notes || '');
+    setPiModalVisible(true);
+  };
+
   const savePaymentIn = async () => {
     const amount = parseFloat(piAmount.replace(/\s/g, '').replace(',', '.'));
     if (!piPpNumber.trim()) { Alert.alert('Введите номер ПП'); return; }
     if (!amount || isNaN(amount)) { Alert.alert('Введите сумму'); return; }
     if (!piClientId) { Alert.alert('Выберите клиента'); return; }
     try {
-      const entry = await api.paymentsIn.create({
+      const data = {
         pp_number: piPpNumber.trim(), date: piDate, amount,
         client_id: piClientId, client_name: piClientName, notes: piNotes,
-      });
-      setPaymentsIn(prev => [entry, ...prev]);
-      setPiModalVisible(false);
-      setPiPpNumber(''); setPiAmount(''); setPiNotes(''); setPiClientId(''); setPiClientName(''); setPiDate(todayISO());
+      };
+      if (piEditId) {
+        const updated = await api.paymentsIn.update(piEditId, data);
+        setPaymentsIn(prev => prev.map(p => p.id === piEditId ? updated : p));
+      } else {
+        const entry = await api.paymentsIn.create(data);
+        setPaymentsIn(prev => [entry, ...prev]);
+      }
+      closePiModal();
     } catch (e: any) { Alert.alert('Ошибка', e.message); }
   };
 
@@ -242,19 +266,41 @@ function FinanceInner() {
     ]);
   };
 
+  const closePoModal = () => {
+    setPoModalVisible(false); setPoEditId(null);
+    setPoPpNumber(''); setPoAmount(''); setPoNotes('');
+    setPoCarrierId(''); setPoCarrierName(''); setPoDate(todayISO());
+  };
+
+  const openEditPaymentOut = (p: any) => {
+    setPoEditId(p.id);
+    setPoPpNumber(p.pp_number || '');
+    setPoDate(p.date || todayISO());
+    setPoAmount(String(p.amount || ''));
+    setPoCarrierId(p.carrier_id || '');
+    setPoCarrierName(p.carrier_name || '');
+    setPoNotes(p.notes || '');
+    setPoModalVisible(true);
+  };
+
   const savePaymentOut = async () => {
     const amount = parseFloat(poAmount.replace(/\s/g, '').replace(',', '.'));
     if (!poPpNumber.trim()) { Alert.alert('Введите номер ПП'); return; }
     if (!amount || isNaN(amount)) { Alert.alert('Введите сумму'); return; }
     if (!poCarrierId) { Alert.alert('Выберите перевозчика'); return; }
     try {
-      const entry = await api.paymentsOut.create({
+      const data = {
         pp_number: poPpNumber.trim(), date: poDate, amount,
         carrier_id: poCarrierId, carrier_name: poCarrierName, notes: poNotes,
-      });
-      setPaymentsOut(prev => [entry, ...prev]);
-      setPoModalVisible(false);
-      setPoPpNumber(''); setPoAmount(''); setPoNotes(''); setPoCarrierId(''); setPoCarrierName(''); setPoDate(todayISO());
+      };
+      if (poEditId) {
+        const updated = await api.paymentsOut.update(poEditId, data);
+        setPaymentsOut(prev => prev.map(p => p.id === poEditId ? updated : p));
+      } else {
+        const entry = await api.paymentsOut.create(data);
+        setPaymentsOut(prev => [entry, ...prev]);
+      }
+      closePoModal();
     } catch (e: any) { Alert.alert('Ошибка', e.message); }
   };
 
@@ -680,17 +726,17 @@ function FinanceInner() {
               ) : paymentsIn
                 .filter((p: any) => (!piFilterClient || p.client_id === piFilterClient) && (!piFilterMonth || (p.date || '').startsWith(piFilterMonth)))
                 .map((p: any, i: number, arr: any[]) => (
-                  <View key={p.id} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                  <TouchableOpacity key={p.id} onPress={() => openEditPaymentIn(p)} activeOpacity={0.7} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.wDate}>{p.date}  ПП {p.pp_number}</Text>
                       <Text style={styles.wNote}>{p.client_name}</Text>
                       {!!p.notes && <Text style={[styles.wNote, { color: theme.colors.textTertiary }]}>{p.notes}</Text>}
                     </View>
                     <Text style={[styles.wAmount, { color: theme.colors.profit, marginRight: 8 }]}>{formatMoney(p.amount)}</Text>
-                    <TouchableOpacity onPress={() => deletePaymentIn(p.id)}>
+                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); deletePaymentIn(p.id); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                       <Trash2 size={16} color={theme.colors.loss} strokeWidth={1.6} />
                     </TouchableOpacity>
-                  </View>
+                  </TouchableOpacity>
                 ))
               }
             </View>
@@ -727,17 +773,17 @@ function FinanceInner() {
               ) : paymentsOut
                 .filter((p: any) => (!poFilterCarrier || p.carrier_id === poFilterCarrier) && (!poFilterMonth || (p.date || '').startsWith(poFilterMonth)))
                 .map((p: any, i: number, arr: any[]) => (
-                  <View key={p.id} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                  <TouchableOpacity key={p.id} onPress={() => openEditPaymentOut(p)} activeOpacity={0.7} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.wDate}>{p.date}  ПП {p.pp_number}</Text>
                       <Text style={styles.wNote}>{p.carrier_name}</Text>
                       {!!p.notes && <Text style={[styles.wNote, { color: theme.colors.textTertiary }]}>{p.notes}</Text>}
                     </View>
                     <Text style={[styles.wAmount, { color: theme.colors.loss, marginRight: 8 }]}>{formatMoney(p.amount)}</Text>
-                    <TouchableOpacity onPress={() => deletePaymentOut(p.id)}>
+                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); deletePaymentOut(p.id); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                       <Trash2 size={16} color={theme.colors.loss} strokeWidth={1.6} />
                     </TouchableOpacity>
-                  </View>
+                  </TouchableOpacity>
                 ))
               }
             </View>
@@ -906,14 +952,14 @@ function FinanceInner() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Payment In modal */}
-      <Modal visible={piModalVisible} transparent animationType="slide" onRequestClose={() => setPiModalVisible(false)}>
+      {/* Payment In modal (create + edit) */}
+      <Modal visible={piModalVisible} transparent animationType="slide" onRequestClose={closePiModal}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setPiModalVisible(false)} />
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closePiModal} />
           <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Добавить поступление</Text>
-              <TouchableOpacity onPress={() => setPiModalVisible(false)}>
+              <Text style={styles.sheetTitle}>{piEditId ? 'Редактировать поступление' : 'Добавить поступление'}</Text>
+              <TouchableOpacity onPress={closePiModal}>
                 <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
               </TouchableOpacity>
             </View>
@@ -942,18 +988,21 @@ function FinanceInner() {
             <TouchableOpacity onPress={savePaymentIn} style={styles.mSaveBtn} activeOpacity={0.8}>
               <Text style={styles.mSaveTxt}>Сохранить</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={closePiModal} style={[styles.mSaveBtn, { backgroundColor: theme.colors.surfaceElevated, marginTop: 8 }]} activeOpacity={0.8}>
+              <Text style={[styles.mSaveTxt, { color: theme.colors.textSecondary }]}>Отмена</Text>
+            </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Payment Out modal */}
-      <Modal visible={poModalVisible} transparent animationType="slide" onRequestClose={() => setPoModalVisible(false)}>
+      {/* Payment Out modal (create + edit) */}
+      <Modal visible={poModalVisible} transparent animationType="slide" onRequestClose={closePoModal}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setPoModalVisible(false)} />
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closePoModal} />
           <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Добавить списание</Text>
-              <TouchableOpacity onPress={() => setPoModalVisible(false)}>
+              <Text style={styles.sheetTitle}>{poEditId ? 'Редактировать списание' : 'Добавить списание'}</Text>
+              <TouchableOpacity onPress={closePoModal}>
                 <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
               </TouchableOpacity>
             </View>
@@ -981,6 +1030,9 @@ function FinanceInner() {
             )}
             <TouchableOpacity onPress={savePaymentOut} style={styles.mSaveBtn} activeOpacity={0.8}>
               <Text style={styles.mSaveTxt}>Сохранить</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={closePoModal} style={[styles.mSaveBtn, { backgroundColor: theme.colors.surfaceElevated, marginTop: 8 }]} activeOpacity={0.8}>
+              <Text style={[styles.mSaveTxt, { color: theme.colors.textSecondary }]}>Отмена</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
