@@ -1899,9 +1899,21 @@ async def dashboard(period: str = "all"):
     all_orders = await db.orders.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
     orders = [o for o in all_orders if order_in_period(o, period)]
 
-    clients_count = await db.clients.count_documents({"deleted": {"$ne": True}})
     carriers_count = await db.carriers.count_documents({"deleted": {"$ne": True}})
     leads_count = await db.leads.count_documents({"deleted": {"$ne": True}})
+
+    # clients_count: new clients in the selected period; total for "all"
+    import re as _re_dash
+    if period == "all" or not _re_dash.match(r"^\d{4}-\d{2}$", period):
+        clients_count = await db.clients.count_documents({"deleted": {"$ne": True}})
+    else:
+        _y, _m = int(period[:4]), int(period[5:7])
+        _p_start = f"{_y}-{_m:02d}-01"
+        _p_end = f"{_y + 1}-01-01" if _m == 12 else f"{_y}-{_m + 1:02d}-01"
+        clients_count = await db.clients.count_documents({
+            "created_at": {"$gte": _p_start, "$lt": _p_end},
+            "deleted": {"$ne": True},
+        })
 
     total_revenue = sum(o.get("client_rate", 0) for o in orders)
     total_cost = sum(o.get("carrier_rate", 0) for o in orders)
@@ -2149,16 +2161,23 @@ async def analytics(month: Optional[str] = None, current_user: dict = Depends(_r
     trips_count = len(orders)
     avg_margin = round(margin / trips_count, 1) if trips_count else 0
 
-    # Goals — всегда текущий месяц
+    # Goals — для выбранного периода; если "all" — используем текущий месяц
+    import re as _re_analytics
     cur_ym = datetime.now(timezone.utc).strftime("%Y-%m")
-    cur_orders = [o for o in all_orders if order_in_period(o, cur_ym)]
+    goal_ym = period if _re_analytics.match(r"^\d{4}-\d{2}$", period) else cur_ym
+    cur_orders = [o for o in all_orders if order_in_period(o, goal_ym)]
     margin_fact = sum(_margin(o) for o in cur_orders)
     trips_fact = len(cur_orders)
     avg_margin_fact = round(margin_fact / trips_fact, 1) if trips_fact else 0
-    prev_clients = {o.get("client_name") or "" for o in all_orders
-                    if not order_in_period(o, cur_ym) and o.get("client_name")}
-    cur_clients = {o.get("client_name") or "" for o in cur_orders if o.get("client_name")}
-    new_clients_fact = len(cur_clients - prev_clients)
+
+    # new_clients_fact: count by created_at in clients collection, not order-derived
+    _g_y, _g_m = int(goal_ym[:4]), int(goal_ym[5:7])
+    _g_start = f"{_g_y}-{_g_m:02d}-01"
+    _g_end = f"{_g_y + 1}-01-01" if _g_m == 12 else f"{_g_y}-{_g_m + 1:02d}-01"
+    new_clients_fact = await db.clients.count_documents({
+        "created_at": {"$gte": _g_start, "$lt": _g_end},
+        "deleted": {"$ne": True},
+    })
 
     # Clients top-10
     client_map: dict = {}
