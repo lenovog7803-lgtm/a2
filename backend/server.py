@@ -832,6 +832,7 @@ async def update_lead(item_id: str, payload: LeadUpdate, background_tasks: Backg
 
     p_dict = payload.dict(exclude_none=True)
     p_dict.pop("last_call", None)
+    p_dict.pop("call_notes", None)  # never overwrite notes via general PUT; use POST /call_notes
 
     await db.leads.update_one({"id": item_id}, {"$set": p_dict})
     doc = await db.leads.find_one({"id": item_id}, {"_id": 0})

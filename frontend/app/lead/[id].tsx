@@ -34,7 +34,8 @@ export default function LeadDetail() {
   const save = async () => {
     setSaving(true);
     try {
-      await api.leads.update(id!, lead);
+      const { call_notes, ...leadData } = lead;
+      await api.leads.update(id!, leadData);
       router.back();
     } catch (e: any) {
       Alert.alert('Ошибка', e.message);
