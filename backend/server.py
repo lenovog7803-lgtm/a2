@@ -1236,6 +1236,17 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     if update_data.get("carrier_paid") is True and "carrier_paid_date" not in update_data:
         if not old_doc.get("carrier_paid"):
             update_data["carrier_paid_date"] = today
+    if update_data.get("carrier_paid") is True and not old_doc.get("carrier_paid"):
+        _order_number = old_doc.get("order_number", "")
+        _carrier_name = old_doc.get("carrier_name", "")
+        _or_clauses: list = [{"order_id": order_id}]
+        if _carrier_name:
+            _or_clauses.append({"title": {"$regex": _carrier_name, "$options": "i"}})
+        await db.tasks.update_many(
+            {"status": {"$ne": "done"}, "$or": _or_clauses},
+            {"$set": {"status": "done", "completed_at": now_iso()}}
+        )
+        logging.getLogger(__name__).info(f"Closed payment tasks for order {_order_number}")
     carrier_already_paid = update_data.get("carrier_paid") or old_doc.get("carrier_paid")
     if update_data.get("docs_from_carrier_received") and not old_doc.get("docs_from_carrier_received") and not carrier_already_paid:
         days = update_data.get("carrier_payment_days") or old_doc.get("carrier_payment_days") or 20
