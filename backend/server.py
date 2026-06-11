@@ -2505,7 +2505,12 @@ class PaymentInPayload(BaseModel):
 async def list_payments_in(client_id: Optional[str] = None, month: Optional[str] = None):
     q: dict = {}
     if client_id:
-        q["client_id"] = client_id
+        try:
+            from bson.errors import InvalidId
+            oid = ObjectId(client_id)
+            q["client_id"] = {"$in": [client_id, str(oid), oid]}
+        except Exception:
+            q["client_id"] = client_id
     if month:
         q["date"] = {"$regex": f"^{month}"}
     docs = await db.payments_in.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
