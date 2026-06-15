@@ -84,7 +84,14 @@ export default function ClientDetail() {
     try {
       const result = await api.clients.generateActs(id!);
       setGenResult(result);
-      const msg = `Создано: ${result.created}, уже было: ${(result.results?.length || 0) - result.created}, ошибок: ${result.errors}`;
+      if (result?.url) {
+        if (Platform.OS === 'web') {
+          window.open(result.url, '_blank');
+        } else {
+          await Linking.openURL(result.url);
+        }
+      }
+      const msg = `Создано: ${result.created}, ошибок: ${result.errors}`;
       if (Platform.OS === 'web') {
         window.alert('Готово! ' + msg);
       } else {

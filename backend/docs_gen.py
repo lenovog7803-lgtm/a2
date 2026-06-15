@@ -223,6 +223,79 @@ class DocsGenerator:
 
         return f"https://docs.google.com/document/d/{new_id}/edit"
 
+    def create_combined_doc(self, act_items: List[Dict[str, Any]], client_name: str) -> str:
+        """
+        Combine text from multiple act documents into one new Google Doc.
+        act_items: list of {"order_number": str, "act": "url"}
+        Returns the webViewLink of the combined doc.
+        """
+        folder_id = TEMPLATES["act"]["folder_id"]
+        drive, docs = self._services()
+
+        title = f"Все акты — {client_name}"
+        new_file = drive.files().create(
+            body={"name": title, "mimeType": "application/vnd.google-apps.document", "parents": [folder_id]},
+            fields="id,webViewLink",
+        ).execute()
+        combined_id = new_file["id"]
+        combined_url = new_file["webViewLink"]
+
+        segments = []
+        for item in act_items:
+            act_url = item.get("act", "")
+            if not act_url:
+                continue
+            try:
+                doc_id = act_url.split("/d/")[1].split("/")[0]
+                act_doc = docs.documents().get(documentId=doc_id).execute()
+                text = _extract_doc_text(act_doc.get("body", {}).get("content", []))
+                if text.strip():
+                    segments.append(text)
+            except Exception as e:
+                logger.warning(f"[create_combined_doc] could not read {act_url}: {e}")
+
+        if segments:
+            separator = "\n\n" + "─" * 60 + "\n\n"
+            combined_text = separator.join(segments)
+            docs.documents().batchUpdate(
+                documentId=combined_id,
+                body={"requests": [{"insertText": {"location": {"index": 1}, "text": combined_text}}]},
+            ).execute()
+
+        try:
+            drive.permissions().create(
+                fileId=combined_id,
+                body={"type": "anyone", "role": "reader"},
+                supportsAllDrives=True,
+            ).execute()
+        except Exception as e:
+            logger.warning(f"[create_combined_doc] permission error: {e}")
+
+        return combined_url
+
+
+def _extract_doc_text(content: list) -> str:
+    """Extract plain text from Google Docs body.content structure."""
+    parts = []
+    for element in content:
+        if "paragraph" in element:
+            for pe in element["paragraph"].get("elements", []):
+                if "textRun" in pe:
+                    parts.append(pe["textRun"].get("content", ""))
+        elif "table" in element:
+            for row in element["table"].get("tableRows", []):
+                row_texts = []
+                for cell in row.get("tableCells", []):
+                    cell_text = ""
+                    for cell_para in cell.get("content", []):
+                        if "paragraph" in cell_para:
+                            for pe in cell_para["paragraph"].get("elements", []):
+                                if "textRun" in pe:
+                                    cell_text += pe["textRun"].get("content", "").strip()
+                    row_texts.append(cell_text)
+                parts.append(" | ".join(row_texts) + "\n")
+    return "".join(parts)
+
 
 def _extract_director(notes: str) -> str:
     if not notes:

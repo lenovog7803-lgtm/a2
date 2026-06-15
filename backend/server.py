@@ -863,8 +863,23 @@ async def generate_all_acts(client_id: str, current_user: dict = Depends(_requir
         if not had_error:
             results.append({"order_number": order_number, **order_urls})
 
+    combined_url = None
+    act_items = [r for r in results if r.get("act")]
+    if act_items:
+        try:
+            combined_url = await asyncio.to_thread(gen.create_combined_doc, act_items, client_name)
+            print(f"[generate_all_acts] combined doc: {combined_url}")
+        except Exception as e:
+            print(f"[generate_all_acts] combine error: {e}")
+
     print(f"[generate_all_acts] client={client_name} orders={len(orders)} ok={len(results)} err={len(errors)}")
-    return {"created": len(results), "errors": len(errors), "results": results, "error_details": errors}
+    return {
+        "url": combined_url,
+        "created": len(results),
+        "errors": len(errors),
+        "client_name": client_name,
+        "error_details": errors,
+    }
 
 
 @api_router.get("/leads/activity/stats")
