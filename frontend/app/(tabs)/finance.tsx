@@ -720,11 +720,23 @@ function FinanceInner() {
             </TouchableOpacity>
             <View style={[styles.card, { marginTop: 12 }]}>
               {paymentsIn
-                .filter((p: any) => (!piFilterClient || p.client_id === piFilterClient) && (!piFilterMonth || (p.date || '').startsWith(piFilterMonth)))
+                .filter((p: any) => {
+                  if (piFilterClient) {
+                    const sel = clients.find((c: any) => c.id === piFilterClient);
+                    if (p.client_id !== piFilterClient && (!sel || p.client_name !== sel.name)) return false;
+                  }
+                  return !piFilterMonth || (p.date || '').startsWith(piFilterMonth);
+                })
                 .length === 0 ? (
                 <Text style={{ color: theme.colors.textTertiary, fontSize: 13, textAlign: 'center', paddingVertical: 8 }}>Нет поступлений</Text>
               ) : paymentsIn
-                .filter((p: any) => (!piFilterClient || p.client_id === piFilterClient) && (!piFilterMonth || (p.date || '').startsWith(piFilterMonth)))
+                .filter((p: any) => {
+                  if (piFilterClient) {
+                    const sel = clients.find((c: any) => c.id === piFilterClient);
+                    if (p.client_id !== piFilterClient && (!sel || p.client_name !== sel.name)) return false;
+                  }
+                  return !piFilterMonth || (p.date || '').startsWith(piFilterMonth);
+                })
                 .map((p: any, i: number, arr: any[]) => (
                   <TouchableOpacity key={p.id} onPress={() => openEditPaymentIn(p)} activeOpacity={0.7} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
                     <View style={{ flex: 1 }}>

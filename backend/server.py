@@ -325,6 +325,14 @@ async def lifespan(app: FastAPI):
         }
         await db.users.insert_one(admin)
         logging.getLogger(__name__).info("Created default admin user (login=admin, password=admin123)")
+    # Debug: print last 30 carriers to inspect field names
+    try:
+        _debug_carriers = await db.carriers.find({"deleted": {"$ne": True}}).sort("created_at", -1).to_list(30)
+        print(f"[startup] carriers count={len(_debug_carriers)}")
+        for _c in _debug_carriers[:5]:
+            print({k: v for k, v in _c.items() if k not in ['_id']})
+    except Exception as _ce:
+        print(f"[startup] carriers debug error: {_ce}")
     yield
     client.close()
 
@@ -1114,6 +1122,67 @@ async def _bg_carrier_payment_calendar(deadline_str: str, reminder_str: str, car
         logging.getLogger(__name__).error(f"_bg_carrier_payment_calendar failed: {e}", exc_info=True)
 
 
+def _close_carrier_google_tasks_sync(carrier_name: str, token_doc: dict) -> list:
+    """Sync: mark payment tasks done in Google Tasks and ✅ calendar events."""
+    from google_tasks import _build_service as _gt_build_svc, get_or_create_tasklist, PAYMENT_LIST_NAME
+    from google_calendar import _build_service as _cal_build_svc
+    from datetime import datetime, timedelta, timezone as _tz
+    results = []
+    # 1. Close Google Tasks in "Оплаты перевозчиков"
+    try:
+        gt_service = _gt_build_svc(token_doc)
+        list_id = get_or_create_tasklist(gt_service, PAYMENT_LIST_NAME)
+        tasks_resp = gt_service.tasks().list(tasklist=list_id, showCompleted=False).execute()
+        for task in tasks_resp.get("items", []):
+            title = task.get("title", "")
+            if carrier_name.lower() in title.lower():
+                updated = dict(task)
+                updated["status"] = "completed"
+                gt_service.tasks().update(tasklist=list_id, task=task["id"], body=updated).execute()
+                results.append(f"Google Task completed: {title}")
+    except Exception as e:
+        results.append(f"Google Tasks error: {e}")
+    # 2. Mark Google Calendar events with ✅
+    try:
+        cal_service = _cal_build_svc(token_doc)
+        now = datetime.now(_tz.utc)
+        events_resp = cal_service.events().list(
+            calendarId="primary",
+            q=carrier_name,
+            timeMin=(now - timedelta(days=90)).isoformat(),
+            timeMax=(now + timedelta(days=90)).isoformat(),
+        ).execute()
+        for event in events_resp.get("items", []):
+            summary = event.get("summary", "")
+            if (("оплатить" in summary.lower() or "оплата" in summary.lower())
+                    and carrier_name.lower() in summary.lower()
+                    and not summary.startswith("✅")):
+                updated_event = dict(event)
+                updated_event["summary"] = "✅ " + summary
+                cal_service.events().update(
+                    calendarId="primary", eventId=event["id"], body=updated_event
+                ).execute()
+                results.append(f"Calendar event updated: {summary}")
+    except Exception as e:
+        results.append(f"Calendar error: {e}")
+    return results
+
+
+async def _bg_close_carrier_payment_on_paid(carrier_name: str, order_id: str):
+    if not carrier_name:
+        return
+    try:
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            logging.getLogger(__name__).warning("_bg_close_carrier_payment_on_paid: no Google token")
+            return
+        results = await asyncio.to_thread(_close_carrier_google_tasks_sync, carrier_name, token_doc)
+        for r in results:
+            print(f"[carrier_paid] {r}")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_close_carrier_payment_on_paid: {e}", exc_info=True)
+
+
 # ====== Task CRUD endpoints ======
 @api_router.get("/tasks", response_model=List[Task])
 async def list_tasks(current_user: Optional[dict] = Depends(_get_user_from_token)):
@@ -1258,6 +1327,7 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
             {"$set": {"status": "done", "completed_at": now_iso()}}
         )
         logging.getLogger(__name__).info(f"Closed payment tasks for order {_order_number}")
+        background_tasks.add_task(_bg_close_carrier_payment_on_paid, _carrier_name, order_id)
     carrier_already_paid = update_data.get("carrier_paid") or old_doc.get("carrier_paid")
     if update_data.get("docs_from_carrier_received") and not old_doc.get("docs_from_carrier_received") and not carrier_already_paid:
         days = update_data.get("carrier_payment_days") or old_doc.get("carrier_payment_days") or 20
@@ -2513,19 +2583,21 @@ class PaymentInPayload(BaseModel):
 
 @api_router.get("/payments/in", response_model=List[PaymentIn])
 async def list_payments_in(client_id: Optional[str] = None, month: Optional[str] = None):
-    from bson import ObjectId
     q: dict = {}
     if client_id:
-        try:
-            oid = ObjectId(client_id)
-            q["client_id"] = {"$in": [client_id, str(oid), oid]}
-        except Exception:
+        client_doc = await db.clients.find_one({"id": client_id})
+        if client_doc:
+            client_name = client_doc.get("name", "")
+            q["$or"] = [{"client_id": client_id}, {"client_name": client_name}]
+            print(f"[payments/in] filter by id={client_id!r} OR name={client_name!r}")
+        else:
             q["client_id"] = client_id
+            print(f"[payments/in] client not found, filter by id={client_id!r}")
     if month:
         q["date"] = {"$regex": f"^{month}"}
     print(f"[payments/in] query={q}")
     docs = await db.payments_in.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
-    print(f"[payments/in] found {len(docs)} docs, client_ids={[d.get('client_id') for d in docs[:5]]}")
+    print(f"[payments/in] found {len(docs)} docs, sample client_ids={[d.get('client_id') for d in docs[:5]]}")
     return [PaymentIn(**d) for d in docs]
 
 
@@ -2998,6 +3070,15 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         ]
         ob_side = _carrier_side(opening_balance)
         _side   = _carrier_side
+
+    print(f"=== ACT SVERKI DEBUG ===")
+    print(f"type={payload.type}, name={cp_name}, period={date_from} - {date_to}")
+    print(f"left_rows count: {len(left_rows)}")
+    print(f"right_rows count: {len(right_rows)}")
+    for r in right_rows[:3]:
+        print(f"  right: doc={r.get('doc_number')} amount={r.get('amount')}")
+    for r in left_rows[:3]:
+        print(f"  left: pp={r.get('pp_number')} amount={r.get('amount')}")
 
     left_total      = sum(r["amount"] for r in left_rows)
     right_total     = sum(r["amount"] for r in right_rows)
