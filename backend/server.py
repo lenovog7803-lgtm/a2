@@ -447,6 +447,11 @@ class Carrier(BaseModel):
     driver_name: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""
+    unp: Optional[str] = ""
+    address: Optional[str] = ""
+    rs: Optional[str] = ""
+    bik: Optional[str] = ""
+    bank: Optional[str] = ""
     inn: Optional[str] = ""
     kpp: Optional[str] = ""
     legal_address: Optional[str] = ""
@@ -473,6 +478,11 @@ class CarrierPayload(BaseModel):
     driver_name: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""
+    unp: Optional[str] = ""
+    address: Optional[str] = ""
+    rs: Optional[str] = ""
+    bik: Optional[str] = ""
+    bank: Optional[str] = ""
     inn: Optional[str] = ""
     kpp: Optional[str] = ""
     legal_address: Optional[str] = ""
@@ -2503,17 +2513,19 @@ class PaymentInPayload(BaseModel):
 
 @api_router.get("/payments/in", response_model=List[PaymentIn])
 async def list_payments_in(client_id: Optional[str] = None, month: Optional[str] = None):
+    from bson import ObjectId
     q: dict = {}
     if client_id:
         try:
-            from bson.errors import InvalidId
             oid = ObjectId(client_id)
             q["client_id"] = {"$in": [client_id, str(oid), oid]}
         except Exception:
             q["client_id"] = client_id
     if month:
         q["date"] = {"$regex": f"^{month}"}
+    print(f"[payments/in] query={q}")
     docs = await db.payments_in.find(q, {"_id": 0}).sort("date", -1).to_list(5000)
+    print(f"[payments/in] found {len(docs)} docs, client_ids={[d.get('client_id') for d in docs[:5]]}")
     return [PaymentIn(**d) for d in docs]
 
 

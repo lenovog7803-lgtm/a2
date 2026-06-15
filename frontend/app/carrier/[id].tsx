@@ -119,19 +119,16 @@ export default function CarrierDetail() {
               )}
             </View>
 
-            {(carrier.vehicle_type || carrier.plate) && (
+            {(carrier.capacity_tons || carrier.capacity_m3) ? (
               <Section title="ТРАНСПОРТ">
-                <Row label="Тип" value={carrier.vehicle_type} />
-                <Row label="Гос. номер" value={carrier.plate} mono onCopy={() => copyText(carrier.plate, 'Гос. номер')} />
                 <Row label="Грузоподъёмность" value={carrier.capacity_tons ? `${carrier.capacity_tons} т` : ''} />
                 <Row label="Объём" value={carrier.capacity_m3 ? `${carrier.capacity_m3} м³` : ''} />
               </Section>
-            )}
+            ) : null}
 
-            {(carrier.inn || carrier.kpp || carrier.legal_address || carrier.postal_address || carrier.director || carrier.basis) && (
+            {(carrier.unp || carrier.inn || carrier.kpp || carrier.address || carrier.legal_address || carrier.postal_address || carrier.director || carrier.basis) && (
               <Section title="РЕКВИЗИТЫ">
                 <Row label="УНП" value={carrier.unp || carrier.inn} onCopy={() => copyText(carrier.unp || carrier.inn, 'УНП')} />
-                
                 <Row label="Адрес" value={carrier.address || carrier.legal_address} multiline onCopy={() => copyText(carrier.address || carrier.legal_address, 'Адрес')} />
                 <Row label="Почтовый адрес" value={carrier.postal_address} multiline onCopy={() => copyText(carrier.postal_address, 'Почтовый адрес')} />
                 <Row label="Директор" value={carrier.director} onCopy={() => copyText(carrier.director, 'Директор')} />
@@ -139,12 +136,11 @@ export default function CarrierDetail() {
               </Section>
             )}
 
-            {(carrier.bank_name || carrier.bank_account) && (
+            {(carrier.bank || carrier.bank_name || carrier.rs || carrier.bank_account || carrier.bik || carrier.bank_bik) && (
               <Section title="БАНКОВСКИЕ РЕКВИЗИТЫ">
                 <Row label="Банк" value={carrier.bank || carrier.bank_name} onCopy={() => copyText(carrier.bank || carrier.bank_name, 'Банк')} />
                 <Row label="Расчётный счёт" value={carrier.rs || carrier.bank_account} mono onCopy={() => copyText(carrier.rs || carrier.bank_account, 'Р/с')} />
                 <Row label="БИК" value={carrier.bik || carrier.bank_bik} mono onCopy={() => copyText(carrier.bik || carrier.bank_bik, 'БИК')} />
-                
               </Section>
             )}
 
