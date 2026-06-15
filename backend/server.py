@@ -812,6 +812,12 @@ async def generate_all_acts(client_id: str, current_user: dict = Depends(_requir
 
     client_doc = await db.clients.find_one({"id": client_id, "deleted": {"$ne": True}}, {"_id": 0})
     if not client_doc:
+        try:
+            from bson import ObjectId
+            client_doc = await db.clients.find_one({"_id": ObjectId(client_id), "deleted": {"$ne": True}}, {"_id": 0})
+        except Exception:
+            pass
+    if not client_doc:
         raise HTTPException(404, "Клиент не найден")
 
     client_name = client_doc.get("name", "")
