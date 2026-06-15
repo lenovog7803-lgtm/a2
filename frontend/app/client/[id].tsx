@@ -18,6 +18,8 @@ export default function ClientDetail() {
   const [saving, setSaving] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
   const [acts, setActs] = useState<any[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [genResult, setGenResult] = useState<any>(null);
 
   useEffect(() => {
     (async () => {
@@ -64,6 +66,39 @@ export default function ClientDetail() {
         }
       }},
     ]);
+  };
+
+  const generateAllActs = async () => {
+    if (Platform.OS === 'web') {
+      if (!window.confirm(`Сгенерировать акты+счета для всех заявок ${client?.name}?`)) return;
+    } else {
+      await new Promise<void>(resolve => {
+        Alert.alert(
+          'Генерация документов',
+          `Сгенерировать акты+счета для всех заявок ${client?.name}?`,
+          [{ text: 'Отмена', style: 'cancel', onPress: () => resolve() }, { text: 'Да', onPress: () => resolve() }],
+        );
+      });
+    }
+    setGenerating(true);
+    try {
+      const result = await api.clients.generateActs(id!);
+      setGenResult(result);
+      const msg = `Создано: ${result.created}, уже было: ${(result.results?.length || 0) - result.created}, ошибок: ${result.errors}`;
+      if (Platform.OS === 'web') {
+        window.alert('Готово! ' + msg);
+      } else {
+        Alert.alert('Готово', msg);
+      }
+    } catch (e: any) {
+      if (Platform.OS === 'web') {
+        window.alert('Ошибка: ' + e.message);
+      } else {
+        Alert.alert('Ошибка', e.message);
+      }
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const copyText = async (text: string, label: string) => {
@@ -181,6 +216,29 @@ export default function ClientDetail() {
                 </View>
               </View>
             )}
+
+            {/* Генерация всех актов+счетов */}
+            <TouchableOpacity
+              onPress={generateAllActs}
+              disabled={generating}
+              style={{
+                backgroundColor: theme.colors.accent,
+                padding: 14,
+                borderRadius: 10,
+                alignItems: 'center',
+                marginTop: 8,
+                marginBottom: 8,
+                opacity: generating ? 0.6 : 1,
+              }}
+              activeOpacity={0.8}
+            >
+              {generating
+                ? <ActivityIndicator color="#000" />
+                : <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>
+                    Сгенерировать все акты+счета
+                  </Text>
+              }
+            </TouchableOpacity>
           </>
         ) : (
           <>

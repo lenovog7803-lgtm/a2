@@ -804,6 +804,62 @@ make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True, soft
 make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True, soft_delete=True)
 
 
+@api_router.post("/clients/{client_id}/generate_acts")
+async def generate_all_acts(client_id: str, current_user: dict = Depends(_require_user)):
+    """Сгенерировать акты+счета для всех незакрытых заявок клиента."""
+    if _docs_get_generator is None:
+        raise HTTPException(500, "Docs generation недоступна")
+
+    client_doc = await db.clients.find_one({"id": client_id, "deleted": {"$ne": True}}, {"_id": 0})
+    if not client_doc:
+        raise HTTPException(404, "Клиент не найден")
+
+    client_name = client_doc.get("name", "")
+    orders = await db.orders.find(
+        {
+            "$or": [{"client_id": client_id}, {"client_name": client_name}],
+            "deleted": {"$ne": True},
+            "status": {"$ne": "cancelled"},
+        },
+        {"_id": 0},
+    ).to_list(10000)
+
+    gen = _docs_get_generator()
+    results = []
+    errors = []
+
+    for order in orders:
+        order_number = order.get("order_number", "")
+        order_id_val = order.get("id", "")
+
+        carrier_doc = None
+        if order.get("carrier_id"):
+            carrier_doc = await db.carriers.find_one({"id": order["carrier_id"]}, {"_id": 0})
+        if not carrier_doc and order.get("carrier_name"):
+            carrier_doc = await db.carriers.find_one({"company_name": order["carrier_name"]}, {"_id": 0})
+
+        order_urls: dict = {}
+        had_error = False
+        for kind in ("client", "act"):
+            field = _docs_kind_to_field(kind)
+            existing = order.get(field) or ""
+            if existing:
+                order_urls[kind] = existing
+                continue
+            try:
+                url = await asyncio.to_thread(gen.generate, kind, order, client_doc, carrier_doc)
+                await db.orders.update_one({"id": order_id_val}, {"$set": {field: url}})
+                order_urls[kind] = url
+            except Exception as e:
+                had_error = True
+                errors.append({"order_number": order_number, "kind": kind, "error": str(e)})
+
+        if not had_error:
+            results.append({"order_number": order_number, **order_urls})
+
+    print(f"[generate_all_acts] client={client_name} orders={len(orders)} ok={len(results)} err={len(errors)}")
+    return {"created": len(results), "errors": len(errors), "results": results, "error_details": errors}
+
 
 @api_router.get("/leads/activity/stats")
 async def leads_activity_stats():

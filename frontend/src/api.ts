@@ -58,6 +58,7 @@ export const api = {
     create: (data: any) => req('/clients', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => req(`/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => req(`/clients/${id}`, { method: 'DELETE' }),
+    generateActs: (clientId: string) => req(`/clients/${clientId}/generate_acts`, { method: 'POST' }),
   },
   carriers: {
     list: () => req('/carriers'),
