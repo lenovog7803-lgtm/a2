@@ -283,54 +283,35 @@ export default function Dashboard() {
         />
 
         {currentUserRole !== 'manager' && (<>
-        {/* Hero: Маржа */}
-        <LinearGradient
-          colors={theme.colors.gradientBlue as [string, string]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.heroCard}
-        >
-          <Text style={[styles.metricLabel, { color: 'rgba(255,255,255,0.8)' }]}>МАРЖА · {period === 'all' ? 'ВСЕГО' : monthLabel(period).toUpperCase()}</Text>
-          <View style={styles.marginRow}>
-            <Text style={[styles.metricBig, { color: '#FFFFFF' }]}>
-              {formatMoney(d.total_margin)}
-            </Text>
-            {marginPositive ? <TrendingUp size={20} color="rgba(255,255,255,0.9)" strokeWidth={2} /> : <TrendingDown size={20} color="rgba(255,255,255,0.9)" strokeWidth={2} />}
-          </View>
-          {(d.prev_period && d.prev_margin !== null) ? (
-            <View style={styles.compareRow}>
-              {d.margin_change_pct !== null && d.margin_change_pct !== undefined ? (
-                <View style={[styles.compareBadge, { backgroundColor: 'rgba(255,255,255,0.2)', borderColor: 'rgba(255,255,255,0.35)' }]}>
-                  {d.margin_change_pct >= 0 ? <TrendingUp size={12} color="#FFFFFF" strokeWidth={2} /> : <TrendingDown size={12} color="#FFFFFF" strokeWidth={2} />}
-                  <Text style={[styles.compareBadgeTxt, { color: '#FFFFFF' }]}>
-                    {d.margin_change_pct >= 0 ? '+' : ''}{d.margin_change_pct}%
-                  </Text>
-                </View>
-              ) : null}
-              <Text style={[styles.compareSub, { color: 'rgba(255,255,255,0.7)' }]}>
-                к {monthLabel(d.prev_period).toLowerCase()} ({formatMoney(d.prev_margin)})
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={[styles.heroDivider, { backgroundColor: 'rgba(255,255,255,0.2)' }]} />
-
-          <Text style={[styles.subLabel, { color: 'rgba(255,255,255,0.7)' }]}>ПРИБЫЛЬ (ПОСЛЕ 20% НАЛОГА)</Text>
-          <Text style={[styles.profitValue, { color: '#FFFFFF' }]}>{formatMoney(d.profit)}</Text>
-        </LinearGradient>
-
-        {/* Cashflow alerts */}
-        <View style={styles.bentoRow}>
-          <View style={[styles.bentoCard, { borderColor: theme.colors.warning + '40' }]}>
-            <ArrowDownRight size={18} color={theme.colors.warning} strokeWidth={1.6} />
-            <Text style={styles.bentoLabel}>ОЖИДАЕТСЯ ОТ КЛИЕНТОВ</Text>
-            <Text style={[styles.bentoValue, { color: theme.colors.warning }]}>{formatMoney(d.unpaid_by_clients)}</Text>
-          </View>
-          <View style={[styles.bentoCard, { borderColor: theme.colors.loss + '40' }]}>
-            <ArrowUpRight size={18} color={theme.colors.loss} strokeWidth={1.6} />
-            <Text style={styles.bentoLabel}>К ОПЛАТЕ ПЕРЕВОЗЧИКАМ</Text>
-            <Text style={[styles.bentoValue, { color: theme.colors.loss }]}>{formatMoney(d.owed_to_carriers)}</Text>
-          </View>
+        {/* Gradient metric cards — 2x2 */}
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+          <GradientCard
+            colors={theme.gradients.blue as [string, string]}
+            label={`МАРЖА · ${period === 'all' ? 'ВСЕГО' : monthLabel(period).toUpperCase()}`}
+            value={formatMoney(d.total_margin)}
+            sub={d.prev_margin !== null && d.margin_change_pct !== null ? `${d.margin_change_pct >= 0 ? '+' : ''}${d.margin_change_pct}% к прошлому` : undefined}
+            icon={marginPositive ? TrendingUp : TrendingDown}
+          />
+          <GradientCard
+            colors={theme.gradients.green as [string, string]}
+            label="ПРИБЫЛЬ (ПОСЛЕ 20%)"
+            value={formatMoney(d.profit)}
+            icon={Wallet}
+          />
+        </View>
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+          <GradientCard
+            colors={theme.gradients.orange as [string, string]}
+            label="ОЖИДАЕТСЯ ОТ КЛИЕНТОВ"
+            value={formatMoney(d.unpaid_by_clients)}
+            icon={ArrowDownRight}
+          />
+          <GradientCard
+            colors={theme.gradients.purple as [string, string]}
+            label="К ОПЛАТЕ ПЕРЕВОЗЧИКАМ"
+            value={formatMoney(d.owed_to_carriers)}
+            icon={ArrowUpRight}
+          />
         </View>
         </>)}
 
@@ -748,6 +729,43 @@ function StatTile({ icon, label, value }: any) {
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
+  );
+}
+
+function GradientCard({ colors, label, value, sub, icon: Icon, progress }: {
+  colors: [string, string];
+  label: string;
+  value: string;
+  sub?: string;
+  icon?: any;
+  progress?: number;
+}) {
+  return (
+    <LinearGradient
+      colors={colors}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.gradientCard}
+    >
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '500' }}>{label}</Text>
+        {Icon && (
+          <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, padding: 5 }}>
+            <Icon size={14} color="#FFFFFF" strokeWidth={2} />
+          </View>
+        )}
+      </View>
+      <Text style={{ color: '#FFFFFF', fontSize: 22, fontWeight: '700', letterSpacing: -0.5 }}>{value}</Text>
+      {sub ? <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 3 }}>{sub}</Text> : null}
+      {progress !== undefined && (
+        <View style={{ marginTop: 10 }}>
+          <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 2 }}>
+            <View style={{ height: 3, backgroundColor: '#FFFFFF', borderRadius: 2, width: `${Math.min(Math.max(progress, 0), 100)}%` }} />
+          </View>
+          <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 10, marginTop: 3, textAlign: 'right' }}>{Math.round(progress)}%</Text>
+        </View>
+      )}
+    </LinearGradient>
   );
 }
 
@@ -1547,27 +1565,10 @@ const styles = StyleSheet.create({
   modeBtnText: { color: theme.colors.textTertiary, fontSize: 13, fontWeight: '600' },
   modeBtnTextActive: { color: theme.colors.textPrimary, fontWeight: '700' },
 
-  heroCard: { borderRadius: 20, padding: 20, marginBottom: 12, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.28, shadowRadius: 16, elevation: 8 },
-  metricLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.accent },
-  marginRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
-  metricBig: { fontSize: 36, fontWeight: '700', letterSpacing: -1.5 },
-  metricSub: { fontSize: 12, color: theme.colors.textTertiary, marginTop: 4 },
-  compareRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  compareBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderWidth: 1, borderRadius: 999,
+  gradientCard: {
+    flex: 1, borderRadius: 18, padding: 16,
+    shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 6,
   },
-  compareBadgeTxt: { fontSize: 11, fontWeight: '700' },
-  compareSub: { fontSize: 11, color: theme.colors.textTertiary, flex: 1 },
-  heroDivider: { height: 1, backgroundColor: theme.colors.border, marginVertical: 18 },
-  subLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 },
-  profitValue: { fontSize: 24, fontWeight: '700', letterSpacing: -0.5 },
-
-  bentoRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  bentoCard: { flex: 1, backgroundColor: theme.colors.surface, borderRadius: 16, padding: 14, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
-  bentoLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.4, color: theme.colors.textTertiary, marginTop: 8 },
-  bentoValue: { fontSize: 18, fontWeight: '700', letterSpacing: -0.4, marginTop: 4 },
 
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 },
   statTile: { width: '48%', flexGrow: 1, backgroundColor: theme.colors.surface, borderRadius: 16, padding: 14, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },

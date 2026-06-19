@@ -360,7 +360,7 @@ const styles = StyleSheet.create({
   payText: { fontSize: 11, fontWeight: '600' },
   empty: { color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 },
 
-  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginTop: 12 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surfaceElevated, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginTop: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
   searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
 
   modeOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },

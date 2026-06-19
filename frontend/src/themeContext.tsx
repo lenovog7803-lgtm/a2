@@ -1,18 +1,20 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { bootstrapTheme, ThemeMode } from './theme';
+import { bootstrapTheme, ThemeMode, Theme, lightTheme, darkTheme } from './theme';
 
 const STORAGE_KEY = 'theme_mode';
 
 type Ctx = {
   mode: ThemeMode;
+  theme: Theme;
   toggleTheme: () => void;
   setMode: (m: ThemeMode) => void;
   ready: boolean;
 };
 
 const ThemeContext = createContext<Ctx>({
-  mode: 'dark',
+  mode: 'light',
+  theme: lightTheme,
   toggleTheme: () => {},
   setMode: () => {},
   ready: false,
@@ -29,7 +31,7 @@ export function ThemeProvider({ children }: { children: (mode: ThemeMode) => Rea
       setModeState(m);
       setReady(true);
     }).catch(() => {
-      bootstrapTheme('dark');
+      bootstrapTheme('light');
       setReady(true);
     });
   }, []);
@@ -42,8 +44,10 @@ export function ThemeProvider({ children }: { children: (mode: ThemeMode) => Rea
 
   const toggleTheme = () => setMode(mode === 'dark' ? 'light' : 'dark');
 
+  const currentTheme = mode === 'dark' ? darkTheme : lightTheme;
+
   return (
-    <ThemeContext.Provider value={{ mode, toggleTheme, setMode, ready }}>
+    <ThemeContext.Provider value={{ mode, theme: currentTheme, toggleTheme, setMode, ready }}>
       {ready ? children(mode) : null}
     </ThemeContext.Provider>
   );
