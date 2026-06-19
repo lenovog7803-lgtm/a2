@@ -19,12 +19,12 @@ const ThemeContext = createContext<Ctx>({
 });
 
 export function ThemeProvider({ children }: { children: (mode: ThemeMode) => ReactNode }) {
-  const [mode, setModeState] = useState<ThemeMode>('dark');
+  const [mode, setModeState] = useState<ThemeMode>('light');
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then(v => {
-      const m: ThemeMode = v === 'light' ? 'light' : 'dark';
+      const m: ThemeMode = v === 'dark' ? 'dark' : 'light';
       bootstrapTheme(m);
       setModeState(m);
       setReady(true);

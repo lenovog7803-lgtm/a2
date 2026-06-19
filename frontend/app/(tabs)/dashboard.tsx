@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -283,36 +284,40 @@ export default function Dashboard() {
 
         {currentUserRole !== 'manager' && (<>
         {/* Hero: Маржа */}
-        <View style={styles.heroCard}>
-          <Text style={styles.metricLabel}>МАРЖА · {period === 'all' ? 'ВСЕГО' : monthLabel(period).toUpperCase()}</Text>
+        <LinearGradient
+          colors={theme.colors.gradientBlue as [string, string]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
+          <Text style={[styles.metricLabel, { color: 'rgba(255,255,255,0.8)' }]}>МАРЖА · {period === 'all' ? 'ВСЕГО' : monthLabel(period).toUpperCase()}</Text>
           <View style={styles.marginRow}>
-            <Text style={[styles.metricBig, { color: marginPositive ? theme.colors.profit : theme.colors.loss }]}>
+            <Text style={[styles.metricBig, { color: '#FFFFFF' }]}>
               {formatMoney(d.total_margin)}
             </Text>
-            {marginPositive ? <TrendingUp size={20} color={theme.colors.profit} strokeWidth={2} /> : <TrendingDown size={20} color={theme.colors.loss} strokeWidth={2} />}
+            {marginPositive ? <TrendingUp size={20} color="rgba(255,255,255,0.9)" strokeWidth={2} /> : <TrendingDown size={20} color="rgba(255,255,255,0.9)" strokeWidth={2} />}
           </View>
-          {/* Сравнение с предыдущим месяцем */}
           {(d.prev_period && d.prev_margin !== null) ? (
             <View style={styles.compareRow}>
               {d.margin_change_pct !== null && d.margin_change_pct !== undefined ? (
-                <View style={[styles.compareBadge, { backgroundColor: (d.margin_change_pct >= 0 ? theme.colors.profit : theme.colors.loss) + '18', borderColor: (d.margin_change_pct >= 0 ? theme.colors.profit : theme.colors.loss) + '40' }]}>
-                  {d.margin_change_pct >= 0 ? <TrendingUp size={12} color={theme.colors.profit} strokeWidth={2} /> : <TrendingDown size={12} color={theme.colors.loss} strokeWidth={2} />}
-                  <Text style={[styles.compareBadgeTxt, { color: d.margin_change_pct >= 0 ? theme.colors.profit : theme.colors.loss }]}>
+                <View style={[styles.compareBadge, { backgroundColor: 'rgba(255,255,255,0.2)', borderColor: 'rgba(255,255,255,0.35)' }]}>
+                  {d.margin_change_pct >= 0 ? <TrendingUp size={12} color="#FFFFFF" strokeWidth={2} /> : <TrendingDown size={12} color="#FFFFFF" strokeWidth={2} />}
+                  <Text style={[styles.compareBadgeTxt, { color: '#FFFFFF' }]}>
                     {d.margin_change_pct >= 0 ? '+' : ''}{d.margin_change_pct}%
                   </Text>
                 </View>
               ) : null}
-              <Text style={styles.compareSub}>
+              <Text style={[styles.compareSub, { color: 'rgba(255,255,255,0.7)' }]}>
                 к {monthLabel(d.prev_period).toLowerCase()} ({formatMoney(d.prev_margin)})
               </Text>
             </View>
           ) : null}
 
-          <View style={styles.heroDivider} />
+          <View style={[styles.heroDivider, { backgroundColor: 'rgba(255,255,255,0.2)' }]} />
 
-          <Text style={styles.subLabel}>ПРИБЫЛЬ (ПОСЛЕ 20% НАЛОГА)</Text>
-          <Text style={[styles.profitValue, { color: theme.colors.accent }]}>{formatMoney(d.profit)}</Text>
-        </View>
+          <Text style={[styles.subLabel, { color: 'rgba(255,255,255,0.7)' }]}>ПРИБЫЛЬ (ПОСЛЕ 20% НАЛОГА)</Text>
+          <Text style={[styles.profitValue, { color: '#FFFFFF' }]}>{formatMoney(d.profit)}</Text>
+        </LinearGradient>
 
         {/* Cashflow alerts */}
         <View style={styles.bentoRow}>
@@ -1444,7 +1449,7 @@ const mStyles = StyleSheet.create({
   actNum: { fontSize: 24, fontWeight: '800', letterSpacing: -1 },
   actDate: { fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 },
 
-  listCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, marginBottom: 16, paddingHorizontal: 16 },
+  listCard: { backgroundColor: theme.colors.surface, borderRadius: 16, marginBottom: 16, paddingHorizontal: 16, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   leadRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   leadName: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '500' },
   leadMeta: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
@@ -1529,7 +1534,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.colors.border,
   },
   label: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 6 },
-  title: { fontSize: 34, fontWeight: '300', letterSpacing: -1, color: theme.colors.textPrimary, marginBottom: 16 },
+  title: { fontSize: 34, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
 
   modeToggle: {
     flexDirection: 'row', marginBottom: 14,
@@ -1542,7 +1547,7 @@ const styles = StyleSheet.create({
   modeBtnText: { color: theme.colors.textTertiary, fontSize: 13, fontWeight: '600' },
   modeBtnTextActive: { color: theme.colors.textPrimary, fontWeight: '700' },
 
-  heroCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 16, padding: 20, marginBottom: 12 },
+  heroCard: { borderRadius: 20, padding: 20, marginBottom: 12, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.28, shadowRadius: 16, elevation: 8 },
   metricLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.accent },
   marginRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
   metricBig: { fontSize: 36, fontWeight: '700', letterSpacing: -1.5 },
@@ -1560,23 +1565,23 @@ const styles = StyleSheet.create({
   profitValue: { fontSize: 24, fontWeight: '700', letterSpacing: -0.5 },
 
   bentoRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  bentoCard: { flex: 1, backgroundColor: theme.colors.surface, borderWidth: 1, borderRadius: 14, padding: 14 },
+  bentoCard: { flex: 1, backgroundColor: theme.colors.surface, borderRadius: 16, padding: 14, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   bentoLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.4, color: theme.colors.textTertiary, marginTop: 8 },
   bentoValue: { fontSize: 18, fontWeight: '700', letterSpacing: -0.4, marginTop: 4 },
 
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 },
-  statTile: { width: '48%', flexGrow: 1, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14 },
+  statTile: { width: '48%', flexGrow: 1, backgroundColor: theme.colors.surface, borderRadius: 16, padding: 14, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   statValue: { fontSize: 22, fontWeight: '700', color: theme.colors.textPrimary, marginTop: 8, letterSpacing: -0.5 },
   statLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 1, color: theme.colors.textTertiary, marginTop: 2 },
 
   sectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 10, marginTop: 8 },
-  listCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, marginBottom: 16, paddingHorizontal: 16 },
+  listCard: { backgroundColor: theme.colors.surface, borderRadius: 16, marginBottom: 16, paddingHorizontal: 16, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   debtRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   debtName: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '500' },
   debtMeta: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
   debtAmount: { fontSize: 14, fontWeight: '700' },
 
-  statusCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16, marginBottom: 16 },
+  statusCard: { backgroundColor: theme.colors.surface, borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   statusLabel: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '500' },
   statusValue: { fontSize: 13, fontWeight: '700' },
   bgBar: { height: 4, backgroundColor: theme.colors.surfaceElevated, borderRadius: 2, overflow: 'hidden' },
@@ -1609,7 +1614,7 @@ const styles = StyleSheet.create({
   modalOrderAmt: { fontSize: 14, fontWeight: '700', minWidth: 80, textAlign: 'right' },
 
   // Sheets sync
-  syncCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16, marginBottom: 16 },
+  syncCard: { backgroundColor: theme.colors.surface, borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   syncTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   syncTitle: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '600' },
   syncSub: { color: theme.colors.textTertiary, fontSize: 12, marginTop: 4, lineHeight: 16 },

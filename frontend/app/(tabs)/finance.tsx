@@ -1235,7 +1235,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 6 },
-  title:  { fontSize: 34, fontWeight: '300', letterSpacing: -1,  color: theme.colors.textPrimary, marginBottom: 16 },
+  title:  { fontSize: 34, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
 
   tabRow: {
     flexDirection: 'row',

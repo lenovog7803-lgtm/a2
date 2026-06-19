@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
   clientHint: { backgroundColor: theme.colors.surface, borderRadius: 10, padding: 14, marginBottom: 20 },
   clientHintText: { fontSize: 14, color: theme.colors.textSecondary },
   saveBtn: { backgroundColor: theme.colors.accent, borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
-  saveText: { fontSize: 16, fontWeight: '700', color: theme.colors.accentText || '#fff' },
+  saveText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
 });
 
 export { ClientModal };

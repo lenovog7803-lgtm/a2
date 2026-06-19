@@ -26,9 +26,13 @@ export default function TabsLayout() {
           Platform.OS === 'web' ? (
             <View style={styles.tabBg} />
           ) : (
-            <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
+            <BlurView
+              intensity={80}
+              tint={theme.mode === 'dark' ? 'dark' : 'light'}
+              style={[StyleSheet.absoluteFill, styles.blurView]}
+            />
           ),
-        tabBarLabelStyle: { fontSize: 10, fontWeight: '700', letterSpacing: 0.8, marginTop: -2 },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '700', letterSpacing: 0.6, marginTop: -2 },
         tabBarItemStyle: { paddingVertical: 4 },
       }}
     >
@@ -90,15 +94,23 @@ const styles = StyleSheet.create({
   tabBar: {
     position: 'absolute',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-    backgroundColor: Platform.OS === 'web' ? 'rgba(10,10,12,0.92)' : 'transparent',
+    borderTopColor: theme.colors.tabBarBorder,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    backgroundColor: Platform.OS === 'web' ? theme.colors.tabBar : 'transparent',
     elevation: 0,
-    height: 72,
-    paddingBottom: 12,
+    height: 85,
+    paddingBottom: 14,
     paddingTop: 10,
+    overflow: 'hidden',
+  },
+  blurView: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
   },
   tabBg: {
     flex: 1,
-    backgroundColor: 'rgba(10,10,12,0.92)',
+    backgroundColor: theme.colors.tabBar,
   },
 });

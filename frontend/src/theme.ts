@@ -1,57 +1,107 @@
-// Премиум палитры. theme.colors — мутабельный объект, чтобы StyleSheet.create
-// читал актуальные значения после переключения и перемонтирования (через key в _layout).
+// Apple/Linear/Modern SaaS палитра. theme.colors — мутабельный объект,
+// чтобы StyleSheet.create читал актуальные значения после переключения.
 
-const DARK = {
-  bg: '#0A0A0C',
-  surface: '#121215',
-  surfaceElevated: '#1C1C20',
-  surfaceHigh: '#26262C',
-  textPrimary: '#FFFFFF',
-  textSecondary: '#A1A1AA',
-  textTertiary: '#71717A',
-  accent: '#C0A062',
-  accentBright: '#D4AF37',
-  profit: '#00E676',
-  loss: '#FF3B30',
-  warning: '#F59E0B',
-  info: '#60A5FA',
-  border: 'rgba(255,255,255,0.08)',
-  borderStrong: 'rgba(255,255,255,0.16)',
-  overlay: 'rgba(0,0,0,0.5)',
+export const lightTheme = {
+  colors: {
+    // Фоны
+    bg: '#F2F2F7',
+    surface: '#FFFFFF',
+    surfaceElevated: '#FFFFFF',
+    surfaceSecondary: '#F8F8FC',
+    surfaceHigh: '#EFEFF4',
+
+    // Текст
+    textPrimary: '#1C1C1E',
+    textSecondary: '#6B6B7B',
+    textTertiary: '#AEAEB2',
+
+    // Акцент — синий Apple
+    accent: '#007AFF',
+    accentBright: '#007AFF',
+    accentLight: '#E8F2FF',
+    accentDark: '#0055CC',
+
+    // Семантические
+    profit: '#34C759',
+    profitLight: '#E8F8ED',
+    loss: '#FF3B30',
+    lossLight: '#FFF0EF',
+    warning: '#FF9500',
+    warningLight: '#FFF5E6',
+    info: '#007AFF',
+
+    // Градиенты карточек
+    gradientBlue: ['#007AFF', '#5AC8FA'] as string[],
+    gradientGreen: ['#34C759', '#30D158'] as string[],
+    gradientOrange: ['#FF9500', '#FF6B00'] as string[],
+    gradientPurple: ['#AF52DE', '#7B68EE'] as string[],
+
+    // UI
+    border: 'rgba(0,0,0,0.08)',
+    borderLight: 'rgba(0,0,0,0.04)',
+    borderStrong: 'rgba(0,0,0,0.16)',
+    shadow: 'rgba(0,0,0,0.08)',
+    overlay: 'rgba(0,0,0,0.5)',
+
+    // Нижнее меню
+    tabBar: 'rgba(255,255,255,0.85)',
+    tabBarBorder: 'rgba(0,0,0,0.1)',
+  },
+  dark: false,
 };
 
-const LIGHT = {
-  bg: '#F4F2EE',          // тёплый, чуть кремовый фон
-  surface: '#FFFFFF',
-  surfaceElevated: '#F8F6F2',
-  surfaceHigh: '#EFEBE3',
-  textPrimary: '#0E0E10',
-  textSecondary: '#3F3F46',
-  textTertiary: '#6B6B73',
-  accent: '#A07A2E',       // более насыщенное золото для контраста на светлом
-  accentBright: '#C39C3F',
-  profit: '#0A8C3E',
-  loss: '#D4351C',
-  warning: '#B8740F',
-  info: '#1E5BB5',
-  border: 'rgba(14,14,16,0.10)',
-  borderStrong: 'rgba(14,14,16,0.20)',
-  overlay: 'rgba(0,0,0,0.5)',
+export const darkTheme = {
+  colors: {
+    bg: '#000000',
+    surface: '#1C1C1E',
+    surfaceElevated: '#2C2C2E',
+    surfaceSecondary: '#141414',
+    surfaceHigh: '#3A3A3C',
+
+    textPrimary: '#FFFFFF',
+    textSecondary: '#EBEBF5',
+    textTertiary: '#6B6B7B',
+
+    accent: '#0A84FF',
+    accentBright: '#409CFF',
+    accentLight: '#0A84FF20',
+    accentDark: '#409CFF',
+    info: '#0A84FF',
+
+    profit: '#32D74B',
+    profitLight: '#32D74B20',
+    loss: '#FF453A',
+    lossLight: '#FF453A20',
+    warning: '#FF9F0A',
+    warningLight: '#FF9F0A20',
+
+    gradientBlue: ['#0A84FF', '#30B0C7'] as string[],
+    gradientGreen: ['#32D74B', '#30D158'] as string[],
+    gradientOrange: ['#FF9F0A', '#FF6B00'] as string[],
+    gradientPurple: ['#BF5AF2', '#7B68EE'] as string[],
+
+    border: 'rgba(255,255,255,0.1)',
+    borderLight: 'rgba(255,255,255,0.05)',
+    borderStrong: 'rgba(255,255,255,0.2)',
+    shadow: 'rgba(0,0,0,0.3)',
+    overlay: 'rgba(0,0,0,0.7)',
+
+    tabBar: 'rgba(28,28,30,0.85)',
+    tabBarBorder: 'rgba(255,255,255,0.1)',
+  },
+  dark: true,
 };
 
 export type ThemeMode = 'dark' | 'light';
+export type Theme = typeof lightTheme;
 
 export const theme = {
-  mode: 'dark' as ThemeMode,
-  colors: { ...DARK },
+  mode: 'light' as ThemeMode,
+  colors: { ...lightTheme.colors },
   spacing: { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, xxxl: 32 },
   radius: { sm: 6, md: 8, lg: 12, xl: 16, pill: 999 },
 };
 
-// Синхронный bootstrap для веба. Вызвать из _layout до рендера, чтобы стили в дочерних
-// модулях прочитали правильные цвета.
-// Если передать mode — записывает в localStorage и применяет палитру.
-// Без аргумента — читает из localStorage и возвращает сохранённый режим.
 export function bootstrapTheme(mode?: ThemeMode): ThemeMode {
   if (mode !== undefined) {
     try {
@@ -71,18 +121,13 @@ export function bootstrapTheme(mode?: ThemeMode): ThemeMode {
       }
     }
   } catch (_) {}
-  return 'dark';
+  return 'light';
 }
 
-// Запускаем сразу при импорте (для случаев SSR/Hot reload).
 bootstrapTheme();
 
-/** Применяет палитру выбранного режима к мутабельному объекту theme.
- *  ВАЖНО: после вызова нужно перемонтировать дерево (через key={mode} в корне),
- *  иначе уже созданные StyleSheet'ы не пересчитаются.
- */
 export function applyTheme(mode: ThemeMode) {
-  const palette = mode === 'light' ? LIGHT : DARK;
+  const palette = mode === 'dark' ? darkTheme.colors : lightTheme.colors;
   theme.mode = mode;
   Object.assign(theme.colors, palette);
 }
@@ -107,9 +152,9 @@ export const statusLabels: Record<string, string> = {
 };
 
 export const statusColors: Record<string, string> = {
-  new: '#60A5FA',
-  in_progress: '#F59E0B',
-  delivered: '#00E676',
+  new: '#007AFF',
+  in_progress: '#FF9500',
+  delivered: '#34C759',
   cancelled: '#FF3B30',
 };
 
@@ -129,10 +174,10 @@ export const leadStatusLabels: Record<string, string> = {
 };
 
 export const leadStatusColors: Record<string, string> = {
-  new: '#60A5FA',
-  thinking: '#F59E0B',
-  sent_kp: '#F97316',
-  won: '#00E676',
-  lost: '#71717A',
-  callback: '#8B5CF6',
+  new: '#007AFF',
+  thinking: '#FF9500',
+  sent_kp: '#FF6B00',
+  won: '#34C759',
+  lost: '#AEAEB2',
+  callback: '#AF52DE',
 };
