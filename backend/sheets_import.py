@@ -429,9 +429,22 @@ async def run_import(db) -> Dict[str, Any]:
     if orders:
         await db.orders.insert_many(orders)
 
-    await db.leads.delete_many({})
-    if leads:
-        await db.leads.insert_many(leads)
+    # Лиды: upsert по имени чтобы не затирать call_notes / last_call из CRM
+    _LEADS_MONGO_ONLY = {"call_notes", "last_call", "id"}
+    for lead in leads:
+        sheet_fields = {k: v for k, v in lead.items() if k not in _LEADS_MONGO_ONLY}
+        await db.leads.update_one(
+            {"name": lead["name"]},
+            {
+                "$set": sheet_fields,
+                "$setOnInsert": {
+                    "id": lead["id"],
+                    "call_notes": [],
+                    "last_call": "",
+                },
+            },
+            upsert=True,
+        )
 
     # Кэшируем последний статус
     last = {
