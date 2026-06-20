@@ -37,6 +37,7 @@ async function req(path: string, opts: RequestInit = {}) {
 
 export const api = {
   dashboard: (period: string = 'all') => req(`/dashboard?period=${encodeURIComponent(period)}`),
+  dayOrders: (date: string) => req(`/dashboard/day_orders?date=${encodeURIComponent(date)}`),
 
   orders: {
     list: () => req('/orders'),

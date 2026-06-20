@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Path, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
+import Svg, { Path, Defs, LinearGradient as SvgGradient, Stop, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, ArrowDownCircle, ArrowUpCircle, Briefcase, DollarSign, Clock, CheckCircle, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search, Bell, Calendar, ChevronDown } from 'lucide-react-native';
@@ -84,6 +84,10 @@ export default function Dashboard() {
   const [showAllTopClients, setShowAllTopClients] = useState(false);
   const [showAllTopMargin, setShowAllTopMargin] = useState(false);
   const [periodOpen, setPeriodOpen] = useState(false);
+  const [dayModalDate, setDayModalDate] = useState<string | null>(null);
+  const [dayModalData, setDayModalData] = useState<any>(null);
+  const [dayModalLoading, setDayModalLoading] = useState(false);
+  const [debtorOrdersDebtor, setDebtorOrdersDebtor] = useState<{ name: string; isCreditor: boolean } | null>(null);
 
   useEffect(() => {
     if (searchQuery.length < 2) { setSearchResults(null); return; }
@@ -129,6 +133,15 @@ export default function Dashboard() {
 
   useFocusEffect(useCallback(() => { load(period); }, [load, period]));
   useEffect(() => { load(period); }, [load, period]);
+
+  useEffect(() => {
+    if (!dayModalDate) { setDayModalData(null); return; }
+    setDayModalLoading(true);
+    api.dayOrders(dayModalDate)
+      .then(setDayModalData)
+      .catch(() => setDayModalData(null))
+      .finally(() => setDayModalLoading(false));
+  }, [dayModalDate]);
 
   // Получим начальный статус импорта
   useEffect(() => {
@@ -238,6 +251,10 @@ export default function Dashboard() {
   const topClients = d.top_clients || [];
   const topByMargin = d.top_clients_margin || [];
   const selectedPeriodLabel = periodOptions.find(o => o.id === period)?.label ?? monthLabel(period) ?? 'Период';
+  const prevMonthMargin: number = d.prev_margin ?? 0;
+  const marginChangePct: number | null = d.margin_change_pct ?? null;
+  const prevMonthLabel = d.prev_period ? monthLabel(d.prev_period) : null;
+  const marginChangeIsPositive = (marginChangePct ?? 0) >= 0;
 
   return (
     <>
@@ -281,17 +298,24 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* Mode toggle */}
-        <View style={styles.modeToggle}>
-          <TouchableOpacity onPress={() => setDashView('dashboard')} style={[styles.modeBtn, dashView === 'dashboard' && styles.modeBtnActive]} activeOpacity={0.7}>
-            <Text style={[styles.modeBtnText, dashView === 'dashboard' && styles.modeBtnTextActive]}>Дашборд</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setDashView('manager')} style={[styles.modeBtn, dashView === 'manager' && styles.modeBtnActive]} activeOpacity={0.7}>
-            <Text style={[styles.modeBtnText, dashView === 'manager' && styles.modeBtnTextActive]}>Менеджер</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setDashView('analytics')} style={[styles.modeBtn, dashView === 'analytics' && styles.modeBtnActive]} activeOpacity={0.7}>
-            <Text style={[styles.modeBtnText, dashView === 'analytics' && styles.modeBtnTextActive]}>Цели</Text>
-          </TouchableOpacity>
+        {/* Mode toggle — accent pills */}
+        <View style={{ flexDirection: 'row', backgroundColor: theme.colors.surface, borderRadius: 12, padding: 3, marginBottom: 12, borderWidth: 0.5, borderColor: theme.colors.border }}>
+          {([
+            { key: 'dashboard', label: 'Дашборд' },
+            { key: 'manager', label: 'Менеджер' },
+            { key: 'analytics', label: 'Цели' },
+          ] as const).map((tab) => (
+            <TouchableOpacity
+              key={tab.key}
+              onPress={() => setDashView(tab.key)}
+              style={{ flex: 1, paddingVertical: 7, borderRadius: 10, alignItems: 'center', backgroundColor: dashView === tab.key ? theme.colors.accent : 'transparent' }}
+              activeOpacity={0.7}
+            >
+              <Text style={{ fontSize: 12, fontWeight: dashView === tab.key ? '600' : '400', color: dashView === tab.key ? '#FFFFFF' : theme.colors.textSecondary }}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {dashView === 'dashboard' ? (<>
@@ -315,6 +339,19 @@ export default function Dashboard() {
                 <Text style={{ fontSize: 24, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.8, marginTop: 8 }}>
                   {totalMargin.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
                 </Text>
+                {marginChangePct !== null && prevMonthLabel && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.4)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 4, alignSelf: 'flex-start', marginTop: 6, flexWrap: 'wrap' }}>
+                    {marginChangeIsPositive
+                      ? <TrendingUp size={11} color="#16A34A" strokeWidth={2} />
+                      : <TrendingDown size={11} color="#EF4444" strokeWidth={2} />}
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: marginChangeIsPositive ? '#16A34A' : '#EF4444' }}>
+                      {marginChangeIsPositive ? '+' : ''}{marginChangePct.toFixed(1)}%
+                    </Text>
+                    <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.45)' }}>
+                      к {prevMonthLabel}
+                    </Text>
+                  </View>
+                )}
                 <View style={{ height: 0.5, backgroundColor: 'rgba(0,0,0,0.12)', marginVertical: 12 }} />
                 <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Прибыль после 20%</Text>
                 <Text style={{ fontSize: 19, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 4 }}>
@@ -388,7 +425,13 @@ export default function Dashboard() {
           )}
 
           {/* === BLOCK 2: Chart === */}
-          {currentUserRole !== 'manager' && <ProfitChart chartOrders={d.chart_orders || []} period={period} />}
+          {currentUserRole !== 'manager' && (
+            <ProfitChart
+              chartOrders={d.chart_orders || []}
+              period={period}
+              onDayPress={(date) => setDayModalDate(date)}
+            />
+          )}
 
           {/* === BLOCK 3: Top clients + Top margin === */}
           {currentUserRole !== 'manager' && (topClients.length > 0 || topByMargin.length > 0) && (
@@ -752,11 +795,11 @@ export default function Dashboard() {
     {/* Client debtors modal */}
     <Modal visible={showClientDebtors} transparent animationType="slide" onRequestClose={() => setShowClientDebtors(false)}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '80%' }}>
+        <View style={{ backgroundColor: theme.colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '80%' }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>Должники — клиенты</Text>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: theme.colors.textPrimary }}>Должники — клиенты</Text>
             <TouchableOpacity onPress={() => setShowClientDebtors(false)}>
-              <X size={22} color="#8E8E93" strokeWidth={2} />
+              <X size={22} color={theme.colors.textTertiary} strokeWidth={2} />
             </TouchableOpacity>
           </View>
           <FlatList
@@ -764,14 +807,17 @@ export default function Dashboard() {
             keyExtractor={(item) => item.name}
             renderItem={({ item }: any) => (
               <TouchableOpacity
-                onPress={() => { setShowClientDebtors(false); if (item.id) router.push(`/client/${item.id}` as any); }}
-                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' }}
+                onPress={() => setDebtorOrdersDebtor({ name: item.name, isCreditor: false })}
+                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}
               >
-                <View>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: '#1C1C1E' }}>{item.name}</Text>
-                  <Text style={{ fontSize: 12, color: '#8E8E93', marginTop: 2 }}>{item.count} заявок</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }}>{item.name}</Text>
+                  <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.count} заявок · тап для просмотра</Text>
                 </View>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF9500' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#FF9500' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+                  <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                </View>
               </TouchableOpacity>
             )}
           />
@@ -782,11 +828,11 @@ export default function Dashboard() {
     {/* Carrier debtors modal */}
     <Modal visible={showCarrierDebtors} transparent animationType="slide" onRequestClose={() => setShowCarrierDebtors(false)}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '80%' }}>
+        <View style={{ backgroundColor: theme.colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '80%' }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>К оплате — перевозчики</Text>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: theme.colors.textPrimary }}>К оплате — перевозчики</Text>
             <TouchableOpacity onPress={() => setShowCarrierDebtors(false)}>
-              <X size={22} color="#8E8E93" strokeWidth={2} />
+              <X size={22} color={theme.colors.textTertiary} strokeWidth={2} />
             </TouchableOpacity>
           </View>
           <FlatList
@@ -794,17 +840,108 @@ export default function Dashboard() {
             keyExtractor={(item) => item.name}
             renderItem={({ item }: any) => (
               <TouchableOpacity
-                onPress={() => { setShowCarrierDebtors(false); if (item.id) router.push(`/carrier/${item.id}` as any); }}
-                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' }}
+                onPress={() => setDebtorOrdersDebtor({ name: item.name, isCreditor: true })}
+                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}
               >
-                <View>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: '#1C1C1E' }}>{item.name}</Text>
-                  <Text style={{ fontSize: 12, color: '#8E8E93', marginTop: 2 }}>{item.count} заявок</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }}>{item.name}</Text>
+                  <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.count} заявок · тап для просмотра</Text>
                 </View>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#AF52DE' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#AF52DE' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+                  <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                </View>
               </TouchableOpacity>
             )}
           />
+        </View>
+      </View>
+    </Modal>
+
+    {/* Debtor orders nested modal (task 3) */}
+    <Modal visible={!!debtorOrdersDebtor} transparent animationType="slide" onRequestClose={() => setDebtorOrdersDebtor(null)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: theme.colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary }} numberOfLines={1}>{debtorOrdersDebtor?.name}</Text>
+            <TouchableOpacity onPress={() => setDebtorOrdersDebtor(null)}>
+              <X size={20} color={theme.colors.textTertiary} strokeWidth={2} />
+            </TouchableOpacity>
+          </View>
+          <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginBottom: 14 }}>
+            {debtorOrdersDebtor?.isCreditor ? 'Заявки к оплате перевозчику' : 'Неоплаченные заявки клиента'}
+          </Text>
+          <FlatList
+            data={allOrders.filter(o =>
+              debtorOrdersDebtor?.isCreditor
+                ? o.carrier_name === debtorOrdersDebtor?.name && !o.carrier_paid && o.status !== 'cancelled'
+                : o.client_name === debtorOrdersDebtor?.name && !o.client_paid && o.status === 'delivered'
+            )}
+            keyExtractor={(item) => item.id}
+            ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет заявок</Text>}
+            renderItem={({ item }: any) => (
+              <TouchableOpacity
+                onPress={() => {
+                  setDebtorOrdersDebtor(null);
+                  setShowClientDebtors(false);
+                  setShowCarrierDebtors(false);
+                  router.push(`/order/${item.id}` as any);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.accent }}>{item.order_number}</Text>
+                  <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 }} numberOfLines={1}>{item.route_from} → {item.route_to}</Text>
+                  {item.unload_date && <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginTop: 1 }}>{item.unload_date}</Text>}
+                </View>
+                <View style={{ alignItems: 'flex-end', gap: 3 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: debtorOrdersDebtor?.isCreditor ? '#AF52DE' : '#FF9500' }}>
+                    {formatMoney(debtorOrdersDebtor?.isCreditor ? item.carrier_rate : item.client_rate)}
+                  </Text>
+                  <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                </View>
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      </View>
+    </Modal>
+
+    {/* Day orders modal (task 2) */}
+    <Modal visible={!!dayModalDate} transparent animationType="slide" onRequestClose={() => setDayModalDate(null)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: theme.colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary }}>{dayModalDate}</Text>
+            <TouchableOpacity onPress={() => setDayModalDate(null)}>
+              <X size={20} color={theme.colors.textTertiary} strokeWidth={2} />
+            </TouchableOpacity>
+          </View>
+          {dayModalData && (
+            <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginBottom: 12 }}>
+              {dayModalData.orders_count} заявок · прибыль {formatMoney(dayModalData.total_margin)}
+            </Text>
+          )}
+          {dayModalLoading ? (
+            <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
+          ) : (
+            <FlatList
+              data={dayModalData?.orders || []}
+              keyExtractor={(item: any) => item.order_number}
+              ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет заявок за этот день</Text>}
+              renderItem={({ item }: any) => (
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.accent }}>{item.order_number}</Text>
+                    <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 }} numberOfLines={1}>{item.client_name}</Text>
+                  </View>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: item.margin >= 0 ? theme.colors.profit : theme.colors.loss }}>
+                    {formatMoney(item.margin)}
+                  </Text>
+                </View>
+              )}
+            />
+          )}
         </View>
       </View>
     </Modal>
@@ -997,7 +1134,7 @@ function smoothPath(pts: { x: number; y: number }[]): string {
   return d;
 }
 
-function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: string }) {
+function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; period: string; onDayPress?: (date: string) => void }) {
   const { width: screenW } = useWindowDimensions();
   const W = screenW - 64; // 16px parent padding each side + 16px card padding each side
   const H = 110;
@@ -1104,6 +1241,20 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
         <Path d={currFill} fill="url(#fillCurr)" />
         <Path d={prevLine} stroke="#EF4444" strokeWidth={2} fill="none" strokeLinecap="round" />
         <Path d={currLine} stroke="#2563EB" strokeWidth={2.5} fill="none" strokeLinecap="round" />
+        {currPts.map((pt, i) => (
+          <SvgCircle key={`dot${i}`} cx={pt.x} cy={pt.y} r={3.5} fill="#2563EB" />
+        ))}
+        {onDayPress && days.map((day, i) => (
+          <SvgRect
+            key={`tap${i}`}
+            x={currPts[i].x - 22}
+            y={0}
+            width={44}
+            height={H}
+            fill="transparent"
+            onPress={() => onDayPress(`${period}-${String(day).padStart(2, '0')}`)}
+          />
+        ))}
       </Svg>
       <View style={{ flexDirection: 'row', gap: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

@@ -2063,6 +2063,31 @@ def order_in_period(o: dict, period: str) -> bool:
     return ud.startswith(period)
 
 
+@api_router.get("/dashboard/day_orders")
+async def dashboard_day_orders(date: str):
+    all_orders = await db.orders.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
+    day_list = []
+    total_margin = 0.0
+    for o in all_orders:
+        order_date = (o.get("unload_date") or o.get("load_date") or "")[:10]
+        if order_date == date:
+            margin = o.get("client_rate", 0) - o.get("carrier_rate", 0)
+            day_list.append({
+                "id": str(o.get("id") or o.get("_id", "")),
+                "order_number": o.get("order_number", "—"),
+                "client_name": o.get("client_name", "—"),
+                "margin": margin,
+                "client_rate": o.get("client_rate", 0),
+            })
+            total_margin += margin
+    return {
+        "date": date,
+        "orders": sorted(day_list, key=lambda x: x["margin"], reverse=True),
+        "total_margin": total_margin,
+        "orders_count": len(day_list),
+    }
+
+
 @api_router.get("/dashboard")
 async def dashboard(period: str = "all"):
     all_orders = await db.orders.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
@@ -2124,7 +2149,7 @@ async def dashboard(period: str = "all"):
         n = o.get("client_name") or "—"
         client_totals[n] = client_totals.get(n, 0) + o.get("client_rate", 0)
     top_clients = sorted([{"name": k, "revenue": v} for k, v in client_totals.items()],
-                         key=lambda x: x["revenue"], reverse=True)[:5]
+                         key=lambda x: x["revenue"], reverse=True)
 
     client_margin_map: dict = {}
     for o in orders:
@@ -2139,7 +2164,7 @@ async def dashboard(period: str = "all"):
         margin = item["revenue"] - item["cost"]
         pct = round(margin / item["revenue"] * 100, 1) if item["revenue"] else 0
         top_clients_margin.append({**item, "margin": margin, "margin_percent": pct})
-    top_clients_margin = sorted(top_clients_margin, key=lambda x: x["margin_percent"], reverse=True)[:10]
+    top_clients_margin = sorted(top_clients_margin, key=lambda x: x["margin_percent"], reverse=True)
 
     status_breakdown = {
         "new": len([o for o in orders if o.get("status") == "new"]),
