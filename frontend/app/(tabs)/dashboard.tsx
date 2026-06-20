@@ -1,20 +1,32 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, ArrowDownCircle, ArrowUpCircle, Briefcase, DollarSign, Clock, CheckCircle, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, ArrowDownCircle, ArrowUpCircle, Briefcase, DollarSign, Clock, CheckCircle, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search, Bell, Calendar, ChevronDown } from 'lucide-react-native';
 import { theme, formatMoney, formatShort, leadStatusColors, leadStatusLabels } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
-import { Picker } from '../../src/components/Picker';
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ROLE_KEY } from '../../src/auth';
 import AnalyticsTab from '../../src/components/AnalyticsTab';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+
+const periodOptions = [
+  { id: 'all', label: 'Все время', dividerAfter: true },
+  { id: '2026-06', label: 'Июнь 2026' },
+  { id: '2026-05', label: 'Май 2026' },
+  { id: '2026-04', label: 'Апр 2026' },
+  { id: '2026-03', label: 'Мар 2026' },
+  { id: '2026-02', label: 'Фев 2026' },
+  { id: '2026-01', label: 'Янв 2026', dividerAfter: true },
+  { id: '2025-12', label: 'Дек 2025' },
+  { id: '2025-11', label: 'Ноя 2025' },
+  { id: '2025-10', label: 'Окт 2025' },
+];
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
   new: 'Новая',
@@ -69,8 +81,9 @@ export default function Dashboard() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [showClientDebtors, setShowClientDebtors] = useState(false);
   const [showCarrierDebtors, setShowCarrierDebtors] = useState(false);
-  const [showTopClients, setShowTopClients] = useState(false);
-  const [showTopMargin, setShowTopMargin] = useState(false);
+  const [showAllTopClients, setShowAllTopClients] = useState(false);
+  const [showAllTopMargin, setShowAllTopMargin] = useState(false);
+  const [periodOpen, setPeriodOpen] = useState(false);
 
   useEffect(() => {
     if (searchQuery.length < 2) { setSearchResults(null); return; }
@@ -212,23 +225,19 @@ export default function Dashboard() {
   }
 
   const d = data || {};
-  const marginPositive = (d.total_margin || 0) >= 0;
   const totalMargin = d.total_margin || 0;
   const totalProfit = d.profit || 0;
   const clientDebt = d.unpaid_by_clients || 0;
   const carrierDebt = d.owed_to_carriers || 0;
   const clientDebtors = (d.debtors || []).map((c: any) => ({ name: c.name, count: c.orders, debt: c.amount, id: c.id }));
   const carrierDebtors = (d.creditors || []).map((c: any) => ({ name: c.name, count: c.orders, debt: c.amount, id: c.id }));
-  const months: string[] = d.available_months || [];
-  const cm = currentMonth();
-
-  // Список периодов для дропдауна
-  const periodItems = [
-    { id: 'all', label: 'За всё время' },
-    { id: cm, label: `Этот месяц · ${monthLabel(cm)}` },
-    ...months.filter(m => m !== cm).map(m => ({ id: m, label: monthLabel(m) })),
-  ];
-  const periodValue = period;
+  const activeOrders = d.active_orders || 0;
+  const doneOrders = d.delivered_orders || 0;
+  const clientsCount = d.clients_count || 0;
+  const carriersCount = d.carriers_count || 0;
+  const topClients = d.top_clients || [];
+  const topByMargin = d.top_clients_margin || [];
+  const selectedPeriodLabel = periodOptions.find(o => o.id === period)?.label ?? monthLabel(period) ?? 'Период';
 
   return (
     <>
@@ -238,27 +247,41 @@ export default function Dashboard() {
       contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(period); }} tintColor={theme.colors.accent} />}
     >
-      <View style={{ paddingHorizontal: 20 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: insets.top + 10, paddingBottom: 12 }}>
+      <View style={{ paddingHorizontal: 16 }}>
+        {/* === HEADER === */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: insets.top + 8, paddingBottom: 12 }}>
           <TouchableOpacity
             onPress={() => { setSearchQuery(''); setSearchVisible(true); }}
             activeOpacity={0.9}
-            style={{ flex: 1 }}
             testID="search-btn"
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: theme.colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0.5, borderColor: theme.colors.border, width: 160 }}
           >
-            <View style={styles.searchBox}>
-              <Search size={15} color={theme.colors.textTertiary} strokeWidth={1.5} />
-              <Text style={styles.searchPlaceholder}>Поиск по CRM...</Text>
-            </View>
+            <Search size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+            <Text style={{ fontSize: 12, color: theme.colors.textTertiary }}>Поиск...</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.7} style={styles.logoutBtn} testID="theme-toggle">
-            {mode === 'dark' ? <Sun size={16} color={theme.colors.accent} strokeWidth={1.6} /> : <Moon size={16} color={theme.colors.accent} strokeWidth={1.6} />}
+
+          <TouchableOpacity
+            onPress={() => setPeriodOpen(v => !v)}
+            activeOpacity={0.9}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: theme.colors.surface, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 0.5, borderColor: theme.colors.border }}
+          >
+            <Calendar size={12} color={theme.colors.textTertiary} strokeWidth={1.5} />
+            <Text style={{ fontSize: 12, color: theme.colors.textPrimary }}>{selectedPeriodLabel}</Text>
+            <ChevronDown size={12} color={theme.colors.textTertiary} strokeWidth={1.5} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => logout(router)} activeOpacity={0.7} style={styles.logoutBtn} testID="logout-btn">
-            <LogOut size={16} color={theme.colors.loss} strokeWidth={1.6} />
+
+          <View style={{ flex: 1 }} />
+
+          <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="theme-toggle">
+            {mode === 'dark' ? <Sun size={14} color={theme.colors.accent} strokeWidth={1.5} /> : <Moon size={14} color={theme.colors.textSecondary} strokeWidth={1.5} />}
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => logout(router)} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="logout-btn">
+            <LogOut size={14} color={theme.colors.loss} strokeWidth={1.5} />
           </TouchableOpacity>
         </View>
 
+        {/* Mode toggle */}
         <View style={styles.modeToggle}>
           <TouchableOpacity onPress={() => setDashView('dashboard')} style={[styles.modeBtn, dashView === 'dashboard' && styles.modeBtnActive]} activeOpacity={0.7}>
             <Text style={[styles.modeBtnText, dashView === 'dashboard' && styles.modeBtnTextActive]}>Дашборд</Text>
@@ -272,125 +295,160 @@ export default function Dashboard() {
         </View>
 
         {dashView === 'dashboard' ? (<>
-        <Picker
-          testID="period-picker"
-          label="Период"
-          value={periodValue}
-          items={periodItems}
-          onSelect={(it) => setPeriod(it.id)}
-          searchable={false}
-        />
 
-        {/* Блок 1: три карточки в ряд */}
-        {currentUserRole !== 'manager' && (
-          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
-            <View style={styles.leftCard}>
-              <Text style={styles.cardLabel}>Маржа всего</Text>
-              <Text style={styles.bigValue}>{totalMargin.toLocaleString()} Br</Text>
-              <View style={styles.divider} />
-              <Text style={styles.cardLabel}>Прибыль после 20%</Text>
-              <Text style={[styles.bigValue, { color: theme.colors.profit }]}>{totalProfit.toLocaleString()} Br</Text>
-            </View>
-            <TouchableOpacity onPress={() => setShowClientDebtors(true)} activeOpacity={0.85} style={{ flex: 1 }}>
+          {/* === BLOCK 1: Two-column cards === */}
+          {currentUserRole !== 'manager' && (
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+
+              {/* Left: purple gradient — margin + profit */}
               <LinearGradient
-                colors={['#f5a0a0', '#f4c4a0', '#f0e0b0']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.gradientCard}
+                colors={['#d4b8f8', '#c4a8f4', '#b8b8f8', '#a8c8f8']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                style={{ flex: 1, borderRadius: 20, padding: 20, justifyContent: 'space-between' }}
               >
-                <View style={styles.gradCardIcon}>
-                  <Clock size={16} color="rgba(0,0,0,0.4)" strokeWidth={1.5} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Маржа всего</Text>
+                  <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+                    <TrendingUp size={14} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
+                  </View>
                 </View>
-                <Text style={styles.gradCardLabel}>Ожидается</Text>
-                <Text style={styles.gradCardValue}>{clientDebt.toLocaleString()} Br</Text>
-                <Text style={styles.gradCardSub}>{clientDebtors.length} должников</Text>
+                <Text style={{ fontSize: 24, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.8, marginTop: 8 }}>
+                  {totalMargin.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
+                </Text>
+                <View style={{ height: 0.5, backgroundColor: 'rgba(0,0,0,0.12)', marginVertical: 12 }} />
+                <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Прибыль после 20%</Text>
+                <Text style={{ fontSize: 19, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 4 }}>
+                  {totalProfit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
+                </Text>
               </LinearGradient>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowCarrierDebtors(true)} activeOpacity={0.85} style={{ flex: 1 }}>
-              <LinearGradient
-                colors={['#a8c8f0', '#b0d8f8', '#c8e8ff']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.gradientCard}
-              >
-                <View style={styles.gradCardIcon}>
-                  <CheckCircle size={16} color="rgba(0,0,0,0.4)" strokeWidth={1.5} />
-                </View>
-                <Text style={styles.gradCardLabel}>К оплате</Text>
-                <Text style={styles.gradCardValue}>{carrierDebt.toLocaleString()} Br</Text>
-                <Text style={styles.gradCardSub}>{carrierDebtors.length} перевозч.</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        )}
 
-        {/* Блок 2: статистика в ряд */}
-        <View style={styles.statsRow}>
-          {([
-            { label: 'Активных', value: d.active_orders || 0, color: theme.colors.accent },
-            { label: 'Доставлено', value: d.delivered_orders || 0, color: theme.colors.profit },
-            { label: 'Клиентов', value: d.clients_count || 0, color: '#7C3AED' },
-            { label: 'Перевозч.', value: d.carriers_count || 0, color: '#EA580C' },
-          ] as const).map((item, i, arr) => (
-            <View key={i} style={[styles.statChip, i === arr.length - 1 && { borderRightWidth: 0 }]}>
-              <Text style={[styles.statChipValue, { color: item.color }]}>{item.value}</Text>
-              <Text style={styles.statChipLabel}>{item.label}</Text>
+              {/* Right column */}
+              <View style={{ flex: 1, gap: 10 }}>
+
+                {/* Orange: awaiting from clients */}
+                <TouchableOpacity onPress={() => setShowClientDebtors(true)} activeOpacity={0.85} style={{ flex: 1 }}>
+                  <LinearGradient
+                    colors={['#f8c4b0', '#f4a896', '#f0b8b0', '#f8d0c0']}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    style={{ borderRadius: 18, padding: 14, flex: 1, justifyContent: 'space-between', minHeight: 95 }}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Ожидается</Text>
+                      <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+                        <Clock size={12} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
+                      </View>
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 5 }}>
+                        {clientDebt.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
+                      </Text>
+                      <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{clientDebtors.length} должников</Text>
+                    </View>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                {/* Blue: to pay carriers */}
+                <TouchableOpacity onPress={() => setShowCarrierDebtors(true)} activeOpacity={0.85} style={{ flex: 1 }}>
+                  <LinearGradient
+                    colors={['#a8d8f8', '#90c8f4', '#b0d8f8', '#c8e8ff']}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    style={{ borderRadius: 18, padding: 14, flex: 1, justifyContent: 'space-between', minHeight: 95 }}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>К оплате</Text>
+                      <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+                        <CheckCircle size={12} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
+                      </View>
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 5 }}>
+                        {carrierDebt.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
+                      </Text>
+                      <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{carrierDebtors.length} перевозч.</Text>
+                    </View>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                {/* Stats chips */}
+                <View style={{ borderRadius: 18, padding: 11, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, flexDirection: 'row' }}>
+                  {[
+                    { val: activeOrders, label: 'Активных', color: theme.colors.accent },
+                    { val: doneOrders, label: 'Доставлено', color: theme.colors.profit },
+                    { val: clientsCount, label: 'Клиентов', color: '#7C3AED' },
+                    { val: carriersCount, label: 'Перевозч.', color: '#EA580C' },
+                  ].map((item, i, arr) => (
+                    <View key={i} style={{ flex: 1, alignItems: 'center', borderRightWidth: i < arr.length - 1 ? 0.5 : 0, borderRightColor: theme.colors.border }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: item.color }}>{item.val}</Text>
+                      <Text style={{ fontSize: 9, color: theme.colors.textTertiary, marginTop: 2 }}>{item.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
             </View>
-          ))}
-        </View>
+          )}
 
-        {/* Блок 3: график */}
-        {currentUserRole !== 'manager' && <ProfitChart chartOrders={d.chart_orders || []} period={period} />}
+          {/* === BLOCK 2: Chart === */}
+          {currentUserRole !== 'manager' && <ProfitChart chartOrders={d.chart_orders || []} period={period} />}
 
-        {/* Блок 4а: топ клиентов */}
-        {currentUserRole !== 'manager' && (d.top_clients || []).length > 0 && (
-          <View style={styles.sectionCard}>
-            <TouchableOpacity style={styles.sectionHeader} onPress={() => setShowTopClients(true)} activeOpacity={0.7}>
-              <Text style={styles.sectionTitle}>Топ клиентов</Text>
-              <Text style={styles.sectionLink}>все →</Text>
-            </TouchableOpacity>
-            {(d.top_clients || []).slice(0, 5).map((c: any, i: number, arr: any[]) => (
-              <View key={c.name} style={[styles.topClientRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
-                <View style={styles.topClientNum}>
-                  <Text style={styles.topClientNumText}>{i + 1}</Text>
+          {/* === BLOCK 3: Top clients + Top margin === */}
+          {currentUserRole !== 'manager' && (topClients.length > 0 || topByMargin.length > 0) && (
+            <View style={{ flexDirection: Platform.OS === 'web' ? 'row' : 'column', gap: 12, marginBottom: 12 }}>
+              {topClients.length > 0 && (
+                <View style={{ flex: 1, backgroundColor: theme.colors.surface, borderRadius: 20, padding: 16, borderWidth: 0.5, borderColor: theme.colors.border }}>
+                  <Text style={{ fontSize: 13, fontWeight: '500', color: theme.colors.textPrimary, marginBottom: 2 }}>Топ клиентов</Text>
+                  <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginBottom: 10 }}>по выручке</Text>
+                  {topClients.slice(0, 5).map((client: any, i: number) => (
+                    <TouchableOpacity key={i} onPress={() => setShowAllTopClients(true)}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, borderBottomWidth: i < Math.min(topClients.length, 5) - 1 ? 0.5 : 0, borderBottomColor: theme.colors.border }}
+                    >
+                      <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: theme.colors.accentLight, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontSize: 9, fontWeight: '500', color: theme.colors.accent }}>{i + 1}</Text>
+                      </View>
+                      <Text style={{ flex: 1, fontSize: 11, color: theme.colors.textPrimary }} numberOfLines={1}>{client.name}</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '500', color: theme.colors.accent }}>
+                        {(client.revenue / 1000).toFixed(0)}K Br
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity onPress={() => setShowAllTopClients(true)}>
+                    <Text style={{ fontSize: 11, color: theme.colors.accent, marginTop: 8 }}>Все клиенты →</Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.topClientName} numberOfLines={1}>{c.name}</Text>
-                  <Text style={styles.topClientSub}>{c.orders_count} заявок</Text>
-                </View>
-                <Text style={styles.topClientValue}>{(c.revenue / 1000).toFixed(0)}K Br</Text>
-                <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
-              </View>
-            ))}
-          </View>
-        )}
+              )}
 
-        {/* Блок 4б: топ по марже */}
-        {currentUserRole !== 'manager' && (d.top_clients_margin || []).length > 0 && (
-          <View style={styles.sectionCard}>
-            <TouchableOpacity style={styles.sectionHeader} onPress={() => setShowTopMargin(true)} activeOpacity={0.7}>
-              <Text style={styles.sectionTitle}>Топ по марже</Text>
-              <Text style={styles.sectionLink}>все →</Text>
-            </TouchableOpacity>
-            {(d.top_clients_margin || []).slice(0, 5).map((c: any, i: number) => (
-              <View key={c.name} style={styles.marginRow}>
-                <Text style={styles.marginName} numberOfLines={1}>{c.name}</Text>
-                <View style={styles.marginBarWrap}>
-                  <View style={[styles.marginBar, { width: `${Math.min(c.margin_percent || 0, 100)}%` as any }]} />
+              {topByMargin.length > 0 && (
+                <View style={{ flex: 1, backgroundColor: theme.colors.surface, borderRadius: 20, padding: 16, borderWidth: 0.5, borderColor: theme.colors.border }}>
+                  <Text style={{ fontSize: 13, fontWeight: '500', color: theme.colors.textPrimary, marginBottom: 2 }}>Топ по марже</Text>
+                  <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginBottom: 10 }}>% маржинальности</Text>
+                  {topByMargin.slice(0, 5).map((client: any, i: number) => (
+                    <TouchableOpacity key={i} onPress={() => setShowAllTopMargin(true)}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, borderBottomWidth: i < Math.min(topByMargin.length, 5) - 1 ? 0.5 : 0, borderBottomColor: theme.colors.border }}
+                    >
+                      <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#F0FDF4', alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontSize: 9, fontWeight: '500', color: '#16A34A' }}>{i + 1}</Text>
+                      </View>
+                      <Text style={{ flex: 1, fontSize: 11, color: theme.colors.textPrimary }} numberOfLines={1}>{client.name}</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '500', color: '#16A34A' }}>
+                        {(client.margin_percent || 0).toFixed(1)}%
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity onPress={() => setShowAllTopMargin(true)}>
+                    <Text style={{ fontSize: 11, color: '#16A34A', marginTop: 8 }}>Все по марже →</Text>
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.marginPct}>{(c.margin_percent || 0).toFixed(1)}%</Text>
-              </View>
-            ))}
-          </View>
-        )}
+              )}
+            </View>
+          )}
 
-        {/* Команда */}
-        {currentUserRole !== 'manager' && teamManagers.length > 0 && (
-          <TeamBlock managers={teamManagers} onPress={(mgr: any) => {
-            setTeamStatsPeriod(currentMonth());
-            setTeamStatsUser(mgr);
-          }} />
-        )}
+          {/* Team */}
+          {currentUserRole !== 'manager' && teamManagers.length > 0 && (
+            <TeamBlock managers={teamManagers} onPress={(mgr: any) => {
+              setTeamStatsPeriod(currentMonth());
+              setTeamStatsUser(mgr);
+            }} />
+          )}
+
         </>) : dashView === 'manager' ? (
           <ManagerView
             leads={leads}
@@ -405,6 +463,26 @@ export default function Dashboard() {
         )}
       </View>
     </ScrollView>
+
+    {/* Period dropdown — rendered outside ScrollView to avoid clipping */}
+    {periodOpen && (
+      <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setPeriodOpen(false)} activeOpacity={1} />
+    )}
+    {periodOpen && (
+      <View style={{ position: 'absolute', top: insets.top + 58, left: 192, backgroundColor: theme.colors.surface, borderRadius: 12, borderWidth: 0.5, borderColor: theme.colors.border, zIndex: 200, minWidth: 162, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 24, elevation: 8 }}>
+        {periodOptions.map((opt) => (
+          <TouchableOpacity
+            key={opt.id}
+            onPress={() => { setPeriod(opt.id); setPeriodOpen(false); }}
+            style={{ paddingHorizontal: 13, paddingVertical: 9, borderBottomWidth: (opt as any).dividerAfter ? 0.5 : 0, borderBottomColor: theme.colors.border }}
+          >
+            <Text style={{ fontSize: 12, color: period === opt.id ? theme.colors.accent : theme.colors.textPrimary, fontWeight: period === opt.id ? '500' : '400' }}>
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    )}
 
     {/* Global search modal */}
     <Modal visible={searchVisible} transparent animationType="slide" onRequestClose={() => setSearchVisible(false)}>
@@ -732,12 +810,12 @@ export default function Dashboard() {
     </Modal>
 
     {/* Top clients modal */}
-    <Modal visible={showTopClients} transparent animationType="slide" onRequestClose={() => setShowTopClients(false)}>
+    <Modal visible={showAllTopClients} transparent animationType="slide" onRequestClose={() => setShowAllTopClients(false)}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
         <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>Топ клиентов</Text>
-            <TouchableOpacity onPress={() => setShowTopClients(false)}>
+            <TouchableOpacity onPress={() => setShowAllTopClients(false)}>
               <X size={22} color="#8E8E93" strokeWidth={2} />
             </TouchableOpacity>
           </View>
@@ -762,12 +840,12 @@ export default function Dashboard() {
     </Modal>
 
     {/* Top margin modal */}
-    <Modal visible={showTopMargin} transparent animationType="slide" onRequestClose={() => setShowTopMargin(false)}>
+    <Modal visible={showAllTopMargin} transparent animationType="slide" onRequestClose={() => setShowAllTopMargin(false)}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
         <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>Топ по марже</Text>
-            <TouchableOpacity onPress={() => setShowTopMargin(false)}>
+            <TouchableOpacity onPress={() => setShowAllTopMargin(false)}>
               <X size={22} color="#8E8E93" strokeWidth={2} />
             </TouchableOpacity>
           </View>
@@ -921,8 +999,8 @@ function smoothPath(pts: { x: number; y: number }[]): string {
 
 function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: string }) {
   const { width: screenW } = useWindowDimensions();
-  const W = screenW - 40 - 32;
-  const H = 120;
+  const W = screenW - 64; // 16px parent padding each side + 16px card padding each side
+  const H = 110;
 
   if (!chartOrders?.length) return null;
 
@@ -950,7 +1028,8 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
 
     return (
       <View style={cStyles.chartCard}>
-        <Text style={cStyles.header}>ПРИБЫЛЬ ПО ПЕРИОДАМ</Text>
+        <Text style={cStyles.header}>Прибыль по периодам</Text>
+        <Text style={cStyles.headerSub}>По месяцам</Text>
         <Svg width={W} height={H} style={{ marginBottom: 8 }}>
           <Defs>
             <SvgGradient id="fillAll" x1="0" y1="0" x2="0" y2="1">
@@ -1008,7 +1087,8 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
 
   return (
     <View style={cStyles.chartCard}>
-      <Text style={cStyles.header}>ПРИБЫЛЬ: {monthLabel(period).toUpperCase()} VS {monthLabel(prevPeriod).toUpperCase()}</Text>
+      <Text style={cStyles.header}>Прибыль по периодам</Text>
+      <Text style={cStyles.headerSub}>vs прошлый месяц</Text>
       <Svg width={W} height={H} style={{ marginBottom: 8 }}>
         <Defs>
           <SvgGradient id="fillCurr" x1="0" y1="0" x2="0" y2="1">
@@ -1578,13 +1658,14 @@ const mStyles = StyleSheet.create({
 const cStyles = StyleSheet.create({
   chartCard: {
     backgroundColor: theme.colors.surface,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
-    marginBottom: 16,
+    marginBottom: 12,
     borderWidth: 0.5,
     borderColor: theme.colors.border,
   },
-  header: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 14 },
+  header: { fontSize: 13, fontWeight: '500', color: theme.colors.textPrimary, marginBottom: 4 },
+  headerSub: { fontSize: 11, color: theme.colors.textSecondary, marginBottom: 12 },
 });
 
 const styles = StyleSheet.create({
