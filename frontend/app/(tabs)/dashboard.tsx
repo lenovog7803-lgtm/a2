@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
+import Svg, { Path, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, ArrowDownCircle, ArrowUpCircle, Briefcase, DollarSign, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, ArrowDownCircle, ArrowUpCircle, Briefcase, DollarSign, Clock, CheckCircle, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search } from 'lucide-react-native';
 import { theme, formatMoney, formatShort, leadStatusColors, leadStatusLabels } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
@@ -69,6 +69,8 @@ export default function Dashboard() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [showClientDebtors, setShowClientDebtors] = useState(false);
   const [showCarrierDebtors, setShowCarrierDebtors] = useState(false);
+  const [showTopClients, setShowTopClients] = useState(false);
+  const [showTopMargin, setShowTopMargin] = useState(false);
 
   useEffect(() => {
     if (searchQuery.length < 2) { setSearchResults(null); return; }
@@ -233,38 +235,28 @@ export default function Dashboard() {
     <ScrollView
       testID="dashboard-screen"
       style={{ flex: 1, backgroundColor: theme.colors.bg }}
-      contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 100 }}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(period); }} tintColor={theme.colors.accent} />}
     >
       <View style={{ paddingHorizontal: 20 }}>
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>ОБЗОР</Text>
-            <Text style={styles.title}>Дашборд</Text>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchVisible(true); }} activeOpacity={0.7} style={styles.logoutBtn} testID="search-btn">
-              <Search size={16} color={theme.colors.textSecondary} strokeWidth={1.6} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.7} style={styles.themeBtn} testID="theme-toggle">
-              {mode === 'dark' ? (
-                <Sun size={16} color={theme.colors.accent} strokeWidth={1.6} />
-              ) : (
-                <Moon size={16} color={theme.colors.accent} strokeWidth={1.6} />
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.push('/trash')} activeOpacity={0.7} style={styles.themeBtn} testID="trash-btn">
-              <Trash2 size={16} color={theme.colors.textSecondary} strokeWidth={1.6} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => logout(router)}
-              activeOpacity={0.7}
-              style={styles.logoutBtn}
-              testID="logout-btn"
-            >
-              <LogOut size={16} color={theme.colors.loss} strokeWidth={1.6} />
-            </TouchableOpacity>
-          </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: insets.top + 10, paddingBottom: 12 }}>
+          <TouchableOpacity
+            onPress={() => { setSearchQuery(''); setSearchVisible(true); }}
+            activeOpacity={0.9}
+            style={{ flex: 1 }}
+            testID="search-btn"
+          >
+            <View style={styles.searchBox}>
+              <Search size={15} color={theme.colors.textTertiary} strokeWidth={1.5} />
+              <Text style={styles.searchPlaceholder}>Поиск по CRM...</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.7} style={styles.logoutBtn} testID="theme-toggle">
+            {mode === 'dark' ? <Sun size={16} color={theme.colors.accent} strokeWidth={1.6} /> : <Moon size={16} color={theme.colors.accent} strokeWidth={1.6} />}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => logout(router)} activeOpacity={0.7} style={styles.logoutBtn} testID="logout-btn">
+            <LogOut size={16} color={theme.colors.loss} strokeWidth={1.6} />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.modeToggle}>
@@ -280,7 +272,6 @@ export default function Dashboard() {
         </View>
 
         {dashView === 'dashboard' ? (<>
-        {/* Дропдаун периодов */}
         <Picker
           testID="period-picker"
           label="Период"
@@ -290,117 +281,110 @@ export default function Dashboard() {
           searchable={false}
         />
 
-        {currentUserRole !== 'manager' && (<>
-        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-          <StatCard
-            gradient={theme.gradients.blue}
-            accentColor={theme.gradients.blueAccent}
-            label="Маржа всего"
-            value={`${(totalMargin / 1000).toFixed(0)}K Br`}
-            sub={d.prev_margin !== null && d.margin_change_pct !== null ? `${d.margin_change_pct >= 0 ? '+' : ''}${d.margin_change_pct}% к прошлому` : '↑ за всё время'}
-            icon={marginPositive ? TrendingUp : TrendingDown}
-            onPress={() => {}}
-          />
-          <StatCard
-            gradient={theme.gradients.green}
-            accentColor={theme.gradients.greenAccent}
-            label="Прибыль"
-            value={`${(totalProfit / 1000).toFixed(0)}K Br`}
-            sub="после 20% налога"
-            icon={DollarSign}
-            onPress={() => {}}
-          />
-        </View>
-        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-          <StatCard
-            gradient={theme.gradients.orange}
-            accentColor={theme.gradients.orangeAccent}
-            label="Ожидается"
-            value={`${(clientDebt / 1000).toFixed(0)}K Br`}
-            sub="от клиентов"
-            icon={ArrowDownCircle}
-            onPress={() => setShowClientDebtors(true)}
-          />
-          <StatCard
-            gradient={theme.gradients.purple}
-            accentColor={theme.gradients.purpleAccent}
-            label="К оплате"
-            value={`${(carrierDebt / 1000).toFixed(0)}K Br`}
-            sub="перевозчикам"
-            icon={ArrowUpCircle}
-            onPress={() => setShowCarrierDebtors(true)}
-          />
-        </View>
-        </>)}
-
-        <View style={styles.statsGrid}>
-          <MiniStatCard icon={Briefcase} color="#007AFF" label="Активных" value={String(d.active_orders || 0)} />
-          <MiniStatCard icon={CheckCircle2} color="#34C759" label="Доставлено" value={String(d.delivered_orders || 0)} />
-          <MiniStatCard icon={Users} color="#007AFF" label="Клиентов" value={String(d.clients_count || 0)} />
-          <MiniStatCard icon={Truck} color="#AF52DE" label="Перевозчиков" value={String(d.carriers_count || 0)} />
-        </View>
-
-        <Text style={styles.sectionLabel}>СТАТУСЫ ЗАЯВОК</Text>
-        <View style={styles.statusCard}>
-          <StatusBar label="Новые" value={d.status_breakdown?.new || 0} total={d.total_orders || 1} color={theme.colors.info} />
-          <StatusBar label="В работе" value={d.status_breakdown?.in_progress || 0} total={d.total_orders || 1} color={theme.colors.warning} />
-          <StatusBar label="Доставлено" value={d.status_breakdown?.delivered || 0} total={d.total_orders || 1} color={theme.colors.profit} />
-          <StatusBar label="Отменено" value={d.status_breakdown?.cancelled || 0} total={d.total_orders || 1} color={theme.colors.loss} />
-        </View>
-
-        {currentUserRole !== 'manager' && (d.top_clients || []).length > 0 && (
-          <>
-            <Text style={styles.sectionLabel}>ТОП КЛИЕНТОВ</Text>
-            <View style={styles.listCard}>
-              {(d.top_clients || []).map((c: any, i: number) => {
-                const max = d.top_clients[0]?.revenue || 1;
-                const pct = (c.revenue / max) * 100;
-                return (
-                  <View key={c.name} style={[styles.topRow, i === d.top_clients.length - 1 && { borderBottomWidth: 0 }]}>
-                    <View style={styles.topRankCircle}><Text style={styles.topRank}>{i + 1}</Text></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.topName} numberOfLines={1}>{c.name}</Text>
-                      <View style={styles.bgBar}><View style={[styles.bgFill, { width: `${pct}%` }]} /></View>
-                    </View>
-                    <Text style={styles.topRevenue}>{formatShort(c.revenue)} Br</Text>
-                  </View>
-                );
-              })}
+        {/* Блок 1: три карточки в ряд */}
+        {currentUserRole !== 'manager' && (
+          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+            <View style={styles.leftCard}>
+              <Text style={styles.cardLabel}>Маржа всего</Text>
+              <Text style={styles.bigValue}>{totalMargin.toLocaleString()} Br</Text>
+              <View style={styles.divider} />
+              <Text style={styles.cardLabel}>Прибыль после 20%</Text>
+              <Text style={[styles.bigValue, { color: theme.colors.profit }]}>{totalProfit.toLocaleString()} Br</Text>
             </View>
-          </>
-        )}
-
-        {currentUserRole !== 'manager' && (d.top_clients_margin || []).length > 0 && (
-          <>
-            <Text style={styles.sectionLabel}>ТОП КЛИЕНТОВ ПО МАРЖЕ</Text>
-            <View style={styles.listCard}>
-              {(d.top_clients_margin || []).map((c: any, i: number) => (
-                <View key={c.name} style={[styles.topRow, i === (d.top_clients_margin.length - 1) && { borderBottomWidth: 0 }]}>
-                  <View style={styles.topRankCircle}><Text style={styles.topRank}>{i + 1}</Text></View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.topName} numberOfLines={1}>{c.name}</Text>
-                    <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 1 }}>
-                      {c.orders_count} заявок · выручка {formatShort(c.revenue)} Br
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end', gap: 2 }}>
-                    <Text style={[styles.topRevenue, { color: c.margin >= 0 ? theme.colors.profit : theme.colors.loss }]}>
-                      {formatShort(c.margin)} Br
-                    </Text>
-                    <View style={[styles.marginBadge, { backgroundColor: (c.margin_percent >= 20 ? theme.colors.profit : c.margin_percent >= 10 ? theme.colors.warning : theme.colors.loss) + '20' }]}>
-                      <Text style={[styles.marginBadgeTxt, { color: c.margin_percent >= 20 ? theme.colors.profit : c.margin_percent >= 10 ? theme.colors.warning : theme.colors.loss }]}>
-                        {c.margin_percent}%
-                      </Text>
-                    </View>
-                  </View>
+            <TouchableOpacity onPress={() => setShowClientDebtors(true)} activeOpacity={0.85} style={{ flex: 1 }}>
+              <LinearGradient
+                colors={['#f5a0a0', '#f4c4a0', '#f0e0b0']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.gradientCard}
+              >
+                <View style={styles.gradCardIcon}>
+                  <Clock size={16} color="rgba(0,0,0,0.4)" strokeWidth={1.5} />
                 </View>
-              ))}
-            </View>
-          </>
+                <Text style={styles.gradCardLabel}>Ожидается</Text>
+                <Text style={styles.gradCardValue}>{clientDebt.toLocaleString()} Br</Text>
+                <Text style={styles.gradCardSub}>{clientDebtors.length} должников</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowCarrierDebtors(true)} activeOpacity={0.85} style={{ flex: 1 }}>
+              <LinearGradient
+                colors={['#a8c8f0', '#b0d8f8', '#c8e8ff']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.gradientCard}
+              >
+                <View style={styles.gradCardIcon}>
+                  <CheckCircle size={16} color="rgba(0,0,0,0.4)" strokeWidth={1.5} />
+                </View>
+                <Text style={styles.gradCardLabel}>К оплате</Text>
+                <Text style={styles.gradCardValue}>{carrierDebt.toLocaleString()} Br</Text>
+                <Text style={styles.gradCardSub}>{carrierDebtors.length} перевозч.</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         )}
 
+        {/* Блок 2: статистика в ряд */}
+        <View style={styles.statsRow}>
+          {([
+            { label: 'Активных', value: d.active_orders || 0, color: theme.colors.accent },
+            { label: 'Доставлено', value: d.delivered_orders || 0, color: theme.colors.profit },
+            { label: 'Клиентов', value: d.clients_count || 0, color: '#7C3AED' },
+            { label: 'Перевозч.', value: d.carriers_count || 0, color: '#EA580C' },
+          ] as const).map((item, i, arr) => (
+            <View key={i} style={[styles.statChip, i === arr.length - 1 && { borderRightWidth: 0 }]}>
+              <Text style={[styles.statChipValue, { color: item.color }]}>{item.value}</Text>
+              <Text style={styles.statChipLabel}>{item.label}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Блок 3: график */}
         {currentUserRole !== 'manager' && <ProfitChart chartOrders={d.chart_orders || []} period={period} />}
 
+        {/* Блок 4а: топ клиентов */}
+        {currentUserRole !== 'manager' && (d.top_clients || []).length > 0 && (
+          <View style={styles.sectionCard}>
+            <TouchableOpacity style={styles.sectionHeader} onPress={() => setShowTopClients(true)} activeOpacity={0.7}>
+              <Text style={styles.sectionTitle}>Топ клиентов</Text>
+              <Text style={styles.sectionLink}>все →</Text>
+            </TouchableOpacity>
+            {(d.top_clients || []).slice(0, 5).map((c: any, i: number, arr: any[]) => (
+              <View key={c.name} style={[styles.topClientRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                <View style={styles.topClientNum}>
+                  <Text style={styles.topClientNumText}>{i + 1}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.topClientName} numberOfLines={1}>{c.name}</Text>
+                  <Text style={styles.topClientSub}>{c.orders_count} заявок</Text>
+                </View>
+                <Text style={styles.topClientValue}>{(c.revenue / 1000).toFixed(0)}K Br</Text>
+                <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Блок 4б: топ по марже */}
+        {currentUserRole !== 'manager' && (d.top_clients_margin || []).length > 0 && (
+          <View style={styles.sectionCard}>
+            <TouchableOpacity style={styles.sectionHeader} onPress={() => setShowTopMargin(true)} activeOpacity={0.7}>
+              <Text style={styles.sectionTitle}>Топ по марже</Text>
+              <Text style={styles.sectionLink}>все →</Text>
+            </TouchableOpacity>
+            {(d.top_clients_margin || []).slice(0, 5).map((c: any, i: number) => (
+              <View key={c.name} style={styles.marginRow}>
+                <Text style={styles.marginName} numberOfLines={1}>{c.name}</Text>
+                <View style={styles.marginBarWrap}>
+                  <View style={[styles.marginBar, { width: `${Math.min(c.margin_percent || 0, 100)}%` as any }]} />
+                </View>
+                <Text style={styles.marginPct}>{(c.margin_percent || 0).toFixed(1)}%</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Команда */}
         {currentUserRole !== 'manager' && teamManagers.length > 0 && (
           <TeamBlock managers={teamManagers} onPress={(mgr: any) => {
             setTeamStatsPeriod(currentMonth());
@@ -746,6 +730,70 @@ export default function Dashboard() {
         </View>
       </View>
     </Modal>
+
+    {/* Top clients modal */}
+    <Modal visible={showTopClients} transparent animationType="slide" onRequestClose={() => setShowTopClients(false)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>Топ клиентов</Text>
+            <TouchableOpacity onPress={() => setShowTopClients(false)}>
+              <X size={22} color="#8E8E93" strokeWidth={2} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={d.top_clients || []}
+            keyExtractor={(item: any) => item.name}
+            renderItem={({ item, index }: any) => (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F7', gap: 12 }}>
+                <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#007AFF15', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#007AFF' }}>{index + 1}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C1C1E' }} numberOfLines={1}>{item.name}</Text>
+                  <Text style={{ fontSize: 12, color: '#8E8E93', marginTop: 2 }}>{item.orders_count} заявок</Text>
+                </View>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#1C1C1E' }}>{(item.revenue / 1000).toFixed(0)}K Br</Text>
+              </View>
+            )}
+          />
+        </View>
+      </View>
+    </Modal>
+
+    {/* Top margin modal */}
+    <Modal visible={showTopMargin} transparent animationType="slide" onRequestClose={() => setShowTopMargin(false)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>Топ по марже</Text>
+            <TouchableOpacity onPress={() => setShowTopMargin(false)}>
+              <X size={22} color="#8E8E93" strokeWidth={2} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={d.top_clients_margin || []}
+            keyExtractor={(item: any) => item.name}
+            renderItem={({ item }: any) => (
+              <View style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C1C1E', flex: 1 }} numberOfLines={1}>{item.name}</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: item.margin >= 0 ? '#34C759' : '#FF3B30', marginLeft: 8 }}>
+                    {(item.margin / 1000).toFixed(0)}K Br
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={{ flex: 1, height: 5, backgroundColor: '#F2F2F7', borderRadius: 3, overflow: 'hidden' }}>
+                    <View style={{ height: 5, backgroundColor: '#2563EB', borderRadius: 3, width: `${Math.min(item.margin_percent || 0, 100)}%` as any }} />
+                  </View>
+                  <Text style={{ fontSize: 12, color: '#8E8E93', width: 44, textAlign: 'right' }}>{(item.margin_percent || 0).toFixed(1)}%</Text>
+                </View>
+              </View>
+            )}
+          />
+        </View>
+      </View>
+    </Modal>
     </>
   );
 }
@@ -859,19 +907,22 @@ function TeamBlock({ managers, onPress }: { managers: any[]; onPress: (mgr: any)
   );
 }
 
-// Chart layout constants
-const MAX_BAR_H = 164;
-const VALUE_H = 16;   // space at top for value labels
-const LABEL_H = 20;   // space at bottom for x-axis labels
-const COL_H = MAX_BAR_H + VALUE_H + LABEL_H;  // 200
-const BAR_BASE = VALUE_H + MAX_BAR_H;          // 180 — baseline Y from SVG top
-
-// Minimum slot widths per column (bar + gap)
-const MIN_SLOT_ALL = 40;   // single bar mode: ≥20px bar + 8px gap + rest
-const MIN_SLOT_DAY = 52;   // paired bar mode: 2×20px bars + 4px inner + 8px outer
+function smoothPath(pts: { x: number; y: number }[]): string {
+  if (pts.length < 2) return '';
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1];
+    const curr = pts[i];
+    const cpx = (prev.x + curr.x) / 2;
+    d += ` C ${cpx} ${prev.y} ${cpx} ${curr.y} ${curr.x} ${curr.y}`;
+  }
+  return d;
+}
 
 function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: string }) {
   const { width: screenW } = useWindowDimensions();
+  const W = screenW - 40 - 32;
+  const H = 120;
 
   if (!chartOrders?.length) return null;
 
@@ -888,56 +939,39 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
       byMonth[ym] = (byMonth[ym] || 0) + profit;
     });
     const entries = Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b));
-    if (!entries.length) return null;
+    if (entries.length < 2) return null;
     const maxVal = Math.max(...entries.map(([, v]) => v), 1);
-
-    const n = entries.length;
-    const GAP = 8;
-    const totalW = Math.max(n * MIN_SLOT_ALL, screenW);
-    const slotW = totalW / n;
-    const barW = Math.max(20, slotW - GAP);
-
-    const pts = entries.map(([, val], i) => {
-      const barH = Math.max(2, (val / maxVal) * MAX_BAR_H);
-      return { x: i * slotW + slotW / 2, y: BAR_BASE - barH, val };
-    });
+    const pts = entries.map(([, val], i) => ({
+      x: (i / (entries.length - 1)) * W,
+      y: H - (val / maxVal) * H * 0.85,
+    }));
+    const linePath = smoothPath(pts);
+    const fillPath = linePath + ` L ${W} ${H} L 0 ${H} Z`;
 
     return (
-      <View style={cStyles.wrap}>
+      <View style={cStyles.chartCard}>
         <Text style={cStyles.header}>ПРИБЫЛЬ ПО ПЕРИОДАМ</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={{ width: totalW, height: COL_H }}>
-            {entries.map(([ym, val], i) => {
-              const barH = Math.max(2, (val / maxVal) * MAX_BAR_H);
-              const barLeft = i * slotW + (slotW - barW) / 2;
-              const label = MONTHS[parseInt(ym.slice(5), 10) - 1] || ym.slice(5);
-              return (
-                <React.Fragment key={ym}>
-                  <View style={{ position: 'absolute', left: barLeft, bottom: LABEL_H, width: barW, height: barH, backgroundColor: theme.colors.accent, borderRadius: 4 }} />
-                  <Text style={{ position: 'absolute', left: i * slotW, bottom: 0, width: slotW, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{label}</Text>
-                </React.Fragment>
-              );
-            })}
-            <Svg style={{ position: 'absolute', top: 0, left: 0 }} width={totalW} height={COL_H}>
-              {pts.length >= 2 && (
-                <Polyline points={pts.map(p => `${p.x},${p.y}`).join(' ')} stroke={theme.colors.accent} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
-              )}
-              {pts.map((p, i) => (
-                <G key={i}>
-                  <Circle cx={p.x} cy={p.y} r={3} fill={theme.colors.accent} />
-                  <SvgText x={p.x} y={p.y - 5} textAnchor="middle" fontSize={8} fill={theme.colors.accent} fontWeight="600">
-                    {formatShort(p.val)}
-                  </SvgText>
-                </G>
-              ))}
-            </Svg>
-          </View>
-        </ScrollView>
+        <Svg width={W} height={H} style={{ marginBottom: 8 }}>
+          <Defs>
+            <SvgGradient id="fillAll" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#2563EB" stopOpacity="0.2" />
+              <Stop offset="1" stopColor="#2563EB" stopOpacity="0" />
+            </SvgGradient>
+          </Defs>
+          <Path d={fillPath} fill="url(#fillAll)" />
+          <Path d={linePath} stroke="#2563EB" strokeWidth={2.5} fill="none" strokeLinecap="round" />
+        </Svg>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          {entries.filter((_, i) => i === 0 || i === Math.floor(entries.length / 2) || i === entries.length - 1).map(([ym]) => (
+            <Text key={ym} style={{ fontSize: 10, color: theme.colors.textTertiary }}>
+              {MONTHS[parseInt(ym.slice(5), 10) - 1]}
+            </Text>
+          ))}
+        </View>
       </View>
     );
   }
 
-  // Specific month: paired bars with two lines
   const [y, m] = period.split('-').map(Number);
   const prevY = m === 1 ? y - 1 : y;
   const prevM = m === 1 ? 12 : m - 1;
@@ -954,75 +988,53 @@ function ProfitChart({ chartOrders, period }: { chartOrders: any[]; period: stri
 
   const days = Array.from(new Set([...Object.keys(currByDay), ...Object.keys(prevByDay)]))
     .map(Number).sort((a, b) => a - b);
-  if (!days.length) return null;
+  if (days.length < 2) return null;
 
   const maxVal = Math.max(...Object.values(currByDay), ...Object.values(prevByDay), 1);
 
-  const n = days.length;
-  const OUTER_GAP = 8, INNER_GAP = 4;
-  const totalW = Math.max(n * MIN_SLOT_DAY, screenW);
-  const slotW = totalW / n;
-  const barHalf = Math.max(20, (slotW - OUTER_GAP - INNER_GAP) / 2);
-  const pairW = barHalf * 2 + INNER_GAP;
-  const padL = Math.max(0, (slotW - OUTER_GAP - pairW) / 2);
+  const currPts = days.map((day, i) => ({
+    x: (i / (days.length - 1)) * W,
+    y: H - ((currByDay[day] || 0) / maxVal) * H * 0.85,
+  }));
+  const prevPts = days.map((day, i) => ({
+    x: (i / (days.length - 1)) * W,
+    y: H - ((prevByDay[day] || 0) / maxVal) * H * 0.85,
+  }));
 
-  const currPts = days.map((day, i) => {
-    const barH = Math.max(2, ((currByDay[day] || 0) / maxVal) * MAX_BAR_H);
-    return { x: i * slotW + padL + barHalf / 2, y: BAR_BASE - barH, val: currByDay[day] || 0 };
-  });
-  const prevPts = days.map((day, i) => {
-    const barH = Math.max(2, ((prevByDay[day] || 0) / maxVal) * MAX_BAR_H);
-    return { x: i * slotW + padL + barHalf + INNER_GAP + barHalf / 2, y: BAR_BASE - barH, val: prevByDay[day] || 0 };
-  });
+  const currLine = smoothPath(currPts);
+  const prevLine = smoothPath(prevPts);
+  const currFill = currLine + ` L ${W} ${H} L 0 ${H} Z`;
+  const prevFill = prevLine + ` L ${W} ${H} L 0 ${H} Z`;
 
   return (
-    <View style={cStyles.wrap}>
-      <Text style={cStyles.header}>ПРИБЫЛЬ ПО ПЕРИОДАМ</Text>
-      <View style={cStyles.legend}>
-        <View style={[cStyles.dot, { backgroundColor: theme.colors.accent }]} />
-        <Text style={cStyles.legendTxt}>Текущий</Text>
-        <View style={[cStyles.dot, { backgroundColor: theme.colors.textSecondary }]} />
-        <Text style={cStyles.legendTxt}>Прошлый</Text>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={{ width: totalW, height: COL_H }}>
-          {days.map((day, i) => {
-            const ch = Math.max(2, ((currByDay[day] || 0) / maxVal) * MAX_BAR_H);
-            const ph = Math.max(2, ((prevByDay[day] || 0) / maxVal) * MAX_BAR_H);
-            return (
-              <React.Fragment key={day}>
-                <View style={{ position: 'absolute', left: i * slotW + padL, bottom: LABEL_H, width: barHalf, height: ch, backgroundColor: theme.colors.accent, borderRadius: 3 }} />
-                <View style={{ position: 'absolute', left: i * slotW + padL + barHalf + INNER_GAP, bottom: LABEL_H, width: barHalf, height: ph, backgroundColor: theme.colors.textSecondary, borderRadius: 3 }} />
-                <Text style={{ position: 'absolute', left: i * slotW, bottom: 0, width: slotW - OUTER_GAP, textAlign: 'center', fontSize: 9, color: theme.colors.textTertiary }}>{day}</Text>
-              </React.Fragment>
-            );
-          })}
-          <Svg style={{ position: 'absolute', top: 0, left: 0 }} width={totalW} height={COL_H}>
-            {currPts.length >= 2 && (
-              <Polyline points={currPts.map(p => `${p.x},${p.y}`).join(' ')} stroke={theme.colors.accent} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
-            )}
-            {prevPts.length >= 2 && (
-              <Polyline points={prevPts.map(p => `${p.x},${p.y}`).join(' ')} stroke={theme.colors.textSecondary} strokeWidth={1.5} fill="none" strokeLinejoin="round" strokeLinecap="round" />
-            )}
-            {currPts.map((p, i) => (
-              <G key={`c${i}`}>
-                <Circle cx={p.x} cy={p.y} r={3} fill={theme.colors.accent} />
-                <SvgText x={p.x} y={p.y - 5} textAnchor="middle" fontSize={8} fill={theme.colors.accent} fontWeight="600">
-                  {p.val > 0 ? formatShort(p.val) : ''}
-                </SvgText>
-              </G>
-            ))}
-            {prevPts.map((p, i) => (
-              <G key={`p${i}`}>
-                <Circle cx={p.x} cy={p.y} r={3} fill={theme.colors.textSecondary} />
-                <SvgText x={p.x} y={p.y - 5} textAnchor="middle" fontSize={8} fill={theme.colors.textSecondary} fontWeight="600">
-                  {p.val > 0 ? formatShort(p.val) : ''}
-                </SvgText>
-              </G>
-            ))}
-          </Svg>
+    <View style={cStyles.chartCard}>
+      <Text style={cStyles.header}>ПРИБЫЛЬ: {monthLabel(period).toUpperCase()} VS {monthLabel(prevPeriod).toUpperCase()}</Text>
+      <Svg width={W} height={H} style={{ marginBottom: 8 }}>
+        <Defs>
+          <SvgGradient id="fillCurr" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#2563EB" stopOpacity="0.2" />
+            <Stop offset="1" stopColor="#2563EB" stopOpacity="0" />
+          </SvgGradient>
+          <SvgGradient id="fillPrevM" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#EF4444" stopOpacity="0.15" />
+            <Stop offset="1" stopColor="#EF4444" stopOpacity="0" />
+          </SvgGradient>
+        </Defs>
+        <Path d={prevFill} fill="url(#fillPrevM)" />
+        <Path d={currFill} fill="url(#fillCurr)" />
+        <Path d={prevLine} stroke="#EF4444" strokeWidth={2} fill="none" strokeLinecap="round" />
+        <Path d={currLine} stroke="#2563EB" strokeWidth={2.5} fill="none" strokeLinecap="round" />
+      </Svg>
+      <View style={{ flexDirection: 'row', gap: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ width: 24, height: 3, borderRadius: 2, backgroundColor: '#2563EB' }} />
+          <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Этот месяц</Text>
         </View>
-      </ScrollView>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ width: 24, height: 3, borderRadius: 2, backgroundColor: '#EF4444' }} />
+          <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Прошлый месяц</Text>
+        </View>
+      </View>
     </View>
   );
 }
@@ -1564,23 +1576,15 @@ const mStyles = StyleSheet.create({
 });
 
 const cStyles = StyleSheet.create({
-  wrap: {
+  chartCard: {
     backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 14,
-    paddingTop: 16,
-    paddingBottom: 4,
-    paddingHorizontal: 0,
-    marginHorizontal: -20,
-    marginTop: 8,
+    borderRadius: 16,
+    padding: 16,
     marginBottom: 16,
-    overflow: 'hidden',
+    borderWidth: 0.5,
+    borderColor: theme.colors.border,
   },
-  header: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 16, paddingHorizontal: 20 },
-  legend: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12, paddingHorizontal: 20 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  legendTxt: { fontSize: 10, color: theme.colors.textTertiary, marginRight: 8 },
+  header: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 14 },
 });
 
 const styles = StyleSheet.create({
@@ -1613,12 +1617,80 @@ const styles = StyleSheet.create({
   modeBtnText: { color: theme.colors.textTertiary, fontSize: 13, fontWeight: '600' },
   modeBtnTextActive: { color: theme.colors.textPrimary, fontWeight: '700' },
 
-  gradientCard: {
-    flex: 1, borderRadius: 18, padding: 16,
-    shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 6,
+  // Search bar
+  searchBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: theme.colors.surface, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderWidth: 0.5, borderColor: theme.colors.border,
   },
+  searchPlaceholder: { flex: 1, fontSize: 14, color: theme.colors.textTertiary },
 
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 24 },
+  // Three-card row
+  leftCard: {
+    flex: 1.5, backgroundColor: '#FFFFFF', borderRadius: 20, padding: 16,
+    justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06, shadowRadius: 10, elevation: 3,
+  },
+  cardLabel: { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '500' },
+  bigValue: { fontSize: 17, fontWeight: '700', color: '#1C1C1E', letterSpacing: -0.3, marginTop: 3 },
+  divider: { height: 1, backgroundColor: theme.colors.border, marginVertical: 10 },
+  gradientCard: {
+    flex: 1, borderRadius: 20, padding: 14, justifyContent: 'space-between',
+  },
+  gradCardIcon: {
+    width: 30, height: 30, borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center',
+  },
+  gradCardLabel: { fontSize: 10, color: 'rgba(0,0,0,0.55)', fontWeight: '500', marginTop: 8 },
+  gradCardValue: { fontSize: 16, fontWeight: '700', color: '#1a1a1a', letterSpacing: -0.3, marginTop: 2 },
+  gradCardSub: { fontSize: 10, color: 'rgba(0,0,0,0.45)', marginTop: 2 },
+
+  // Stats chips row
+  statsRow: {
+    flexDirection: 'row', backgroundColor: theme.colors.surface,
+    borderRadius: 16, padding: 14, marginBottom: 16,
+    borderWidth: 0.5, borderColor: theme.colors.border,
+  },
+  statChip: {
+    flex: 1, alignItems: 'center',
+    borderRightWidth: 0.5, borderRightColor: theme.colors.border, paddingVertical: 2,
+  },
+  statChipValue: { fontSize: 22, fontWeight: '700', letterSpacing: -0.5 },
+  statChipLabel: { fontSize: 10, color: theme.colors.textSecondary, marginTop: 2, textAlign: 'center' },
+
+  // Section cards (top clients / margin)
+  sectionCard: {
+    backgroundColor: theme.colors.surface, borderRadius: 16,
+    padding: 16, marginBottom: 16, borderWidth: 0.5, borderColor: theme.colors.border,
+  },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary },
+  sectionLink: { fontSize: 13, color: theme.colors.accent, fontWeight: '600' },
+
+  // Top clients
+  topClientRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border,
+  },
+  topClientNum: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: theme.colors.accent + '15', alignItems: 'center', justifyContent: 'center',
+  },
+  topClientNumText: { fontSize: 11, fontWeight: '700', color: theme.colors.accent },
+  topClientName: { fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary },
+  topClientSub: { fontSize: 11, color: theme.colors.textTertiary, marginTop: 1 },
+  topClientValue: { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary },
+
+  // Margin bars
+  marginRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
+  marginName: { fontSize: 12, color: theme.colors.textPrimary, width: 90 },
+  marginBarWrap: { flex: 1, height: 6, backgroundColor: theme.colors.border, borderRadius: 3, overflow: 'hidden' },
+  marginBar: { height: 6, backgroundColor: '#2563EB', borderRadius: 3 },
+  marginPct: { fontSize: 11, color: theme.colors.textSecondary, width: 40, textAlign: 'right' },
+
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   statTile: { width: '48%', flexGrow: 1, backgroundColor: theme.colors.surface, borderRadius: 16, padding: 14, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
   statValue: { fontSize: 22, fontWeight: '700', color: theme.colors.textPrimary, marginTop: 8, letterSpacing: -0.5 },
   statLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 1, color: theme.colors.textTertiary, marginTop: 2 },
