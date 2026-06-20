@@ -340,42 +340,6 @@ export default function Dashboard() {
           <MiniStatCard icon={Truck} color="#AF52DE" label="Перевозчиков" value={String(d.carriers_count || 0)} />
         </View>
 
-        {/* Должники */}
-        {currentUserRole !== 'manager' && (d.debtors || []).length > 0 && (
-          <>
-            <Text style={styles.sectionLabel}>ДОЛЖНИКИ — КЛИЕНТЫ</Text>
-            <View style={styles.listCard}>
-              {(d.debtors || []).map((c: any, i: number) => (
-                <DebtRow
-                  key={c.name}
-                  item={c}
-                  color={theme.colors.warning}
-                  last={i === d.debtors.length - 1}
-                  onPress={() => setSelectedDebtor({ name: c.name, isCreditor: false })}
-                />
-              ))}
-            </View>
-          </>
-        )}
-
-        {/* Кому должен */}
-        {currentUserRole !== 'manager' && (d.creditors || []).length > 0 && (
-          <>
-            <Text style={styles.sectionLabel}>ДОЛЖЕН ПЕРЕВОЗЧИКАМ</Text>
-            <View style={styles.listCard}>
-              {(d.creditors || []).map((c: any, i: number) => (
-                <DebtRow
-                  key={c.name}
-                  item={c}
-                  color={theme.colors.loss}
-                  last={i === d.creditors.length - 1}
-                  onPress={() => setSelectedDebtor({ name: c.name, isCreditor: true })}
-                />
-              ))}
-            </View>
-          </>
-        )}
-
         <Text style={styles.sectionLabel}>СТАТУСЫ ЗАЯВОК</Text>
         <View style={styles.statusCard}>
           <StatusBar label="Новые" value={d.status_breakdown?.new || 0} total={d.total_orders || 1} color={theme.colors.info} />
