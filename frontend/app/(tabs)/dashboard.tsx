@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, Briefcase, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, ArrowDownCircle, ArrowUpCircle, Briefcase, DollarSign, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search } from 'lucide-react-native';
 import { theme, formatMoney, formatShort, leadStatusColors, leadStatusLabels } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
 import { api } from '../../src/api';
@@ -67,6 +67,8 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [showClientDebtors, setShowClientDebtors] = useState(false);
+  const [showCarrierDebtors, setShowCarrierDebtors] = useState(false);
 
   useEffect(() => {
     if (searchQuery.length < 2) { setSearchResults(null); return; }
@@ -209,6 +211,12 @@ export default function Dashboard() {
 
   const d = data || {};
   const marginPositive = (d.total_margin || 0) >= 0;
+  const totalMargin = d.total_margin || 0;
+  const totalProfit = d.profit || 0;
+  const clientDebt = d.unpaid_by_clients || 0;
+  const carrierDebt = d.owed_to_carriers || 0;
+  const clientDebtors = (d.debtors || []).map((c: any) => ({ name: c.name, count: c.orders, debt: c.amount, id: c.id }));
+  const carrierDebtors = (d.creditors || []).map((c: any) => ({ name: c.name, count: c.orders, debt: c.amount, id: c.id }));
   const months: string[] = d.available_months || [];
   const cm = currentMonth();
 
@@ -283,43 +291,53 @@ export default function Dashboard() {
         />
 
         {currentUserRole !== 'manager' && (<>
-        {/* Gradient metric cards — 2x2 */}
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-          <GradientCard
-            colors={theme.gradients.blue as [string, string]}
-            label={`МАРЖА · ${period === 'all' ? 'ВСЕГО' : monthLabel(period).toUpperCase()}`}
-            value={formatMoney(d.total_margin)}
-            sub={d.prev_margin !== null && d.margin_change_pct !== null ? `${d.margin_change_pct >= 0 ? '+' : ''}${d.margin_change_pct}% к прошлому` : undefined}
+        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+          <StatCard
+            gradient={theme.gradients.blue}
+            accentColor={theme.gradients.blueAccent}
+            label="Маржа всего"
+            value={`${(totalMargin / 1000).toFixed(0)}K Br`}
+            sub={d.prev_margin !== null && d.margin_change_pct !== null ? `${d.margin_change_pct >= 0 ? '+' : ''}${d.margin_change_pct}% к прошлому` : '↑ за всё время'}
             icon={marginPositive ? TrendingUp : TrendingDown}
+            onPress={() => {}}
           />
-          <GradientCard
-            colors={theme.gradients.green as [string, string]}
-            label="ПРИБЫЛЬ (ПОСЛЕ 20%)"
-            value={formatMoney(d.profit)}
-            icon={Wallet}
+          <StatCard
+            gradient={theme.gradients.green}
+            accentColor={theme.gradients.greenAccent}
+            label="Прибыль"
+            value={`${(totalProfit / 1000).toFixed(0)}K Br`}
+            sub="после 20% налога"
+            icon={DollarSign}
+            onPress={() => {}}
           />
         </View>
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-          <GradientCard
-            colors={theme.gradients.orange as [string, string]}
-            label="ОЖИДАЕТСЯ ОТ КЛИЕНТОВ"
-            value={formatMoney(d.unpaid_by_clients)}
-            icon={ArrowDownRight}
+        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+          <StatCard
+            gradient={theme.gradients.orange}
+            accentColor={theme.gradients.orangeAccent}
+            label="Ожидается"
+            value={`${(clientDebt / 1000).toFixed(0)}K Br`}
+            sub="от клиентов"
+            icon={ArrowDownCircle}
+            onPress={() => setShowClientDebtors(true)}
           />
-          <GradientCard
-            colors={theme.gradients.purple as [string, string]}
-            label="К ОПЛАТЕ ПЕРЕВОЗЧИКАМ"
-            value={formatMoney(d.owed_to_carriers)}
-            icon={ArrowUpRight}
+          <StatCard
+            gradient={theme.gradients.purple}
+            accentColor={theme.gradients.purpleAccent}
+            label="К оплате"
+            value={`${(carrierDebt / 1000).toFixed(0)}K Br`}
+            sub="перевозчикам"
+            icon={ArrowUpCircle}
+            onPress={() => setShowCarrierDebtors(true)}
           />
         </View>
         </>)}
 
         <View style={styles.statsGrid}>
-          <StatTile icon={<Briefcase size={16} color={theme.colors.accent} strokeWidth={1.6} />} label="Активных" value={String(d.active_orders || 0)} />
-          <StatTile icon={<Wallet size={16} color={theme.colors.profit} strokeWidth={1.6} />} label="Доставлено" value={String(d.delivered_orders || 0)} />
-          <StatTile icon={<Users size={16} color={theme.colors.info} strokeWidth={1.6} />} label="Клиентов" value={String(d.clients_count || 0)} />
-          <StatTile icon={<Truck size={16} color={theme.colors.accent} strokeWidth={1.6} />} label="Перевозчиков" value={String(d.carriers_count || 0)} />
+          <MiniStatCard icon={Briefcase} color="#007AFF" label="Активных" value={String(d.active_orders || 0)} />
+          <MiniStatCard icon={CheckCircle2} color="#34C759" label="Доставлено" value={String(d.delivered_orders || 0)} />
+          <MiniStatCard icon={Users} color="#007AFF" label="Клиентов" value={String(d.clients_count || 0)} />
+          <MiniStatCard icon={Truck} color="#AF52DE" label="Перевозчиков" value={String(d.carriers_count || 0)} />
         </View>
 
         {/* Должники */}
@@ -704,6 +722,66 @@ export default function Dashboard() {
         </View>
       </View>
     </Modal>
+
+    {/* Client debtors modal */}
+    <Modal visible={showClientDebtors} transparent animationType="slide" onRequestClose={() => setShowClientDebtors(false)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '80%' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>Должники — клиенты</Text>
+            <TouchableOpacity onPress={() => setShowClientDebtors(false)}>
+              <X size={22} color="#8E8E93" strokeWidth={2} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={clientDebtors}
+            keyExtractor={(item) => item.name}
+            renderItem={({ item }: any) => (
+              <TouchableOpacity
+                onPress={() => { setShowClientDebtors(false); if (item.id) router.push(`/client/${item.id}` as any); }}
+                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' }}
+              >
+                <View>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: '#1C1C1E' }}>{item.name}</Text>
+                  <Text style={{ fontSize: 12, color: '#8E8E93', marginTop: 2 }}>{item.count} заявок</Text>
+                </View>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF9500' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      </View>
+    </Modal>
+
+    {/* Carrier debtors modal */}
+    <Modal visible={showCarrierDebtors} transparent animationType="slide" onRequestClose={() => setShowCarrierDebtors(false)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '80%' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>К оплате — перевозчики</Text>
+            <TouchableOpacity onPress={() => setShowCarrierDebtors(false)}>
+              <X size={22} color="#8E8E93" strokeWidth={2} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={carrierDebtors}
+            keyExtractor={(item) => item.name}
+            renderItem={({ item }: any) => (
+              <TouchableOpacity
+                onPress={() => { setShowCarrierDebtors(false); if (item.id) router.push(`/carrier/${item.id}` as any); }}
+                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' }}
+              >
+                <View>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: '#1C1C1E' }}>{item.name}</Text>
+                  <Text style={{ fontSize: 12, color: '#8E8E93', marginTop: 2 }}>{item.count} заявок</Text>
+                </View>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#AF52DE' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      </View>
+    </Modal>
     </>
   );
 }
@@ -723,49 +801,55 @@ function DebtRow({ item, color, last, onPress }: any) {
   );
 }
 
-function StatTile({ icon, label, value }: any) {
+function MiniStatCard({ label, value, icon: Icon, color }: any) {
   return (
-    <View style={styles.statTile}>{icon}
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={{
+      flex: 1,
+      backgroundColor: '#FFFFFF',
+      borderRadius: 16,
+      padding: 16,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.06,
+      shadowRadius: 8,
+      elevation: 2,
+    }}>
+      <View style={{ backgroundColor: color + '15', borderRadius: 8, padding: 6, alignSelf: 'flex-start', marginBottom: 10 }}>
+        <Icon size={16} color={color} strokeWidth={2} />
+      </View>
+      <Text style={{ fontSize: 24, fontWeight: '700', color: '#1C1C1E', letterSpacing: -0.5 }}>{value}</Text>
+      <Text style={{ fontSize: 12, color: '#8E8E93', marginTop: 2 }}>{label}</Text>
     </View>
   );
 }
 
-function GradientCard({ colors, label, value, sub, icon: Icon, progress }: {
-  colors: [string, string];
-  label: string;
-  value: string;
-  sub?: string;
-  icon?: any;
-  progress?: number;
-}) {
+function StatCard({ gradient, accentColor, label, value, sub, icon: Icon, onPress }: any) {
   return (
-    <LinearGradient
-      colors={colors}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.gradientCard}
-    >
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '500' }}>{label}</Text>
-        {Icon && (
-          <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, padding: 5 }}>
-            <Icon size={14} color="#FFFFFF" strokeWidth={2} />
+    <TouchableOpacity onPress={onPress} activeOpacity={0.8} style={{ flex: 1 }}>
+      <LinearGradient
+        colors={gradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{
+          borderRadius: 20,
+          padding: 18,
+          shadowColor: accentColor,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.15,
+          shadowRadius: 12,
+          elevation: 4,
+        }}
+      >
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <View style={{ backgroundColor: accentColor + '20', borderRadius: 10, padding: 8 }}>
+            <Icon size={18} color={accentColor} strokeWidth={2} />
           </View>
-        )}
-      </View>
-      <Text style={{ color: '#FFFFFF', fontSize: 22, fontWeight: '700', letterSpacing: -0.5 }}>{value}</Text>
-      {sub ? <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 3 }}>{sub}</Text> : null}
-      {progress !== undefined && (
-        <View style={{ marginTop: 10 }}>
-          <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 2 }}>
-            <View style={{ height: 3, backgroundColor: '#FFFFFF', borderRadius: 2, width: `${Math.min(Math.max(progress, 0), 100)}%` }} />
-          </View>
-          <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 10, marginTop: 3, textAlign: 'right' }}>{Math.round(progress)}%</Text>
         </View>
-      )}
-    </LinearGradient>
+        <Text style={{ fontSize: 26, fontWeight: '700', color: '#1C1C1E', letterSpacing: -0.5 }}>{value}</Text>
+        <Text style={{ fontSize: 12, color: '#6B6B7B', marginTop: 2, fontWeight: '500' }}>{label}</Text>
+        {sub && <Text style={{ fontSize: 11, color: accentColor, marginTop: 4, fontWeight: '600' }}>{sub}</Text>}
+      </LinearGradient>
+    </TouchableOpacity>
   );
 }
 

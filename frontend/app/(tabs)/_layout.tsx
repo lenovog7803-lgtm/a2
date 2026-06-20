@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LayoutDashboard, Package, Users, Truck, CheckSquare, Phone, DollarSign } from 'lucide-react-native';
@@ -71,25 +70,12 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
               activeOpacity={0.7}
             >
               {isFocused ? (
-                <LinearGradient
-                  colors={theme.gradients.blue}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={{
-                    width: 44,
-                    height: 28,
-                    borderRadius: 14,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginBottom: 2,
-                  }}
-                >
-                  <IconComponent size={16} color="#FFFFFF" strokeWidth={2} />
-                </LinearGradient>
-              ) : (
-                <View style={{ width: 44, height: 28, alignItems: 'center', justifyContent: 'center', marginBottom: 2 }}>
-                  <IconComponent size={18} color={theme.colors.tabBarInactive} strokeWidth={1.5} />
+                <View style={{ alignItems: 'center' }}>
+                  <IconComponent size={22} color="#007AFF" strokeWidth={2} />
+                  <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#007AFF', marginTop: 3 }} />
                 </View>
+              ) : (
+                <IconComponent size={22} color="#8E8E93" strokeWidth={1.5} />
               )}
               <Text style={{
                 fontSize: 10,

@@ -1,8 +1,8 @@
 export const lightTheme = {
   dark: false,
   colors: {
-    bg: '#F2F2F7',
-    surface: '#FFFFFF',
+    bg: '#FFFFFF',
+    surface: '#F8F9FA',
     surfaceElevated: '#FFFFFF',
     surfaceSecondary: '#F8F8FC',
     surfaceHigh: '#EFEFF4',
@@ -35,15 +35,19 @@ export const lightTheme = {
     tabBarInactive: '#8E8E93',
   },
   gradients: {
-    blue: ['#007AFF', '#5AC8FA'] as [string, string],
-    green: ['#34C759', '#30D158'] as [string, string],
-    orange: ['#FF9500', '#FF6B35'] as [string, string],
-    purple: ['#AF52DE', '#7B68EE'] as [string, string],
+    blue:   ['#E8F4FD', '#D6EBF8'] as [string, string],
+    green:  ['#E8F8F0', '#D6F0E3'] as [string, string],
+    orange: ['#FEF3E8', '#FCE9D6'] as [string, string],
+    purple: ['#F3EEFE', '#EAE2FC'] as [string, string],
     pink: ['#FF2D55', '#FF6B8A'] as [string, string],
     card1: ['#667eea', '#764ba2'] as [string, string],
     card2: ['#f093fb', '#f5576c'] as [string, string],
     card3: ['#4facfe', '#00f2fe'] as [string, string],
     card4: ['#43e97b', '#38f9d7'] as [string, string],
+    blueAccent:   '#007AFF',
+    greenAccent:  '#34C759',
+    purpleAccent: '#AF52DE',
+    orangeAccent: '#FF9500',
   },
 };
 
@@ -93,6 +97,10 @@ export const darkTheme = {
     card2: ['#f093fb', '#f5576c'] as [string, string],
     card3: ['#4facfe', '#00f2fe'] as [string, string],
     card4: ['#43e97b', '#38f9d7'] as [string, string],
+    blueAccent:   '#0A84FF',
+    greenAccent:  '#32D74B',
+    purpleAccent: '#BF5AF2',
+    orangeAccent: '#FF9F0A',
   },
 };
 
