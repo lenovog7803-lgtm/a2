@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, FlatList, RefreshControl, ActivityI
 import Animated, { useAnimatedStyle, withTiming, withSpring, useSharedValue, interpolate, runOnJS } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Path, Defs, LinearGradient as SvgGradient, Stop, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
+import Svg, { Path, Defs, LinearGradient as SvgGradient, Stop, Circle as SvgCircle, Rect as SvgRect, Line as SvgLine, Text as SvgText } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, ArrowDownCircle, ArrowUpCircle, Briefcase, DollarSign, Clock, CheckCircle, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search, Bell, Calendar, ChevronDown } from 'lucide-react-native';
@@ -86,22 +86,29 @@ export default function Dashboard() {
   const [showAllTopClients, setShowAllTopClients] = useState(false);
   const [showAllTopMargin, setShowAllTopMargin] = useState(false);
   const [periodOpen, setPeriodOpen] = useState(false);
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef<any>(null);
-  const searchExpanded = useSharedValue(0);
-  const searchStyle = useAnimatedStyle(() => ({
-    width: interpolate(searchExpanded.value, [0, 1], [120, 220]),
-  }));
-  const tabsStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(searchExpanded.value, [0, 1], [1, 0]),
-    width: interpolate(searchExpanded.value, [0, 1], [148, 0]),
-    overflow: 'hidden' as any,
-  }));
-  const extraBtnsStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(searchExpanded.value, [0, 1], [1, 0]),
-    width: interpolate(searchExpanded.value, [0, 1], [68, 0]),
-    overflow: 'hidden' as any,
-  }));
+  const searchWidth = useSharedValue(36);
+  const searchOpacity = useSharedValue(0);
+  const tabsOpacity = useSharedValue(1);
+  const searchAnimStyle = useAnimatedStyle(() => ({ width: searchWidth.value }));
+  const inputStyle = useAnimatedStyle(() => ({ opacity: searchOpacity.value }));
+  const tabsStyle = useAnimatedStyle(() => ({ opacity: tabsOpacity.value, flex: 1 }));
+  const openSearch = () => {
+    setSearchOpen(true);
+    searchWidth.value = withSpring(220, { damping: 20, stiffness: 200 });
+    searchOpacity.value = withTiming(1, { duration: 200 });
+    tabsOpacity.value = withTiming(0, { duration: 150 });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    searchWidth.value = withSpring(36, { damping: 20, stiffness: 200 });
+    searchOpacity.value = withTiming(0, { duration: 150 });
+    tabsOpacity.value = withTiming(1, { duration: 200 });
+    searchInputRef.current?.blur();
+  };
   const [dayModalDate, setDayModalDate] = useState<string | null>(null);
   const [dayModalData, setDayModalData] = useState<any>(null);
   const [dayModalLoading, setDayModalLoading] = useState(false);
@@ -287,94 +294,111 @@ export default function Dashboard() {
       }} tintColor={theme.colors.accent} colors={[theme.colors.accent]} />}
     >
       <View style={{ paddingHorizontal: 16 }}>
-        {/* === HEADER: search + tabs + period in one row === */}
+        {/* === HEADER: icon-search + tabs + period === */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: insets.top + 8, paddingBottom: 12 }}>
 
-          {/* Animated search */}
-          <Animated.View style={[searchStyle, {
-            flexDirection: 'row', alignItems: 'center', gap: 7,
-            backgroundColor: theme.colors.surface,
-            borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8,
-            borderWidth: 0.5, borderColor: isSearchFocused ? theme.colors.accent : theme.colors.border,
-          }]}>
-            <Search size={13} color={isSearchFocused ? theme.colors.accent : theme.colors.textTertiary} strokeWidth={1.5} />
-            <TextInput
-              ref={searchInputRef}
-              placeholder="Поиск..."
-              placeholderTextColor={theme.colors.textTertiary}
-              style={{ fontSize: 12, color: theme.colors.textPrimary, flex: 1, padding: 0 }}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              onFocus={() => {
-                setIsSearchFocused(true);
-                searchExpanded.value = withSpring(1, { damping: 20, stiffness: 220 });
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }}
-              onBlur={() => {
-                setIsSearchFocused(false);
-                if (!searchQuery) {
-                  searchExpanded.value = withTiming(0, { duration: 250 });
-                }
-              }}
-            />
-            {isSearchFocused && (
-              <TouchableOpacity onPress={() => {
-                setSearchQuery('');
-                setIsSearchFocused(false);
-                searchExpanded.value = withTiming(0, { duration: 250 });
-                searchInputRef.current?.blur();
-              }}>
-                <X size={12} color={theme.colors.textTertiary} strokeWidth={2} />
+          {/* Search: starts as 36px icon, springs open to 220px */}
+          <Animated.View style={[searchAnimStyle, { height: 34, borderRadius: 10, overflow: 'hidden', backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: searchOpen ? theme.colors.accent : theme.colors.border, flexDirection: 'row', alignItems: 'center' }]}>
+            <TouchableOpacity onPress={searchOpen ? undefined : openSearch} style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Search size={15} color={searchOpen ? theme.colors.accent : theme.colors.textSecondary} strokeWidth={1.8} />
+            </TouchableOpacity>
+            <Animated.View style={[inputStyle, { flex: 1, flexDirection: 'row', alignItems: 'center', paddingRight: 8 }]}>
+              <TextInput
+                ref={searchInputRef}
+                autoFocus={searchOpen}
+                placeholder="Поиск по CRM..."
+                placeholderTextColor={theme.colors.textTertiary}
+                style={{ flex: 1, fontSize: 12, color: theme.colors.textPrimary, padding: 0 }}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+              <TouchableOpacity onPress={closeSearch}>
+                <X size={13} color={theme.colors.textTertiary} strokeWidth={2} />
               </TouchableOpacity>
-            )}
+            </Animated.View>
           </Animated.View>
 
-          {/* Animated tab switcher — hides when search focused */}
-          <Animated.View style={tabsStyle}>
-            <View style={{ flexDirection: 'row', backgroundColor: theme.colors.surface, borderRadius: 10, padding: 2, borderWidth: 0.5, borderColor: theme.colors.border }}>
-              {([
-                { key: 'dashboard' as const, label: 'Обзор' },
-                { key: 'manager' as const, label: 'Команда' },
-                { key: 'analytics' as const, label: 'Цели' },
-              ]).map((tab) => (
-                <TouchableOpacity
-                  key={tab.key}
-                  onPress={() => {
-                    setDashView(tab.key);
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }}
-                  style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, backgroundColor: dashView === tab.key ? theme.colors.accent : 'transparent' }}
-                  activeOpacity={0.8}
-                >
-                  <Text style={{ fontSize: 11, fontWeight: dashView === tab.key ? '600' : '400', color: dashView === tab.key ? '#FFFFFF' : theme.colors.textSecondary }}>
-                    {tab.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          {/* Tabs — flex:1, fade out when search opens */}
+          <Animated.View style={[tabsStyle, { flexDirection: 'row', backgroundColor: theme.colors.surface, borderRadius: 10, padding: 2, borderWidth: 0.5, borderColor: theme.colors.border }]}>
+            {([
+              { key: 'dashboard' as const, label: 'Обзор' },
+              { key: 'manager' as const, label: 'Команда' },
+              { key: 'analytics' as const, label: 'Цели' },
+            ]).map((tab) => (
+              <TouchableOpacity
+                key={tab.key}
+                onPress={() => { setDashView(tab.key); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                style={{ flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center', backgroundColor: dashView === tab.key ? theme.colors.accent : 'transparent' }}
+                activeOpacity={0.8}
+              >
+                <Text adjustsFontSizeToFit minimumFontScale={0.8} numberOfLines={1} style={{ fontSize: 12, fontWeight: dashView === tab.key ? '600' : '400', color: dashView === tab.key ? '#fff' : theme.colors.textSecondary }}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </Animated.View>
 
           {/* Period */}
           <TouchableOpacity
             onPress={() => { setPeriodOpen(v => !v); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
             activeOpacity={0.9}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.colors.surface, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 8, borderWidth: 0.5, borderColor: theme.colors.border }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.colors.surface, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 0.5, borderColor: theme.colors.border, height: 34 }}
           >
-            <Calendar size={11} color={theme.colors.textTertiary} strokeWidth={1.5} />
-            <Text style={{ fontSize: 11, color: theme.colors.textPrimary }}>{selectedPeriodLabel}</Text>
+            <Calendar size={12} color={theme.colors.textTertiary} strokeWidth={1.5} />
+            <Text numberOfLines={1} style={{ fontSize: 11, color: theme.colors.textPrimary }}>{selectedPeriodLabel}</Text>
             <ChevronDown size={11} color={theme.colors.textTertiary} strokeWidth={1.5} />
           </TouchableOpacity>
 
-          {/* Theme + logout — hidden when search expanded */}
-          <Animated.View style={[extraBtnsStyle, { flexDirection: 'row', gap: 6 }]}>
-            <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="theme-toggle">
-              {mode === 'dark' ? <Sun size={13} color={theme.colors.accent} strokeWidth={1.5} /> : <Moon size={13} color={theme.colors.textSecondary} strokeWidth={1.5} />}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => logout(router)} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="logout-btn">
-              <LogOut size={13} color={theme.colors.loss} strokeWidth={1.5} />
-            </TouchableOpacity>
-          </Animated.View>
+          {/* Theme + logout (always visible) */}
+          <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="theme-toggle">
+            {mode === 'dark' ? <Sun size={13} color={theme.colors.accent} strokeWidth={1.5} /> : <Moon size={13} color={theme.colors.textSecondary} strokeWidth={1.5} />}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => logout(router)} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="logout-btn">
+            <LogOut size={13} color={theme.colors.loss} strokeWidth={1.5} />
+          </TouchableOpacity>
         </View>
+
+        {/* Inline search results */}
+        {searchOpen && searchQuery.length >= 2 && (
+          <View style={{ backgroundColor: theme.colors.surface, borderRadius: 14, borderWidth: 0.5, borderColor: theme.colors.border, marginBottom: 10, maxHeight: 320, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 8 }}>
+            {searchLoading ? (
+              <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 20 }} />
+            ) : searchResults ? (
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
+                {searchResults.orders?.slice(0, 5).map((o: any) => (
+                  <TouchableOpacity key={o.id} onPress={() => { closeSearch(); router.push(`/order/${o.id}` as any); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.accent }}>{o.order_number}</Text>
+                      <Text style={{ fontSize: 11, color: theme.colors.textTertiary }} numberOfLines={1}>{o.client_name}</Text>
+                    </View>
+                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                  </TouchableOpacity>
+                ))}
+                {searchResults.clients?.slice(0, 3).map((c: any) => (
+                  <TouchableOpacity key={c.id} onPress={() => { closeSearch(); router.push(`/client/${c.id}` as any); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+                    <Text style={{ flex: 1, fontSize: 13, color: theme.colors.textPrimary }} numberOfLines={1}>{c.company_name || c.name}</Text>
+                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                  </TouchableOpacity>
+                ))}
+                {searchResults.leads?.slice(0, 3).map((l: any) => (
+                  <TouchableOpacity key={l.id} onPress={() => { closeSearch(); router.push(`/lead/${l.id}` as any); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, color: theme.colors.textPrimary }} numberOfLines={1}>{l.name}</Text>
+                      {!!l.company && <Text style={{ fontSize: 11, color: theme.colors.textTertiary }} numberOfLines={1}>{l.company}</Text>}
+                    </View>
+                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                  </TouchableOpacity>
+                ))}
+                {!searchResults.orders?.length && !searchResults.clients?.length && !searchResults.leads?.length && (
+                  <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 20, fontSize: 13 }}>Ничего не найдено</Text>
+                )}
+              </ScrollView>
+            ) : null}
+          </View>
+        )}
 
         {dashView === 'dashboard' ? (<>
 
@@ -421,48 +445,36 @@ export default function Dashboard() {
               <View style={{ flex: 1, gap: 10 }}>
 
                 {/* Orange: awaiting from clients */}
-                <PressableCard onPress={() => setShowClientDebtors(true)} style={{ flex: 1 }}>
-                  <LinearGradient
-                    colors={['#f8c4b0', '#f4a896', '#f0b8b0', '#f8d0c0']}
-                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                    style={{ borderRadius: 18, padding: 14, justifyContent: 'space-between', minHeight: 95 }}
-                  >
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Ожидается</Text>
-                      <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
-                        <Clock size={12} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
-                      </View>
+                <PressableGradient colors={['#f8c4b0', '#f4a896', '#f0b8b0', '#f8d0c0']} onPress={() => setShowClientDebtors(true)} style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Ожидается</Text>
+                    <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Clock size={12} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
                     </View>
-                    <View>
-                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 5 }}>
-                        {clientDebt.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
-                      </Text>
-                      <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{clientDebtors.length} должников</Text>
-                    </View>
-                  </LinearGradient>
-                </PressableCard>
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 5 }}>
+                      {clientDebt.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
+                    </Text>
+                    <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{clientDebtors.length} должников</Text>
+                  </View>
+                </PressableGradient>
 
                 {/* Blue: to pay carriers */}
-                <PressableCard onPress={() => setShowCarrierDebtors(true)} style={{ flex: 1 }}>
-                  <LinearGradient
-                    colors={['#a8d8f8', '#90c8f4', '#b0d8f8', '#c8e8ff']}
-                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                    style={{ borderRadius: 18, padding: 14, justifyContent: 'space-between', minHeight: 95 }}
-                  >
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>К оплате</Text>
-                      <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
-                        <CheckCircle size={12} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
-                      </View>
+                <PressableGradient colors={['#a8d8f8', '#90c8f4', '#b0d8f8', '#c8e8ff']} onPress={() => setShowCarrierDebtors(true)} style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>К оплате</Text>
+                    <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+                      <CheckCircle size={12} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
                     </View>
-                    <View>
-                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 5 }}>
-                        {carrierDebt.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
-                      </Text>
-                      <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{carrierDebtors.length} перевозч.</Text>
-                    </View>
-                  </LinearGradient>
-                </PressableCard>
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 5 }}>
+                      {carrierDebt.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
+                    </Text>
+                    <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{carrierDebtors.length} перевозч.</Text>
+                  </View>
+                </PressableGradient>
 
                 {/* Stats chips */}
                 <View style={{ borderRadius: 18, padding: 11, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, flexDirection: 'row' }}>
@@ -565,63 +577,6 @@ export default function Dashboard() {
       </View>
     </ScrollView>
 
-    {/* Inline search results overlay */}
-    {isSearchFocused && searchQuery.length >= 2 && (
-      <View style={{ position: 'absolute', top: insets.top + 58, left: 16, right: 16, zIndex: 300, backgroundColor: theme.colors.surface, borderRadius: 16, borderWidth: 0.5, borderColor: theme.colors.border, maxHeight: 360, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 12, overflow: 'hidden' }}>
-        {searchLoading ? (
-          <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 24 }} />
-        ) : searchResults ? (
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
-            {searchResults.orders?.length > 0 && (
-              <>
-                <Text style={[styles.sectionLabel, { paddingHorizontal: 16, paddingTop: 14 }]}>ЗАЯВКИ</Text>
-                {searchResults.orders.slice(0, 5).map((o: any) => (
-                  <TouchableOpacity key={o.id} onPress={() => { setSearchVisible(false); setSearchQuery(''); searchExpanded.value = withTiming(0); searchInputRef.current?.blur(); router.push(`/order/${o.id}` as any); }}
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.accent }}>{o.order_number}</Text>
-                      <Text style={{ fontSize: 11, color: theme.colors.textTertiary }} numberOfLines={1}>{o.client_name}</Text>
-                    </View>
-                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
-            {searchResults.clients?.length > 0 && (
-              <>
-                <Text style={[styles.sectionLabel, { paddingHorizontal: 16, paddingTop: 10 }]}>КЛИЕНТЫ</Text>
-                {searchResults.clients.slice(0, 3).map((c: any) => (
-                  <TouchableOpacity key={c.id} onPress={() => { setSearchQuery(''); searchExpanded.value = withTiming(0); searchInputRef.current?.blur(); router.push(`/client/${c.id}` as any); }}
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
-                    <Text style={{ flex: 1, fontSize: 13, color: theme.colors.textPrimary }} numberOfLines={1}>{c.company_name || c.name}</Text>
-                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
-            {searchResults.leads?.length > 0 && (
-              <>
-                <Text style={[styles.sectionLabel, { paddingHorizontal: 16, paddingTop: 10 }]}>ЛИДЫ</Text>
-                {searchResults.leads.slice(0, 3).map((l: any) => (
-                  <TouchableOpacity key={l.id} onPress={() => { setSearchQuery(''); searchExpanded.value = withTiming(0); searchInputRef.current?.blur(); router.push(`/lead/${l.id}` as any); }}
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, color: theme.colors.textPrimary }} numberOfLines={1}>{l.name}</Text>
-                      <Text style={{ fontSize: 11, color: theme.colors.textTertiary }} numberOfLines={1}>{l.company}</Text>
-                    </View>
-                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
-            {!searchResults.orders?.length && !searchResults.clients?.length && !searchResults.leads?.length && (
-              <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 24, fontSize: 13 }}>Ничего не найдено</Text>
-            )}
-          </ScrollView>
-        ) : null}
-      </View>
-    )}
-
     {/* Period dropdown — rendered outside ScrollView to avoid clipping */}
     {periodOpen && (
       <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setPeriodOpen(false)} activeOpacity={1} />
@@ -642,109 +597,8 @@ export default function Dashboard() {
       </View>
     )}
 
-    {/* Global search modal */}
-    <BottomModal visible={searchVisible} onClose={() => setSearchVisible(false)} title="Поиск">
-      <View style={{ paddingHorizontal: 20, paddingBottom: 4 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 14 }}>
-            <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
-            <TextInput
-              autoFocus
-              style={{ flex: 1, color: theme.colors.textPrimary, fontSize: 14 }}
-              placeholder="Поиск по заявкам, клиентам, перевозчикам, лидам"
-              placeholderTextColor={theme.colors.textTertiary}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              clearButtonMode="while-editing"
-            />
-          </View>
-          {searchLoading ? (
-            <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 24 }} />
-          ) : searchResults ? (
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
-              {searchResults.orders?.length > 0 && (
-                <>
-                  <Text style={styles.sectionLabel}>ЗАЯВКИ</Text>
-                  <View style={styles.listCard}>
-                    {searchResults.orders.map((o: any, i: number) => (
-                      <TouchableOpacity key={o.id} activeOpacity={0.7}
-                        onPress={() => { setSearchVisible(false); router.push(`/order/${o.id}` as any); }}
-                        style={[styles.debtRow, i === searchResults.orders.length - 1 && { borderBottomWidth: 0 }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.debtName, { color: theme.colors.accent }]}>{o.order_number}</Text>
-                          <Text style={styles.debtMeta} numberOfLines={1}>{o.client_name}{o.carrier_name ? ` · ${o.carrier_name}` : ''}</Text>
-                        </View>
-                        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </>
-              )}
-              {searchResults.clients?.length > 0 && (
-                <>
-                  <Text style={styles.sectionLabel}>КЛИЕНТЫ</Text>
-                  <View style={styles.listCard}>
-                    {searchResults.clients.map((c: any, i: number) => (
-                      <TouchableOpacity key={c.id} activeOpacity={0.7}
-                        onPress={() => { setSearchVisible(false); router.push(`/client/${c.id}` as any); }}
-                        style={[styles.debtRow, i === searchResults.clients.length - 1 && { borderBottomWidth: 0 }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.debtName} numberOfLines={1}>{c.name}</Text>
-                          <Text style={styles.debtMeta} numberOfLines={1}>{[c.phone, c.city].filter(Boolean).join(' · ')}</Text>
-                        </View>
-                        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </>
-              )}
-              {searchResults.carriers?.length > 0 && (
-                <>
-                  <Text style={styles.sectionLabel}>ПЕРЕВОЗЧИКИ</Text>
-                  <View style={styles.listCard}>
-                    {searchResults.carriers.map((c: any, i: number) => (
-                      <TouchableOpacity key={c.id} activeOpacity={0.7}
-                        onPress={() => { setSearchVisible(false); router.push(`/carrier/${c.id}` as any); }}
-                        style={[styles.debtRow, i === searchResults.carriers.length - 1 && { borderBottomWidth: 0 }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.debtName} numberOfLines={1}>{c.company_name}</Text>
-                          <Text style={styles.debtMeta} numberOfLines={1}>{[c.phone, c.city].filter(Boolean).join(' · ')}</Text>
-                        </View>
-                        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </>
-              )}
-              {searchResults.leads?.length > 0 && (
-                <>
-                  <Text style={styles.sectionLabel}>ЛИДЫ</Text>
-                  <View style={styles.listCard}>
-                    {searchResults.leads.map((l: any, i: number) => (
-                      <TouchableOpacity key={l.id} activeOpacity={0.7}
-                        onPress={() => { setSearchVisible(false); router.push(`/lead/${l.id}` as any); }}
-                        style={[styles.debtRow, i === searchResults.leads.length - 1 && { borderBottomWidth: 0 }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.debtName} numberOfLines={1}>{l.name}</Text>
-                          <Text style={styles.debtMeta} numberOfLines={1}>{[l.company, l.phone].filter(Boolean).join(' · ')}</Text>
-                        </View>
-                        <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </>
-              )}
-              {!searchResults.orders?.length && !searchResults.clients?.length && !searchResults.carriers?.length && !searchResults.leads?.length && (
-                <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32, fontSize: 14 }}>Ничего не найдено</Text>
-              )}
-            </ScrollView>
-          ) : searchQuery.length > 0 && searchQuery.length < 2 ? (
-            <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 24, fontSize: 13 }}>Введите минимум 2 символа</Text>
-          ) : null}
-        </View>
-    </BottomModal>
-
     {/* Debtor orders modal (selectedDebtor) */}
-    <BottomModal
+    <ExpandModal
       visible={!!selectedDebtor}
       onClose={() => setSelectedDebtor(null)}
       title={selectedDebtor?.name || ''}
@@ -776,10 +630,10 @@ export default function Dashboard() {
           </TouchableOpacity>
         ))}
       </ScrollView>
-    </BottomModal>
+    </ExpandModal>
 
     {/* Team stats modal */}
-    <BottomModal
+    <ExpandModal
       visible={!!teamStatsUser}
       onClose={() => setTeamStatsUser(null)}
       title={teamStatsUser?.name || ''}
@@ -872,15 +726,15 @@ export default function Dashboard() {
           </ScrollView>
         )}
       </View>
-    </BottomModal>
+    </ExpandModal>
 
     {/* Client debtors modal */}
-    <BottomModal visible={showClientDebtors} onClose={() => setShowClientDebtors(false)} title="Должники — клиенты">
+    <ExpandModal visible={showClientDebtors} onClose={() => setShowClientDebtors(false)} title="Должники — клиенты">
       <FlatList
         data={clientDebtors}
         keyExtractor={(item) => item.name}
         scrollEnabled={false}
-        contentContainerStyle={{ paddingHorizontal: 20 }}
+        contentContainerStyle={{ paddingBottom: 8 }}
         renderItem={({ item }: any) => (
           <TouchableOpacity
             onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setDebtorOrdersDebtor({ name: item.name, isCreditor: false }); }}
@@ -897,15 +751,15 @@ export default function Dashboard() {
           </TouchableOpacity>
         )}
       />
-    </BottomModal>
+    </ExpandModal>
 
     {/* Carrier debtors modal */}
-    <BottomModal visible={showCarrierDebtors} onClose={() => setShowCarrierDebtors(false)} title="К оплате — перевозчики">
+    <ExpandModal visible={showCarrierDebtors} onClose={() => setShowCarrierDebtors(false)} title="К оплате — перевозчики">
       <FlatList
         data={carrierDebtors}
         keyExtractor={(item) => item.name}
         scrollEnabled={false}
-        contentContainerStyle={{ paddingHorizontal: 20 }}
+        contentContainerStyle={{ paddingBottom: 8 }}
         renderItem={({ item }: any) => (
           <TouchableOpacity
             onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setDebtorOrdersDebtor({ name: item.name, isCreditor: true }); }}
@@ -922,10 +776,10 @@ export default function Dashboard() {
           </TouchableOpacity>
         )}
       />
-    </BottomModal>
+    </ExpandModal>
 
     {/* Debtor orders nested modal */}
-    <BottomModal
+    <ExpandModal
       visible={!!debtorOrdersDebtor}
       onClose={() => setDebtorOrdersDebtor(null)}
       title={debtorOrdersDebtor?.name || ''}
@@ -939,7 +793,7 @@ export default function Dashboard() {
         )}
         keyExtractor={(item) => item.id}
         scrollEnabled={false}
-        contentContainerStyle={{ paddingHorizontal: 20 }}
+        contentContainerStyle={{ paddingBottom: 8 }}
         ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет заявок</Text>}
         renderItem={({ item }: any) => (
           <TouchableOpacity
@@ -960,10 +814,10 @@ export default function Dashboard() {
           </TouchableOpacity>
         )}
       />
-    </BottomModal>
+    </ExpandModal>
 
     {/* Day orders modal */}
-    <BottomModal
+    <ExpandModal
       visible={!!dayModalDate}
       onClose={() => setDayModalDate(null)}
       title={dayModalDate || ''}
@@ -976,7 +830,7 @@ export default function Dashboard() {
           data={dayModalData?.orders || []}
           keyExtractor={(item: any) => item.order_number}
           scrollEnabled={false}
-          contentContainerStyle={{ paddingHorizontal: 20 }}
+          contentContainerStyle={{ paddingBottom: 8 }}
           ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет заявок за этот день</Text>}
           renderItem={({ item }: any) => (
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}>
@@ -991,15 +845,15 @@ export default function Dashboard() {
           )}
         />
       )}
-    </BottomModal>
+    </ExpandModal>
 
     {/* Top clients modal */}
-    <BottomModal visible={showAllTopClients} onClose={() => setShowAllTopClients(false)} title="Топ клиентов">
+    <ExpandModal visible={showAllTopClients} onClose={() => setShowAllTopClients(false)} title="Топ клиентов">
       <FlatList
         data={d.top_clients || []}
         keyExtractor={(item: any) => item.name}
         scrollEnabled={false}
-        contentContainerStyle={{ paddingHorizontal: 20 }}
+        contentContainerStyle={{ paddingBottom: 8 }}
         renderItem={({ item, index }: any) => (
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}>
             <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.accentLight, alignItems: 'center', justifyContent: 'center' }}>
@@ -1013,15 +867,15 @@ export default function Dashboard() {
           </View>
         )}
       />
-    </BottomModal>
+    </ExpandModal>
 
     {/* Top margin modal */}
-    <BottomModal visible={showAllTopMargin} onClose={() => setShowAllTopMargin(false)} title="Топ по марже">
+    <ExpandModal visible={showAllTopMargin} onClose={() => setShowAllTopMargin(false)} title="Топ по марже">
       <FlatList
         data={d.top_clients_margin || []}
         keyExtractor={(item: any) => item.name}
         scrollEnabled={false}
-        contentContainerStyle={{ paddingHorizontal: 20 }}
+        contentContainerStyle={{ paddingBottom: 8 }}
         renderItem={({ item }: any) => (
           <View style={{ paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -1039,96 +893,86 @@ export default function Dashboard() {
           </View>
         )}
       />
-    </BottomModal>
+    </ExpandModal>
     </>
   );
 }
 
 // ─── PressableCard ────────────────────────────────────────────────────────────
 
-function PressableCard({ onPress, children, style }: { onPress?: () => void; children: React.ReactNode; style?: any }) {
+// ─── PressableGradient ────────────────────────────────────────────────────────
+
+function PressableGradient({ colors, onPress, children, style }: { colors: string[]; onPress?: () => void; children: React.ReactNode; style?: any }) {
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   return (
     <Animated.View style={[animStyle, style]}>
       <TouchableOpacity
         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); onPress?.(); }}
-        onPressIn={() => { scale.value = withTiming(0.96, { duration: 100 }); }}
-        onPressOut={() => { scale.value = withTiming(1, { duration: 150 }); }}
+        onPressIn={() => { scale.value = withSpring(0.95, { damping: 15, stiffness: 300 }); }}
+        onPressOut={() => { scale.value = withSpring(1, { damping: 15, stiffness: 300 }); }}
         activeOpacity={1}
       >
-        {children}
+        <LinearGradient colors={colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ borderRadius: 18, padding: 14, minHeight: 95, justifyContent: 'space-between' }}>
+          {children}
+        </LinearGradient>
       </TouchableOpacity>
     </Animated.View>
   );
 }
 
-// ─── BottomModal ──────────────────────────────────────────────────────────────
+// ─── ExpandModal ──────────────────────────────────────────────────────────────
 
-function BottomModal({ visible, onClose, title, subtitle, children }: { visible: boolean; onClose: () => void; title: string; subtitle?: string; children: React.ReactNode }) {
+function ExpandModal({ visible, onClose, title, subtitle, children }: { visible: boolean; onClose: () => void; title: string; subtitle?: string; children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
-  const translateY = useSharedValue(700);
-  const opacity = useSharedValue(0);
-  const [mounted, setMounted] = useState(false);
-  const mountedRef = useRef(false);
+  const progress = useSharedValue(0);
 
   useEffect(() => {
     if (visible) {
-      setMounted(true);
-      mountedRef.current = true;
+      progress.value = withSpring(1, { damping: 18, stiffness: 180 });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else {
+      progress.value = withTiming(0, { duration: 250 });
     }
   }, [visible]);
 
-  useEffect(() => {
-    if (mounted && visible) {
-      opacity.value = withTiming(1, { duration: 200 });
-      translateY.value = withSpring(0, { damping: 22, stiffness: 240 });
-    }
-  }, [mounted]);
+  const overlayStyle = useAnimatedStyle(() => ({ opacity: interpolate(progress.value, [0, 1], [0, 1]) }));
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: interpolate(progress.value, [0, 1], [120, 0]) },
+      { scale: interpolate(progress.value, [0, 1], [0.94, 1]) },
+    ],
+    opacity: interpolate(progress.value, [0, 1], [0, 1]),
+  }));
 
-  useEffect(() => {
-    if (!visible && mountedRef.current) {
-      opacity.value = withTiming(0, { duration: 150 });
-      translateY.value = withTiming(700, { duration: 220 }, () => {
-        runOnJS(setMounted)(false);
-        mountedRef.current = false;
-      });
-    }
-  }, [visible]);
-
-  const overlayStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
-  const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
-
-  if (!mounted) return null;
+  if (!visible) return null;
 
   return (
-    <Modal transparent visible animationType="none" onRequestClose={onClose}>
-      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }, overlayStyle]}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
-        </Animated.View>
-        <Animated.View style={[sheetStyle, {
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          backgroundColor: theme.colors.surface,
-          borderTopLeftRadius: 24, borderTopRightRadius: 24,
-          paddingBottom: insets.bottom + 16,
-          maxHeight: '87%',
-          shadowColor: '#000', shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: 0.12, shadowRadius: 20, elevation: 20,
-        }]}>
-          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: theme.colors.border, alignSelf: 'center', marginTop: 12, marginBottom: 8 }} />
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: subtitle ? 4 : 12 }}>
-            <Text style={{ fontSize: 17, fontWeight: '600', color: theme.colors.textPrimary, flex: 1 }} numberOfLines={1}>{title}</Text>
-            <TouchableOpacity onPress={onClose} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: theme.colors.surfaceHigh, alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
-              <X size={14} color={theme.colors.textSecondary} strokeWidth={2} />
-            </TouchableOpacity>
+    <Modal transparent visible={visible} animationType="none" onRequestClose={onClose}>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }, overlayStyle]}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
+      </Animated.View>
+      <Animated.View style={[sheetStyle, {
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        backgroundColor: theme.colors.surface,
+        borderTopLeftRadius: 28, borderTopRightRadius: 28,
+        paddingBottom: insets.bottom + 20,
+        maxHeight: '88%',
+        shadowColor: '#000', shadowOffset: { width: 0, height: -8 },
+        shadowOpacity: 0.15, shadowRadius: 24, elevation: 24,
+      }]}>
+        <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: theme.colors.border, alignSelf: 'center', marginTop: 12, marginBottom: 4 }} />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 17, fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>{title}</Text>
+            {subtitle && <Text style={{ fontSize: 12, color: theme.colors.textTertiary, marginTop: 2 }}>{subtitle}</Text>}
           </View>
-          {subtitle && (
-            <Text style={{ fontSize: 12, color: theme.colors.textTertiary, paddingHorizontal: 20, marginBottom: 12 }}>{subtitle}</Text>
-          )}
-          {children}
-        </Animated.View>
-      </View>
+          <TouchableOpacity onPress={onClose} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center', marginLeft: 12 }}>
+            <X size={14} color={theme.colors.textSecondary} strokeWidth={2.5} />
+          </TouchableOpacity>
+        </View>
+        {children}
+      </Animated.View>
     </Modal>
   );
 }
@@ -1261,6 +1105,7 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
   const W = screenW - 64;
   const H = 110;
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: number; count: number } | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   if (!chartOrders?.length) return null;
 
@@ -1311,10 +1156,14 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
     );
   }
 
-  const [y, m] = period.split('-').map(Number);
-  const prevY = m === 1 ? y - 1 : y;
-  const prevM = m === 1 ? 12 : m - 1;
+  const [pY, pM] = period.split('-').map(Number);
+  const prevY = pM === 1 ? pY - 1 : pY;
+  const prevM = pM === 1 ? 12 : pM - 1;
   const prevPeriod = `${prevY}-${String(prevM).padStart(2, '0')}`;
+  const monthName = MONTHS[pM - 1];
+  const isCurrentMonth = period === currentMonth();
+  const todayDay = new Date().getDate();
+  const daysInMonth = new Date(pY, pM, 0).getDate();
 
   const currByDay: Record<number, number> = {};
   const prevByDay: Record<number, number> = {};
@@ -1325,79 +1174,179 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
     else if (ym === prevPeriod) prevByDay[day] = (prevByDay[day] || 0) + profit;
   });
 
-  const days = Array.from(new Set([...Object.keys(currByDay), ...Object.keys(prevByDay)]))
-    .map(Number).sort((a, b) => a - b);
-  if (days.length < 2) return null;
+  // Build day-indexed arrays for current+prev month
+  const currentData = Array.from({ length: daysInMonth }, (_, i) => currByDay[i + 1] || 0);
+  const prevData = Array.from({ length: daysInMonth }, (_, i) => prevByDay[i + 1] || 0);
+  if (currentData.every(v => v === 0) && prevData.every(v => v === 0)) return null;
 
-  const maxVal = Math.max(...Object.values(currByDay), ...Object.values(prevByDay), 1);
+  const CHART_H = 120;
+  const LEFT_PAD = 38;
+  const maxVal = Math.max(...currentData, ...prevData, 1);
+  const yTicks = [0, Math.round(maxVal * 0.5 / 100) * 100, Math.round(maxVal / 100) * 100];
 
-  const currPts = days.map((day, i) => ({
-    x: (i / (days.length - 1)) * W,
-    y: H - ((currByDay[day] || 0) / maxVal) * H * 0.85,
+  const toPoints = (data: number[]) => data.map((v, i) => ({
+    x: LEFT_PAD + (i / Math.max(data.length - 1, 1)) * (W - LEFT_PAD - 8),
+    y: 10 + (1 - v / (yTicks[2] || 1)) * (CHART_H - 30),
   }));
-  const prevPts = days.map((day, i) => ({
-    x: (i / (days.length - 1)) * W,
-    y: H - ((prevByDay[day] || 0) / maxVal) * H * 0.85,
-  }));
 
-  const currLine = smoothPath(currPts);
-  const prevLine = smoothPath(prevPts);
-  const currFill = currLine + ` L ${W} ${H} L 0 ${H} Z`;
-  const prevFill = prevLine + ` L ${W} ${H} L 0 ${H} Z`;
+  const curPts = toPoints(currentData);
+  const prvPts = toPoints(prevData);
+
+  const effectiveToday = isCurrentMonth ? todayDay - 1 : daysInMonth - 1;
+
+  const getSegOpacity = (i: number) => {
+    if (hoveredIndex === null) return i <= effectiveToday ? 1 : 0.22;
+    const dist = Math.min(Math.abs(i - hoveredIndex), Math.abs(i - 1 - hoveredIndex));
+    if (dist === 0) return 1;
+    if (dist === 1) return 0.55;
+    if (dist === 2) return 0.28;
+    return 0.08;
+  };
+
+  const getPtOpacity = (i: number) => {
+    if (hoveredIndex === null) return i <= effectiveToday ? 1 : 0.18;
+    const dist = Math.abs(i - hoveredIndex);
+    if (dist === 0) return 1;
+    if (dist === 1) return 0.5;
+    if (dist === 2) return 0.22;
+    return 0.06;
+  };
+
+  const prvPathStr = (() => {
+    if (prvPts.length < 2) return '';
+    let d = `M${prvPts[0].x},${prvPts[0].y}`;
+    for (let i = 1; i < prvPts.length; i++) {
+      const cpx = (prvPts[i - 1].x + prvPts[i].x) / 2;
+      d += ` C${cpx},${prvPts[i - 1].y} ${cpx},${prvPts[i].y} ${prvPts[i].x},${prvPts[i].y}`;
+    }
+    return d;
+  })();
+
+  const segPath = (p1: any, p2: any) => {
+    const cpx = (p1.x + p2.x) / 2;
+    return `M${p1.x},${p1.y} C${cpx},${p1.y} ${cpx},${p2.y} ${p2.x},${p2.y}`;
+  };
+
+  const colW = W / Math.max(curPts.length, 1);
 
   return (
     <View style={cStyles.chartCard}>
-      <Text style={cStyles.header}>Прибыль по периодам</Text>
-      <Text style={cStyles.headerSub}>vs прошлый месяц</Text>
-      <Svg width={W} height={H} style={{ marginBottom: 8 }}>
-        <Defs>
-          <SvgGradient id="fillCurr" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#2563EB" stopOpacity="0.2" />
-            <Stop offset="1" stopColor="#2563EB" stopOpacity="0" />
-          </SvgGradient>
-          <SvgGradient id="fillPrevM" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#EF4444" stopOpacity="0.15" />
-            <Stop offset="1" stopColor="#EF4444" stopOpacity="0" />
-          </SvgGradient>
-        </Defs>
-        <Path d={prevFill} fill="url(#fillPrevM)" />
-        <Path d={currFill} fill="url(#fillCurr)" />
-        <Path d={prevLine} stroke="#EF4444" strokeWidth={2} fill="none" strokeLinecap="round" />
-        <Path d={currLine} stroke="#2563EB" strokeWidth={2.5} fill="none" strokeLinecap="round" />
-        {currPts.map((pt, i) => (
-          <SvgCircle key={`dot${i}`} cx={pt.x} cy={pt.y} r={3.5} fill="#2563EB" />
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <Text style={cStyles.header}>Прибыль по периодам</Text>
+        <Text style={cStyles.headerSub}>vs прошлый месяц</Text>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 14, marginBottom: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+          <View style={{ width: 18, height: 2.5, borderRadius: 2, backgroundColor: '#2563EB' }} />
+          <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>Этот период</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+          <View style={{ width: 18, height: 2.5, borderRadius: 2, backgroundColor: '#f87171' }} />
+          <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>Прошлый</Text>
+        </View>
+      </View>
+
+      <View style={{ position: 'relative' }}>
+        <Svg width={W} height={CHART_H} style={{ overflow: 'visible' }}>
+          {/* Y-grid */}
+          {yTicks.map((tick, ti) => {
+            const ty = 10 + (1 - tick / (yTicks[2] || 1)) * (CHART_H - 30);
+            return (
+              <React.Fragment key={ti}>
+                <SvgLine x1={LEFT_PAD} y1={ty} x2={W - 4} y2={ty} stroke={theme.colors.border} strokeWidth={0.5} strokeDasharray="3,4" />
+                <SvgText x={LEFT_PAD - 4} y={ty + 3.5} fontSize={9} fill={theme.colors.textTertiary} textAnchor="end">
+                  {tick >= 1000 ? `${(tick / 1000).toFixed(0)}K` : String(tick)}
+                </SvgText>
+              </React.Fragment>
+            );
+          })}
+
+          {/* Previous period line */}
+          <Path d={prvPathStr} stroke="#f87171" strokeWidth={1.8} fill="none" strokeLinecap="round" opacity={hoveredIndex !== null ? 0.12 : 0.45} />
+
+          {/* Current period segments (spotlight opacity) */}
+          {curPts.map((pt, i) => {
+            if (i === 0) return null;
+            return <Path key={i} d={segPath(curPts[i - 1], pt)} stroke="#2563EB" strokeWidth={2.5} fill="none" strokeLinecap="round" opacity={getSegOpacity(i)} />;
+          })}
+
+          {/* Vertical cursor line */}
+          {hoveredIndex !== null && curPts[hoveredIndex] && (
+            <SvgLine x1={curPts[hoveredIndex].x} y1={10} x2={curPts[hoveredIndex].x} y2={CHART_H - 20} stroke="#2563EB" strokeWidth={1} strokeDasharray="3,3" opacity={0.4} />
+          )}
+
+          {/* Points */}
+          {curPts.map((pt, i) => {
+            const isToday = isCurrentMonth && i + 1 === todayDay;
+            const isHov = hoveredIndex === i;
+            const op = getPtOpacity(i);
+            return (
+              <React.Fragment key={i}>
+                {isToday && hoveredIndex === null && (
+                  <>
+                    <SvgCircle cx={pt.x} cy={pt.y} r={10} fill="#2563EB" opacity={0.08} />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={5} fill="#2563EB" opacity={0.9} />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={2.5} fill="#fff" />
+                    <SvgText x={pt.x} y={CHART_H - 2} fontSize={8} fill="#2563EB" textAnchor="middle" fontWeight="600">Сег.</SvgText>
+                  </>
+                )}
+                {isHov && (
+                  <>
+                    <SvgCircle cx={pt.x} cy={pt.y} r={14} fill="#2563EB" opacity={0.08} />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={8} fill="#2563EB" opacity={0.15} />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={5} fill="#2563EB" />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={2.5} fill="#fff" />
+                  </>
+                )}
+                {!isToday && !isHov && op > 0.1 && (
+                  <SvgCircle cx={pt.x} cy={pt.y} r={2.5} fill="#2563EB" opacity={op} />
+                )}
+                {/* Hit area */}
+                <SvgRect
+                  x={pt.x - colW / 2}
+                  y={0}
+                  width={colW}
+                  height={CHART_H}
+                  fill="transparent"
+                  onPressIn={() => {
+                    setHoveredIndex(i);
+                    setTooltip({ x: pt.x, y: pt.y, label: `${i + 1} ${monthName}`, value: currentData[i], count: 0 });
+                    if (Haptics.selectionAsync) Haptics.selectionAsync();
+                    else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  onPressOut={() => {
+                    setHoveredIndex(null);
+                    setTooltip(null);
+                    onDayPress?.(`${period}-${String(i + 1).padStart(2, '0')}`);
+                  }}
+                  {...(Platform.OS === 'web' ? {
+                    onMouseEnter: () => { setHoveredIndex(i); setTooltip({ x: pt.x, y: pt.y, label: `${i + 1} ${monthName}`, value: currentData[i], count: 0 }); },
+                    onMouseLeave: () => { setHoveredIndex(null); setTooltip(null); },
+                  } : {})}
+                />
+              </React.Fragment>
+            );
+          })}
+        </Svg>
+
+        {/* Tooltip */}
+        {tooltip && (
+          <View style={{ position: 'absolute', left: Math.max(4, Math.min(tooltip.x - 52, W - 110)), top: tooltip.y - 62, backgroundColor: '#1a1a2e', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, zIndex: 10 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, marginBottom: 2 }}>{tooltip.label}</Text>
+            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{tooltip.value.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br</Text>
+          </View>
+        )}
+      </View>
+
+      {/* X-axis labels */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, paddingLeft: LEFT_PAD, paddingRight: 4 }}>
+        {currentData.map((_, i) => (
+          i % Math.ceil(currentData.length / 8) === 0 ? (
+            <Text key={i} style={{ fontSize: 9, color: hoveredIndex === i ? theme.colors.accent : theme.colors.textTertiary, fontWeight: hoveredIndex === i ? '600' : '400' }}>
+              {i + 1}
+            </Text>
+          ) : <View key={i} />
         ))}
-        {days.map((day, i) => (
-          <SvgRect
-            key={`tap${i}`}
-            x={currPts[i].x - 22}
-            y={0}
-            width={44}
-            height={H}
-            fill="transparent"
-            onPress={() => onDayPress?.(`${period}-${String(day).padStart(2, '0')}`)}
-            {...(Platform.OS === 'web' ? {
-              onMouseEnter: () => setTooltip({ x: currPts[i].x, y: currPts[i].y, label: `${day} ${MONTHS[parseInt(period.split('-')[1], 10) - 1]}`, value: currByDay[day] || 0, count: 0 }),
-              onMouseLeave: () => setTooltip(null),
-            } : {})}
-          />
-        ))}
-      </Svg>
-      {tooltip && Platform.OS === 'web' && (
-        <View style={{ position: 'absolute', left: tooltip.x - 56, top: tooltip.y - 68, backgroundColor: '#1a1a2e', borderRadius: 10, padding: 10, zIndex: 10, minWidth: 112, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8 }}>
-          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10 }}>{tooltip.label}</Text>
-          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', marginTop: 2 }}>{tooltip.value.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br</Text>
-        </View>
-      )}
-      <View style={{ flexDirection: 'row', gap: 16 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 24, height: 3, borderRadius: 2, backgroundColor: '#2563EB' }} />
-          <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Этот месяц</Text>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 24, height: 3, borderRadius: 2, backgroundColor: '#EF4444' }} />
-          <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Прошлый месяц</Text>
-        </View>
       </View>
     </View>
   );
@@ -1407,7 +1356,7 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
 
 function ManagerView({ leads, activityStats, managers, setManagers, isAdmin, currentUserId }: {
   leads: any[]; activityStats: any[];
-  managers: any[]; setManagers: (v: any[]) => void;
+  managers: any[]; setManagers: React.Dispatch<React.SetStateAction<any[]>>;
   isAdmin: boolean; currentUserId: string;
 }) {
   const router = useRouter();
