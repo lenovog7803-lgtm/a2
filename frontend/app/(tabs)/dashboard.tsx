@@ -1,5 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Switch, useWindowDimensions, Modal, TextInput, Platform } from 'react-native';
+import Animated, { useAnimatedStyle, withTiming, withSpring, useSharedValue, interpolate, runOnJS } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Defs, LinearGradient as SvgGradient, Stop, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -84,6 +86,22 @@ export default function Dashboard() {
   const [showAllTopClients, setShowAllTopClients] = useState(false);
   const [showAllTopMargin, setShowAllTopMargin] = useState(false);
   const [periodOpen, setPeriodOpen] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const searchInputRef = useRef<any>(null);
+  const searchExpanded = useSharedValue(0);
+  const searchStyle = useAnimatedStyle(() => ({
+    width: interpolate(searchExpanded.value, [0, 1], [120, 220]),
+  }));
+  const tabsStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(searchExpanded.value, [0, 1], [1, 0]),
+    width: interpolate(searchExpanded.value, [0, 1], [148, 0]),
+    overflow: 'hidden' as any,
+  }));
+  const extraBtnsStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(searchExpanded.value, [0, 1], [1, 0]),
+    width: interpolate(searchExpanded.value, [0, 1], [68, 0]),
+    overflow: 'hidden' as any,
+  }));
   const [dayModalDate, setDayModalDate] = useState<string | null>(null);
   const [dayModalData, setDayModalData] = useState<any>(null);
   const [dayModalLoading, setDayModalLoading] = useState(false);
@@ -262,60 +280,100 @@ export default function Dashboard() {
       testID="dashboard-screen"
       style={{ flex: 1, backgroundColor: theme.colors.bg }}
       contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(period); }} tintColor={theme.colors.accent} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => {
+        setRefreshing(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        load(period);
+      }} tintColor={theme.colors.accent} colors={[theme.colors.accent]} />}
     >
       <View style={{ paddingHorizontal: 16 }}>
-        {/* === HEADER === */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: insets.top + 8, paddingBottom: 12 }}>
+        {/* === HEADER: search + tabs + period in one row === */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: insets.top + 8, paddingBottom: 12 }}>
+
+          {/* Animated search */}
+          <Animated.View style={[searchStyle, {
+            flexDirection: 'row', alignItems: 'center', gap: 7,
+            backgroundColor: theme.colors.surface,
+            borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8,
+            borderWidth: 0.5, borderColor: isSearchFocused ? theme.colors.accent : theme.colors.border,
+          }]}>
+            <Search size={13} color={isSearchFocused ? theme.colors.accent : theme.colors.textTertiary} strokeWidth={1.5} />
+            <TextInput
+              ref={searchInputRef}
+              placeholder="Поиск..."
+              placeholderTextColor={theme.colors.textTertiary}
+              style={{ fontSize: 12, color: theme.colors.textPrimary, flex: 1, padding: 0 }}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onFocus={() => {
+                setIsSearchFocused(true);
+                searchExpanded.value = withSpring(1, { damping: 20, stiffness: 220 });
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              onBlur={() => {
+                setIsSearchFocused(false);
+                if (!searchQuery) {
+                  searchExpanded.value = withTiming(0, { duration: 250 });
+                }
+              }}
+            />
+            {isSearchFocused && (
+              <TouchableOpacity onPress={() => {
+                setSearchQuery('');
+                setIsSearchFocused(false);
+                searchExpanded.value = withTiming(0, { duration: 250 });
+                searchInputRef.current?.blur();
+              }}>
+                <X size={12} color={theme.colors.textTertiary} strokeWidth={2} />
+              </TouchableOpacity>
+            )}
+          </Animated.View>
+
+          {/* Animated tab switcher — hides when search focused */}
+          <Animated.View style={tabsStyle}>
+            <View style={{ flexDirection: 'row', backgroundColor: theme.colors.surface, borderRadius: 10, padding: 2, borderWidth: 0.5, borderColor: theme.colors.border }}>
+              {([
+                { key: 'dashboard' as const, label: 'Обзор' },
+                { key: 'manager' as const, label: 'Команда' },
+                { key: 'analytics' as const, label: 'Цели' },
+              ]).map((tab) => (
+                <TouchableOpacity
+                  key={tab.key}
+                  onPress={() => {
+                    setDashView(tab.key);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, backgroundColor: dashView === tab.key ? theme.colors.accent : 'transparent' }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: dashView === tab.key ? '600' : '400', color: dashView === tab.key ? '#FFFFFF' : theme.colors.textSecondary }}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Animated.View>
+
+          {/* Period */}
           <TouchableOpacity
-            onPress={() => { setSearchQuery(''); setSearchVisible(true); }}
+            onPress={() => { setPeriodOpen(v => !v); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
             activeOpacity={0.9}
-            testID="search-btn"
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: theme.colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0.5, borderColor: theme.colors.border, width: 160 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.colors.surface, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 8, borderWidth: 0.5, borderColor: theme.colors.border }}
           >
-            <Search size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
-            <Text style={{ fontSize: 12, color: theme.colors.textTertiary }}>Поиск...</Text>
+            <Calendar size={11} color={theme.colors.textTertiary} strokeWidth={1.5} />
+            <Text style={{ fontSize: 11, color: theme.colors.textPrimary }}>{selectedPeriodLabel}</Text>
+            <ChevronDown size={11} color={theme.colors.textTertiary} strokeWidth={1.5} />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={() => setPeriodOpen(v => !v)}
-            activeOpacity={0.9}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: theme.colors.surface, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 0.5, borderColor: theme.colors.border }}
-          >
-            <Calendar size={12} color={theme.colors.textTertiary} strokeWidth={1.5} />
-            <Text style={{ fontSize: 12, color: theme.colors.textPrimary }}>{selectedPeriodLabel}</Text>
-            <ChevronDown size={12} color={theme.colors.textTertiary} strokeWidth={1.5} />
-          </TouchableOpacity>
-
-          <View style={{ flex: 1 }} />
-
-          <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="theme-toggle">
-            {mode === 'dark' ? <Sun size={14} color={theme.colors.accent} strokeWidth={1.5} /> : <Moon size={14} color={theme.colors.textSecondary} strokeWidth={1.5} />}
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => logout(router)} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="logout-btn">
-            <LogOut size={14} color={theme.colors.loss} strokeWidth={1.5} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Mode toggle — accent pills */}
-        <View style={{ flexDirection: 'row', backgroundColor: theme.colors.surface, borderRadius: 12, padding: 3, marginBottom: 12, borderWidth: 0.5, borderColor: theme.colors.border }}>
-          {([
-            { key: 'dashboard', label: 'Дашборд' },
-            { key: 'manager', label: 'Менеджер' },
-            { key: 'analytics', label: 'Цели' },
-          ] as const).map((tab) => (
-            <TouchableOpacity
-              key={tab.key}
-              onPress={() => setDashView(tab.key)}
-              style={{ flex: 1, paddingVertical: 7, borderRadius: 10, alignItems: 'center', backgroundColor: dashView === tab.key ? theme.colors.accent : 'transparent' }}
-              activeOpacity={0.7}
-            >
-              <Text style={{ fontSize: 12, fontWeight: dashView === tab.key ? '600' : '400', color: dashView === tab.key ? '#FFFFFF' : theme.colors.textSecondary }}>
-                {tab.label}
-              </Text>
+          {/* Theme + logout — hidden when search expanded */}
+          <Animated.View style={[extraBtnsStyle, { flexDirection: 'row', gap: 6 }]}>
+            <TouchableOpacity onPress={() => toggleTheme()} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="theme-toggle">
+              {mode === 'dark' ? <Sun size={13} color={theme.colors.accent} strokeWidth={1.5} /> : <Moon size={13} color={theme.colors.textSecondary} strokeWidth={1.5} />}
             </TouchableOpacity>
-          ))}
+            <TouchableOpacity onPress={() => logout(router)} activeOpacity={0.8} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} testID="logout-btn">
+              <LogOut size={13} color={theme.colors.loss} strokeWidth={1.5} />
+            </TouchableOpacity>
+          </Animated.View>
         </View>
 
         {dashView === 'dashboard' ? (<>
@@ -363,11 +421,11 @@ export default function Dashboard() {
               <View style={{ flex: 1, gap: 10 }}>
 
                 {/* Orange: awaiting from clients */}
-                <TouchableOpacity onPress={() => setShowClientDebtors(true)} activeOpacity={0.85} style={{ flex: 1 }}>
+                <PressableCard onPress={() => setShowClientDebtors(true)} style={{ flex: 1 }}>
                   <LinearGradient
                     colors={['#f8c4b0', '#f4a896', '#f0b8b0', '#f8d0c0']}
                     start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                    style={{ borderRadius: 18, padding: 14, flex: 1, justifyContent: 'space-between', minHeight: 95 }}
+                    style={{ borderRadius: 18, padding: 14, justifyContent: 'space-between', minHeight: 95 }}
                   >
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Ожидается</Text>
@@ -382,14 +440,14 @@ export default function Dashboard() {
                       <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{clientDebtors.length} должников</Text>
                     </View>
                   </LinearGradient>
-                </TouchableOpacity>
+                </PressableCard>
 
                 {/* Blue: to pay carriers */}
-                <TouchableOpacity onPress={() => setShowCarrierDebtors(true)} activeOpacity={0.85} style={{ flex: 1 }}>
+                <PressableCard onPress={() => setShowCarrierDebtors(true)} style={{ flex: 1 }}>
                   <LinearGradient
                     colors={['#a8d8f8', '#90c8f4', '#b0d8f8', '#c8e8ff']}
                     start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                    style={{ borderRadius: 18, padding: 14, flex: 1, justifyContent: 'space-between', minHeight: 95 }}
+                    style={{ borderRadius: 18, padding: 14, justifyContent: 'space-between', minHeight: 95 }}
                   >
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>К оплате</Text>
@@ -404,7 +462,7 @@ export default function Dashboard() {
                       <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{carrierDebtors.length} перевозч.</Text>
                     </View>
                   </LinearGradient>
-                </TouchableOpacity>
+                </PressableCard>
 
                 {/* Stats chips */}
                 <View style={{ borderRadius: 18, padding: 11, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, flexDirection: 'row' }}>
@@ -507,6 +565,63 @@ export default function Dashboard() {
       </View>
     </ScrollView>
 
+    {/* Inline search results overlay */}
+    {isSearchFocused && searchQuery.length >= 2 && (
+      <View style={{ position: 'absolute', top: insets.top + 58, left: 16, right: 16, zIndex: 300, backgroundColor: theme.colors.surface, borderRadius: 16, borderWidth: 0.5, borderColor: theme.colors.border, maxHeight: 360, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 12, overflow: 'hidden' }}>
+        {searchLoading ? (
+          <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 24 }} />
+        ) : searchResults ? (
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
+            {searchResults.orders?.length > 0 && (
+              <>
+                <Text style={[styles.sectionLabel, { paddingHorizontal: 16, paddingTop: 14 }]}>ЗАЯВКИ</Text>
+                {searchResults.orders.slice(0, 5).map((o: any) => (
+                  <TouchableOpacity key={o.id} onPress={() => { setSearchVisible(false); setSearchQuery(''); searchExpanded.value = withTiming(0); searchInputRef.current?.blur(); router.push(`/order/${o.id}` as any); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.accent }}>{o.order_number}</Text>
+                      <Text style={{ fontSize: 11, color: theme.colors.textTertiary }} numberOfLines={1}>{o.client_name}</Text>
+                    </View>
+                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+            {searchResults.clients?.length > 0 && (
+              <>
+                <Text style={[styles.sectionLabel, { paddingHorizontal: 16, paddingTop: 10 }]}>КЛИЕНТЫ</Text>
+                {searchResults.clients.slice(0, 3).map((c: any) => (
+                  <TouchableOpacity key={c.id} onPress={() => { setSearchQuery(''); searchExpanded.value = withTiming(0); searchInputRef.current?.blur(); router.push(`/client/${c.id}` as any); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+                    <Text style={{ flex: 1, fontSize: 13, color: theme.colors.textPrimary }} numberOfLines={1}>{c.company_name || c.name}</Text>
+                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+            {searchResults.leads?.length > 0 && (
+              <>
+                <Text style={[styles.sectionLabel, { paddingHorizontal: 16, paddingTop: 10 }]}>ЛИДЫ</Text>
+                {searchResults.leads.slice(0, 3).map((l: any) => (
+                  <TouchableOpacity key={l.id} onPress={() => { setSearchQuery(''); searchExpanded.value = withTiming(0); searchInputRef.current?.blur(); router.push(`/lead/${l.id}` as any); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, color: theme.colors.textPrimary }} numberOfLines={1}>{l.name}</Text>
+                      <Text style={{ fontSize: 11, color: theme.colors.textTertiary }} numberOfLines={1}>{l.company}</Text>
+                    </View>
+                    <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+            {!searchResults.orders?.length && !searchResults.clients?.length && !searchResults.leads?.length && (
+              <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 24, fontSize: 13 }}>Ничего не найдено</Text>
+            )}
+          </ScrollView>
+        ) : null}
+      </View>
+    )}
+
     {/* Period dropdown — rendered outside ScrollView to avoid clipping */}
     {periodOpen && (
       <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setPeriodOpen(false)} activeOpacity={1} />
@@ -528,16 +643,8 @@ export default function Dashboard() {
     )}
 
     {/* Global search modal */}
-    <Modal visible={searchVisible} transparent animationType="slide" onRequestClose={() => setSearchVisible(false)}>
-      <View style={styles.modalOverlay}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSearchVisible(false)} />
-        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24), maxHeight: '85%' }]}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Поиск</Text>
-            <TouchableOpacity onPress={() => setSearchVisible(false)} style={{ padding: 4 }}>
-              <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
-            </TouchableOpacity>
-          </View>
+    <BottomModal visible={searchVisible} onClose={() => setSearchVisible(false)} title="Поиск">
+      <View style={{ paddingHorizontal: 20, paddingBottom: 4 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 14 }}>
             <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
             <TextInput
@@ -553,7 +660,7 @@ export default function Dashboard() {
           {searchLoading ? (
             <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 24 }} />
           ) : searchResults ? (
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
               {searchResults.orders?.length > 0 && (
                 <>
                   <Text style={styles.sectionLabel}>ЗАЯВКИ</Text>
@@ -634,384 +741,399 @@ export default function Dashboard() {
             <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 24, fontSize: 13 }}>Введите минимум 2 символа</Text>
           ) : null}
         </View>
-      </View>
-    </Modal>
+    </BottomModal>
 
-    {/* Debtor orders modal */}
-    <Modal
+    {/* Debtor orders modal (selectedDebtor) */}
+    <BottomModal
       visible={!!selectedDebtor}
-      transparent
-      animationType="slide"
-      onRequestClose={() => setSelectedDebtor(null)}
+      onClose={() => setSelectedDebtor(null)}
+      title={selectedDebtor?.name || ''}
+      subtitle={selectedDebtor?.isCreditor ? 'Заявки с долгом перевозчику' : 'Заявки с долгом клиента'}
     >
-      <View style={styles.modalOverlay}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setSelectedDebtor(null)} />
-        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
-          <View style={styles.modalHeader}>
+      <ScrollView style={{ maxHeight: 400, paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
+        {selectedDebtor && (
+          selectedDebtor.isCreditor
+            ? allOrders.filter(o => o.carrier_name === selectedDebtor.name && !o.carrier_paid && o.status !== 'cancelled')
+            : allOrders.filter(o => o.client_name === selectedDebtor.name && !o.client_paid && o.status === 'delivered')
+        ).map((o, i, arr) => (
+          <TouchableOpacity
+            key={o.id}
+            style={[styles.modalOrderRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}
+            activeOpacity={0.7}
+            onPress={() => { setSelectedDebtor(null); router.push(`/order/${o.id}`); }}
+          >
             <View style={{ flex: 1 }}>
-              <Text style={styles.modalTitle} numberOfLines={1}>{selectedDebtor?.name}</Text>
-              <Text style={styles.modalSub}>
-                {selectedDebtor?.isCreditor ? 'Заявки с долгом перевозчику' : 'Заявки с долгом клиента'}
-              </Text>
+              <Text style={styles.modalOrderNum}>{o.order_number}</Text>
+              <Text style={styles.modalOrderRoute} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
+              <Text style={styles.modalOrderDate}>{o.unload_date || '—'}</Text>
             </View>
-            <TouchableOpacity onPress={() => setSelectedDebtor(null)} style={{ padding: 4 }}>
-              <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
-            {selectedDebtor && (
-              selectedDebtor.isCreditor
-                ? allOrders.filter(o => o.carrier_name === selectedDebtor.name && !o.carrier_paid && o.status !== 'cancelled')
-                : allOrders.filter(o => o.client_name === selectedDebtor.name && !o.client_paid && o.status === 'delivered')
-            ).map((o, i, arr) => (
-              <TouchableOpacity
-                key={o.id}
-                style={[styles.modalOrderRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}
-                activeOpacity={0.7}
-                onPress={() => { setSelectedDebtor(null); router.push(`/order/${o.id}`); }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.modalOrderNum}>{o.order_number}</Text>
-                  <Text style={styles.modalOrderRoute} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
-                  <Text style={styles.modalOrderDate}>{o.unload_date || '—'}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                  <Text style={[styles.modalOrderAmt, { color: selectedDebtor.isCreditor ? theme.colors.loss : theme.colors.warning }]}>
-                    {formatMoney(selectedDebtor.isCreditor ? o.carrier_rate : o.client_rate)}
-                  </Text>
-                  <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
+            <View style={{ alignItems: 'flex-end', gap: 4 }}>
+              <Text style={[styles.modalOrderAmt, { color: selectedDebtor.isCreditor ? theme.colors.loss : theme.colors.warning }]}>
+                {formatMoney(selectedDebtor.isCreditor ? o.carrier_rate : o.client_rate)}
+              </Text>
+              <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
+            </View>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </BottomModal>
 
     {/* Team stats modal */}
-    <Modal visible={!!teamStatsUser} transparent animationType="slide" onRequestClose={() => setTeamStatsUser(null)}>
-      <View style={styles.modalOverlay}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setTeamStatsUser(null)} />
-        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 24), maxHeight: '90%' }]}>
-          <View style={styles.modalHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.modalTitle}>{teamStatsUser?.name}</Text>
-              <Text style={styles.modalSub}>{teamStatsUser?.role === 'admin' ? 'Администратор' : teamStatsUser?.role === 'director' ? 'Директор' : 'Менеджер'}</Text>
-            </View>
-            <TouchableOpacity onPress={() => setTeamStatsUser(null)} style={{ padding: 4 }}>
-              <X size={20} color={theme.colors.textSecondary} strokeWidth={1.6} />
-            </TouchableOpacity>
-          </View>
-          {/* Month picker */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }} contentContainerStyle={{ gap: 8, paddingBottom: 2 }}>
-            {Array.from({ length: 6 }, (_, i) => {
-              const d = new Date();
-              d.setDate(1);
-              d.setMonth(d.getMonth() - i);
-              const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-              const lbl = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-              const active = ym === teamStatsPeriod;
-              return (
-                <TouchableOpacity key={ym} onPress={() => setTeamStatsPeriod(ym)} activeOpacity={0.7}
-                  style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: active ? theme.colors.accent : theme.colors.surfaceElevated, borderWidth: 1, borderColor: active ? theme.colors.accent : theme.colors.border }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: active ? theme.colors.bg : theme.colors.textSecondary }}>{lbl}</Text>
-                </TouchableOpacity>
-              );
-            })}
+    <BottomModal
+      visible={!!teamStatsUser}
+      onClose={() => setTeamStatsUser(null)}
+      title={teamStatsUser?.name || ''}
+      subtitle={teamStatsUser?.role === 'admin' ? 'Администратор' : teamStatsUser?.role === 'director' ? 'Директор' : 'Менеджер'}
+    >
+      <View style={{ paddingHorizontal: 20 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }} contentContainerStyle={{ gap: 8, paddingBottom: 2 }}>
+          {Array.from({ length: 6 }, (_, i) => {
+            const d = new Date();
+            d.setDate(1);
+            d.setMonth(d.getMonth() - i);
+            const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            const lbl = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+            const active = ym === teamStatsPeriod;
+            return (
+              <TouchableOpacity key={ym} onPress={() => setTeamStatsPeriod(ym)} activeOpacity={0.7}
+                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: active ? theme.colors.accent : theme.colors.surfaceElevated, borderWidth: 1, borderColor: active ? theme.colors.accent : theme.colors.border }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: active ? theme.colors.bg : theme.colors.textSecondary }}>{lbl}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        {teamStatsLoading ? (
+          <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
+        ) : (
+          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 460 }}>
+            {teamStatsData ? (
+              <>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 12 }}>
+                  {[
+                    { label: 'ЗАЯВКИ', value: teamStatsData.orders_created ?? '—', color: theme.colors.accent },
+                    { label: 'ЗВОНКИ', value: teamStatsData.calls_made ?? '—', color: theme.colors.info },
+                    { label: 'ЛИДЫ', value: teamStatsData.total_leads ?? '—', color: theme.colors.info },
+                    { label: 'КОНВЕРСИЯ', value: `${teamStatsData.conversion ?? 0}%`, color: theme.colors.profit },
+                    { label: 'ВЫРУЧКА', value: formatMoney(teamStatsData.revenue_month ?? 0), color: theme.colors.accent },
+                  ].map(card => (
+                    <View key={card.label} style={{ flex: 1, minWidth: '40%', backgroundColor: theme.colors.surfaceElevated, borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 }}>{card.label}</Text>
+                      <Text style={{ fontSize: 20, fontWeight: '700', color: card.color }}>{card.value}</Text>
+                    </View>
+                  ))}
+                </View>
+                {teamStatsOrders.length > 0 && (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 8 }]}>ЗАЯВКИ ЗА МЕСЯЦ</Text>
+                    <View style={styles.listCard}>
+                      {teamStatsOrders.map((o: any, i: number) => (
+                        <TouchableOpacity key={o.id} activeOpacity={0.7}
+                          onPress={() => { setTeamStatsUser(null); router.push(`/order/${o.id}` as any); }}
+                          style={[styles.modalOrderRow, i === teamStatsOrders.length - 1 && { borderBottomWidth: 0 }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.modalOrderNum}>{o.order_number}</Text>
+                            <Text style={styles.modalOrderRoute} numberOfLines={1}>{o.client_name}</Text>
+                            <Text style={styles.modalOrderDate} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
+                          </View>
+                          <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                            <Text style={[styles.modalOrderAmt, { color: theme.colors.accent }]}>{formatMoney(o.client_rate)}</Text>
+                            <Text style={{ fontSize: 10, color: theme.colors.textTertiary }}>{ORDER_STATUS_LABELS[o.status] || o.status}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+                {teamStatsLeads.length > 0 && (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 8 }]}>ЛИДЫ</Text>
+                    <View style={styles.listCard}>
+                      {teamStatsLeads.map((l: any, i: number) => (
+                        <TouchableOpacity key={l.id} activeOpacity={0.7}
+                          onPress={() => { setTeamStatsUser(null); router.push(`/lead/${l.id}` as any); }}
+                          style={[styles.debtRow, i === teamStatsLeads.length - 1 && { borderBottomWidth: 0 }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.debtName} numberOfLines={1}>{l.name}</Text>
+                            {!!l.company && <Text style={styles.debtMeta} numberOfLines={1}>{l.company}</Text>}
+                            {!!l.last_contact && <Text style={styles.debtMeta}>{l.last_contact}</Text>}
+                          </View>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: leadStatusColors[l.status] || theme.colors.textTertiary }}>
+                            {leadStatusLabels[l.status] || l.status}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+              </>
+            ) : (
+              <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
+            )}
           </ScrollView>
-          {teamStatsLoading ? (
-            <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
-          ) : (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {teamStatsData ? (
-                <>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 12 }}>
-                    {[
-                      { label: 'ЗАЯВКИ', value: teamStatsData.orders_created ?? '—', color: theme.colors.accent },
-                      { label: 'ЗВОНКИ', value: teamStatsData.calls_made ?? '—', color: theme.colors.info },
-                      { label: 'ЛИДЫ', value: teamStatsData.total_leads ?? '—', color: theme.colors.info },
-                      { label: 'КОНВЕРСИЯ', value: `${teamStatsData.conversion ?? 0}%`, color: theme.colors.profit },
-                      { label: 'ВЫРУЧКА', value: formatMoney(teamStatsData.revenue_month ?? 0), color: theme.colors.accent },
-                    ].map(card => (
-                      <View key={card.label} style={{ flex: 1, minWidth: '40%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-                        <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6 }}>{card.label}</Text>
-                        <Text style={{ fontSize: 20, fontWeight: '700', color: card.color }}>{card.value}</Text>
-                      </View>
-                    ))}
-                  </View>
-                  {teamStatsOrders.length > 0 && (
-                    <>
-                      <Text style={[styles.sectionLabel, { marginTop: 8 }]}>ЗАЯВКИ ЗА МЕСЯЦ</Text>
-                      <View style={styles.listCard}>
-                        {teamStatsOrders.map((o: any, i: number) => (
-                          <TouchableOpacity key={o.id} activeOpacity={0.7}
-                            onPress={() => { setTeamStatsUser(null); router.push(`/order/${o.id}` as any); }}
-                            style={[styles.modalOrderRow, i === teamStatsOrders.length - 1 && { borderBottomWidth: 0 }]}>
-                            <View style={{ flex: 1 }}>
-                              <Text style={styles.modalOrderNum}>{o.order_number}</Text>
-                              <Text style={styles.modalOrderRoute} numberOfLines={1}>{o.client_name}</Text>
-                              <Text style={styles.modalOrderDate} numberOfLines={1}>{o.route_from} → {o.route_to}</Text>
-                            </View>
-                            <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                              <Text style={[styles.modalOrderAmt, { color: theme.colors.accent }]}>{formatMoney(o.client_rate)}</Text>
-                              <Text style={{ fontSize: 10, color: theme.colors.textTertiary }}>{ORDER_STATUS_LABELS[o.status] || o.status}</Text>
-                            </View>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </>
-                  )}
-                  {teamStatsLeads.length > 0 && (
-                    <>
-                      <Text style={[styles.sectionLabel, { marginTop: 8 }]}>ЛИДЫ</Text>
-                      <View style={styles.listCard}>
-                        {teamStatsLeads.map((l: any, i: number) => (
-                          <TouchableOpacity key={l.id} activeOpacity={0.7}
-                            onPress={() => { setTeamStatsUser(null); router.push(`/lead/${l.id}` as any); }}
-                            style={[styles.debtRow, i === teamStatsLeads.length - 1 && { borderBottomWidth: 0 }]}>
-                            <View style={{ flex: 1 }}>
-                              <Text style={styles.debtName} numberOfLines={1}>{l.name}</Text>
-                              {!!l.company && <Text style={styles.debtMeta} numberOfLines={1}>{l.company}</Text>}
-                              {!!l.last_contact && <Text style={styles.debtMeta}>{l.last_contact}</Text>}
-                            </View>
-                            <Text style={{ fontSize: 11, fontWeight: '600', color: leadStatusColors[l.status] || theme.colors.textTertiary }}>
-                              {leadStatusLabels[l.status] || l.status}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </>
-                  )}
-                </>
-              ) : (
-                <Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет данных</Text>
-              )}
-            </ScrollView>
-          )}
-        </View>
+        )}
       </View>
-    </Modal>
+    </BottomModal>
 
     {/* Client debtors modal */}
-    <Modal visible={showClientDebtors} transparent animationType="slide" onRequestClose={() => setShowClientDebtors(false)}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: theme.colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '80%' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: theme.colors.textPrimary }}>Должники — клиенты</Text>
-            <TouchableOpacity onPress={() => setShowClientDebtors(false)}>
-              <X size={22} color={theme.colors.textTertiary} strokeWidth={2} />
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={clientDebtors}
-            keyExtractor={(item) => item.name}
-            renderItem={({ item }: any) => (
-              <TouchableOpacity
-                onPress={() => setDebtorOrdersDebtor({ name: item.name, isCreditor: false })}
-                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }}>{item.name}</Text>
-                  <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.count} заявок · тап для просмотра</Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#FF9500' }}>{(item.debt || 0).toLocaleString()} Br</Text>
-                  <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
-                </View>
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </View>
-    </Modal>
+    <BottomModal visible={showClientDebtors} onClose={() => setShowClientDebtors(false)} title="Должники — клиенты">
+      <FlatList
+        data={clientDebtors}
+        keyExtractor={(item) => item.name}
+        scrollEnabled={false}
+        contentContainerStyle={{ paddingHorizontal: 20 }}
+        renderItem={({ item }: any) => (
+          <TouchableOpacity
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setDebtorOrdersDebtor({ name: item.name, isCreditor: false }); }}
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }}>{item.name}</Text>
+              <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.count} заявок</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#FF9500' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+              <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
+            </View>
+          </TouchableOpacity>
+        )}
+      />
+    </BottomModal>
 
     {/* Carrier debtors modal */}
-    <Modal visible={showCarrierDebtors} transparent animationType="slide" onRequestClose={() => setShowCarrierDebtors(false)}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: theme.colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '80%' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: theme.colors.textPrimary }}>К оплате — перевозчики</Text>
-            <TouchableOpacity onPress={() => setShowCarrierDebtors(false)}>
-              <X size={22} color={theme.colors.textTertiary} strokeWidth={2} />
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={carrierDebtors}
-            keyExtractor={(item) => item.name}
-            renderItem={({ item }: any) => (
-              <TouchableOpacity
-                onPress={() => setDebtorOrdersDebtor({ name: item.name, isCreditor: true })}
-                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }}>{item.name}</Text>
-                  <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.count} заявок · тап для просмотра</Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#AF52DE' }}>{(item.debt || 0).toLocaleString()} Br</Text>
-                  <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
-                </View>
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </View>
-    </Modal>
+    <BottomModal visible={showCarrierDebtors} onClose={() => setShowCarrierDebtors(false)} title="К оплате — перевозчики">
+      <FlatList
+        data={carrierDebtors}
+        keyExtractor={(item) => item.name}
+        scrollEnabled={false}
+        contentContainerStyle={{ paddingHorizontal: 20 }}
+        renderItem={({ item }: any) => (
+          <TouchableOpacity
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setDebtorOrdersDebtor({ name: item.name, isCreditor: true }); }}
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }}>{item.name}</Text>
+              <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.count} заявок</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#AF52DE' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+              <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
+            </View>
+          </TouchableOpacity>
+        )}
+      />
+    </BottomModal>
 
-    {/* Debtor orders nested modal (task 3) */}
-    <Modal visible={!!debtorOrdersDebtor} transparent animationType="slide" onRequestClose={() => setDebtorOrdersDebtor(null)}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: theme.colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <Text style={{ fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary }} numberOfLines={1}>{debtorOrdersDebtor?.name}</Text>
-            <TouchableOpacity onPress={() => setDebtorOrdersDebtor(null)}>
-              <X size={20} color={theme.colors.textTertiary} strokeWidth={2} />
-            </TouchableOpacity>
-          </View>
-          <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginBottom: 14 }}>
-            {debtorOrdersDebtor?.isCreditor ? 'Заявки к оплате перевозчику' : 'Неоплаченные заявки клиента'}
-          </Text>
-          <FlatList
-            data={allOrders.filter(o =>
-              debtorOrdersDebtor?.isCreditor
-                ? o.carrier_name === debtorOrdersDebtor?.name && !o.carrier_paid && o.status !== 'cancelled'
-                : o.client_name === debtorOrdersDebtor?.name && !o.client_paid && o.status === 'delivered'
-            )}
-            keyExtractor={(item) => item.id}
-            ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет заявок</Text>}
-            renderItem={({ item }: any) => (
-              <TouchableOpacity
-                onPress={() => {
-                  setDebtorOrdersDebtor(null);
-                  setShowClientDebtors(false);
-                  setShowCarrierDebtors(false);
-                  router.push(`/order/${item.id}` as any);
-                }}
-                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.accent }}>{item.order_number}</Text>
-                  <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 }} numberOfLines={1}>{item.route_from} → {item.route_to}</Text>
-                  {item.unload_date && <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginTop: 1 }}>{item.unload_date}</Text>}
-                </View>
-                <View style={{ alignItems: 'flex-end', gap: 3 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: debtorOrdersDebtor?.isCreditor ? '#AF52DE' : '#FF9500' }}>
-                    {formatMoney(debtorOrdersDebtor?.isCreditor ? item.carrier_rate : item.client_rate)}
-                  </Text>
-                  <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
-                </View>
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </View>
-    </Modal>
+    {/* Debtor orders nested modal */}
+    <BottomModal
+      visible={!!debtorOrdersDebtor}
+      onClose={() => setDebtorOrdersDebtor(null)}
+      title={debtorOrdersDebtor?.name || ''}
+      subtitle={debtorOrdersDebtor?.isCreditor ? 'Заявки к оплате перевозчику' : 'Неоплаченные заявки клиента'}
+    >
+      <FlatList
+        data={allOrders.filter(o =>
+          debtorOrdersDebtor?.isCreditor
+            ? o.carrier_name === debtorOrdersDebtor?.name && !o.carrier_paid && o.status !== 'cancelled'
+            : o.client_name === debtorOrdersDebtor?.name && !o.client_paid && o.status === 'delivered'
+        )}
+        keyExtractor={(item) => item.id}
+        scrollEnabled={false}
+        contentContainerStyle={{ paddingHorizontal: 20 }}
+        ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет заявок</Text>}
+        renderItem={({ item }: any) => (
+          <TouchableOpacity
+            onPress={() => { setDebtorOrdersDebtor(null); setShowClientDebtors(false); setShowCarrierDebtors(false); router.push(`/order/${item.id}` as any); }}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.accent }}>{item.order_number}</Text>
+              <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 }} numberOfLines={1}>{item.route_from} → {item.route_to}</Text>
+              {item.unload_date && <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginTop: 1 }}>{item.unload_date}</Text>}
+            </View>
+            <View style={{ alignItems: 'flex-end', gap: 3 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: debtorOrdersDebtor?.isCreditor ? '#AF52DE' : '#FF9500' }}>
+                {formatMoney(debtorOrdersDebtor?.isCreditor ? item.carrier_rate : item.client_rate)}
+              </Text>
+              <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
+            </View>
+          </TouchableOpacity>
+        )}
+      />
+    </BottomModal>
 
-    {/* Day orders modal (task 2) */}
-    <Modal visible={!!dayModalDate} transparent animationType="slide" onRequestClose={() => setDayModalDate(null)}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: theme.colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <Text style={{ fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary }}>{dayModalDate}</Text>
-            <TouchableOpacity onPress={() => setDayModalDate(null)}>
-              <X size={20} color={theme.colors.textTertiary} strokeWidth={2} />
-            </TouchableOpacity>
-          </View>
-          {dayModalData && (
-            <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginBottom: 12 }}>
-              {dayModalData.orders_count} заявок · прибыль {formatMoney(dayModalData.total_margin)}
-            </Text>
+    {/* Day orders modal */}
+    <BottomModal
+      visible={!!dayModalDate}
+      onClose={() => setDayModalDate(null)}
+      title={dayModalDate || ''}
+      subtitle={dayModalData ? `${dayModalData.orders_count} заявок · прибыль ${formatMoney(dayModalData.total_margin)}` : undefined}
+    >
+      {dayModalLoading ? (
+        <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
+      ) : (
+        <FlatList
+          data={dayModalData?.orders || []}
+          keyExtractor={(item: any) => item.order_number}
+          scrollEnabled={false}
+          contentContainerStyle={{ paddingHorizontal: 20 }}
+          ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет заявок за этот день</Text>}
+          renderItem={({ item }: any) => (
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.accent }}>{item.order_number}</Text>
+                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 }} numberOfLines={1}>{item.client_name}</Text>
+              </View>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: item.margin >= 0 ? theme.colors.profit : theme.colors.loss }}>
+                {formatMoney(item.margin)}
+              </Text>
+            </View>
           )}
-          {dayModalLoading ? (
-            <ActivityIndicator color={theme.colors.accent} style={{ marginVertical: 32 }} />
-          ) : (
-            <FlatList
-              data={dayModalData?.orders || []}
-              keyExtractor={(item: any) => item.order_number}
-              ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 32 }}>Нет заявок за этот день</Text>}
-              renderItem={({ item }: any) => (
-                <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.accent }}>{item.order_number}</Text>
-                    <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 }} numberOfLines={1}>{item.client_name}</Text>
-                  </View>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: item.margin >= 0 ? theme.colors.profit : theme.colors.loss }}>
-                    {formatMoney(item.margin)}
-                  </Text>
-                </View>
-              )}
-            />
-          )}
-        </View>
-      </View>
-    </Modal>
+        />
+      )}
+    </BottomModal>
 
     {/* Top clients modal */}
-    <Modal visible={showAllTopClients} transparent animationType="slide" onRequestClose={() => setShowAllTopClients(false)}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>Топ клиентов</Text>
-            <TouchableOpacity onPress={() => setShowAllTopClients(false)}>
-              <X size={22} color="#8E8E93" strokeWidth={2} />
-            </TouchableOpacity>
+    <BottomModal visible={showAllTopClients} onClose={() => setShowAllTopClients(false)} title="Топ клиентов">
+      <FlatList
+        data={d.top_clients || []}
+        keyExtractor={(item: any) => item.name}
+        scrollEnabled={false}
+        contentContainerStyle={{ paddingHorizontal: 20 }}
+        renderItem={({ item, index }: any) => (
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, gap: 12 }}>
+            <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.accentLight, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.accent }}>{index + 1}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>{item.name}</Text>
+              <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.orders_count} заявок</Text>
+            </View>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary }}>{(item.revenue / 1000).toFixed(0)}K Br</Text>
           </View>
-          <FlatList
-            data={d.top_clients || []}
-            keyExtractor={(item: any) => item.name}
-            renderItem={({ item, index }: any) => (
-              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F7', gap: 12 }}>
-                <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#007AFF15', alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#007AFF' }}>{index + 1}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C1C1E' }} numberOfLines={1}>{item.name}</Text>
-                  <Text style={{ fontSize: 12, color: '#8E8E93', marginTop: 2 }}>{item.orders_count} заявок</Text>
-                </View>
-                <Text style={{ fontSize: 15, fontWeight: '700', color: '#1C1C1E' }}>{(item.revenue / 1000).toFixed(0)}K Br</Text>
-              </View>
-            )}
-          />
-        </View>
-      </View>
-    </Modal>
+        )}
+      />
+    </BottomModal>
 
     {/* Top margin modal */}
-    <Modal visible={showAllTopMargin} transparent animationType="slide" onRequestClose={() => setShowAllTopMargin(false)}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Math.max(insets.bottom, 20), maxHeight: '85%' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1C1C1E' }}>Топ по марже</Text>
-            <TouchableOpacity onPress={() => setShowAllTopMargin(false)}>
-              <X size={22} color="#8E8E93" strokeWidth={2} />
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={d.top_clients_margin || []}
-            keyExtractor={(item: any) => item.name}
-            renderItem={({ item }: any) => (
-              <View style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F7' }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#1C1C1E', flex: 1 }} numberOfLines={1}>{item.name}</Text>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: item.margin >= 0 ? '#34C759' : '#FF3B30', marginLeft: 8 }}>
-                    {(item.margin / 1000).toFixed(0)}K Br
-                  </Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <View style={{ flex: 1, height: 5, backgroundColor: '#F2F2F7', borderRadius: 3, overflow: 'hidden' }}>
-                    <View style={{ height: 5, backgroundColor: '#2563EB', borderRadius: 3, width: `${Math.min(item.margin_percent || 0, 100)}%` as any }} />
-                  </View>
-                  <Text style={{ fontSize: 12, color: '#8E8E93', width: 44, textAlign: 'right' }}>{(item.margin_percent || 0).toFixed(1)}%</Text>
-                </View>
+    <BottomModal visible={showAllTopMargin} onClose={() => setShowAllTopMargin(false)} title="Топ по марже">
+      <FlatList
+        data={d.top_clients_margin || []}
+        keyExtractor={(item: any) => item.name}
+        scrollEnabled={false}
+        contentContainerStyle={{ paddingHorizontal: 20 }}
+        renderItem={({ item }: any) => (
+          <View style={{ paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textPrimary, flex: 1 }} numberOfLines={1}>{item.name}</Text>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: item.margin >= 0 ? theme.colors.profit : theme.colors.loss, marginLeft: 8 }}>
+                {(item.margin / 1000).toFixed(0)}K Br
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flex: 1, height: 4, backgroundColor: theme.colors.surfaceHigh, borderRadius: 2, overflow: 'hidden' }}>
+                <View style={{ height: 4, backgroundColor: theme.colors.accent, borderRadius: 2, width: `${Math.min(item.margin_percent || 0, 100)}%` as any }} />
               </View>
-            )}
-          />
-        </View>
-      </View>
-    </Modal>
+              <Text style={{ fontSize: 11, color: theme.colors.textTertiary, width: 40, textAlign: 'right' }}>{(item.margin_percent || 0).toFixed(1)}%</Text>
+            </View>
+          </View>
+        )}
+      />
+    </BottomModal>
     </>
   );
 }
+
+// ─── PressableCard ────────────────────────────────────────────────────────────
+
+function PressableCard({ onPress, children, style }: { onPress?: () => void; children: React.ReactNode; style?: any }) {
+  const scale = useSharedValue(1);
+  const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <Animated.View style={[animStyle, style]}>
+      <TouchableOpacity
+        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); onPress?.(); }}
+        onPressIn={() => { scale.value = withTiming(0.96, { duration: 100 }); }}
+        onPressOut={() => { scale.value = withTiming(1, { duration: 150 }); }}
+        activeOpacity={1}
+      >
+        {children}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ─── BottomModal ──────────────────────────────────────────────────────────────
+
+function BottomModal({ visible, onClose, title, subtitle, children }: { visible: boolean; onClose: () => void; title: string; subtitle?: string; children: React.ReactNode }) {
+  const insets = useSafeAreaInsets();
+  const translateY = useSharedValue(700);
+  const opacity = useSharedValue(0);
+  const [mounted, setMounted] = useState(false);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      mountedRef.current = true;
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (mounted && visible) {
+      opacity.value = withTiming(1, { duration: 200 });
+      translateY.value = withSpring(0, { damping: 22, stiffness: 240 });
+    }
+  }, [mounted]);
+
+  useEffect(() => {
+    if (!visible && mountedRef.current) {
+      opacity.value = withTiming(0, { duration: 150 });
+      translateY.value = withTiming(700, { duration: 220 }, () => {
+        runOnJS(setMounted)(false);
+        mountedRef.current = false;
+      });
+    }
+  }, [visible]);
+
+  const overlayStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
+
+  if (!mounted) return null;
+
+  return (
+    <Modal transparent visible animationType="none" onRequestClose={onClose}>
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }, overlayStyle]}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
+        </Animated.View>
+        <Animated.View style={[sheetStyle, {
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          backgroundColor: theme.colors.surface,
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          paddingBottom: insets.bottom + 16,
+          maxHeight: '87%',
+          shadowColor: '#000', shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.12, shadowRadius: 20, elevation: 20,
+        }]}>
+          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: theme.colors.border, alignSelf: 'center', marginTop: 12, marginBottom: 8 }} />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: subtitle ? 4 : 12 }}>
+            <Text style={{ fontSize: 17, fontWeight: '600', color: theme.colors.textPrimary, flex: 1 }} numberOfLines={1}>{title}</Text>
+            <TouchableOpacity onPress={onClose} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: theme.colors.surfaceHigh, alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
+              <X size={14} color={theme.colors.textSecondary} strokeWidth={2} />
+            </TouchableOpacity>
+          </View>
+          {subtitle && (
+            <Text style={{ fontSize: 12, color: theme.colors.textTertiary, paddingHorizontal: 20, marginBottom: 12 }}>{subtitle}</Text>
+          )}
+          {children}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── DebtRow ──────────────────────────────────────────────────────────────────
 
 function DebtRow({ item, color, last, onPress }: any) {
   return (
@@ -1136,8 +1258,9 @@ function smoothPath(pts: { x: number; y: number }[]): string {
 
 function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; period: string; onDayPress?: (date: string) => void }) {
   const { width: screenW } = useWindowDimensions();
-  const W = screenW - 64; // 16px parent padding each side + 16px card padding each side
+  const W = screenW - 64;
   const H = 110;
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: number; count: number } | null>(null);
 
   if (!chartOrders?.length) return null;
 
@@ -1244,7 +1367,7 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
         {currPts.map((pt, i) => (
           <SvgCircle key={`dot${i}`} cx={pt.x} cy={pt.y} r={3.5} fill="#2563EB" />
         ))}
-        {onDayPress && days.map((day, i) => (
+        {days.map((day, i) => (
           <SvgRect
             key={`tap${i}`}
             x={currPts[i].x - 22}
@@ -1252,10 +1375,20 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
             width={44}
             height={H}
             fill="transparent"
-            onPress={() => onDayPress(`${period}-${String(day).padStart(2, '0')}`)}
+            onPress={() => onDayPress?.(`${period}-${String(day).padStart(2, '0')}`)}
+            {...(Platform.OS === 'web' ? {
+              onMouseEnter: () => setTooltip({ x: currPts[i].x, y: currPts[i].y, label: `${day} ${MONTHS[parseInt(period.split('-')[1], 10) - 1]}`, value: currByDay[day] || 0, count: 0 }),
+              onMouseLeave: () => setTooltip(null),
+            } : {})}
           />
         ))}
       </Svg>
+      {tooltip && Platform.OS === 'web' && (
+        <View style={{ position: 'absolute', left: tooltip.x - 56, top: tooltip.y - 68, backgroundColor: '#1a1a2e', borderRadius: 10, padding: 10, zIndex: 10, minWidth: 112, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10 }}>{tooltip.label}</Text>
+          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', marginTop: 2 }}>{tooltip.value.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br</Text>
+        </View>
+      )}
       <View style={{ flexDirection: 'row', gap: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <View style={{ width: 24, height: 3, borderRadius: 2, backgroundColor: '#2563EB' }} />
