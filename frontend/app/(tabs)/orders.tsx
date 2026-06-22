@@ -2,9 +2,9 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput, Modal, TouchableWithoutFeedback } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, AlertTriangle, Filter as FilterIcon, RefreshCw, Search, Menu } from 'lucide-react-native';
+import { Plus, Filter as FilterIcon, RefreshCw, Search, Menu } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { theme, formatMoney, statusLabels } from '../../src/theme';
+import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
 
@@ -32,53 +32,27 @@ const daysSince = (dateStr: string): number => {
   return Math.floor((Date.now() - d) / (1000 * 60 * 60 * 24));
 };
 
-const formatDate = (iso: string): string => {
-  if (!iso) return '—';
-  const d = iso.slice(0, 10).split('-');
-  return `${d[2]}.${d[1]}.${d[0]}`;
-};
-
-function getOrderGradient(order: any): [string, string] {
-  if (theme.dark) {
-    if (isOverdue(order)) return ['#2D1212', '#1F0A0A'];
-    switch (order.status) {
-      case 'delivered': return ['#0A1F12', '#0D2618'];
-      case 'in_progress': return ['#0A1525', '#0D1D36'];
-      case 'new':       return ['#150D2D', '#1A1038'];
-      case 'cancelled': return ['#1A1A1A', '#141414'];
-      default:          return ['#1C1C1E', '#141414'];
-    }
-  }
-  if (isOverdue(order)) return ['#FFF0EF', '#FEE8E8'];
+function getOrderColors(order: any): { gradient: [string, string]; border: string; dot: string } {
+  if (isOverdue(order)) return { gradient: ['#FFF7ED', '#FEE2E2'], border: '#FECACA', dot: '#EF4444' };
   switch (order.status) {
-    case 'delivered': return ['#F0FDF4', '#E8F8F0'];
-    case 'in_progress': return ['#EFF6FF', '#E8F2FF'];
-    case 'new':       return ['#F5F3FF', '#EEE9FF'];
-    case 'cancelled': return ['#F8F8F8', '#F0F0F0'];
-    default:          return ['#FFFFFF', '#F8F8F8'];
+    case 'delivered':   return { gradient: ['#F0FDF4', '#DCFCE7'], border: '#BBF7D0', dot: '#16A34A' };
+    case 'in_progress': return { gradient: ['#EFF6FF', '#DBEAFE'], border: '#BFDBFE', dot: '#2563EB' };
+    case 'new':         return { gradient: ['#F5F3FF', '#EDE9FE'], border: '#DDD6FE', dot: '#7C3AED' };
+    case 'cancelled':   return { gradient: ['#F9FAFB', '#F3F4F6'], border: '#E5E7EB', dot: '#9CA3AF' };
+    default:            return { gradient: ['#FFFFFF', '#F9FAFB'], border: '#E5E7EB', dot: '#6B7280' };
   }
 }
 
-function getOrderAccent(order: any): string {
-  if (isOverdue(order)) return '#EF4444';
+function getBadge(order: any): { label: string; bg: string; color: string } {
+  if (isOverdue(order)) return { label: '⚠ Просрочена', bg: '#FEE2E2', color: '#EF4444' };
   switch (order.status) {
-    case 'delivered':   return '#16A34A';
-    case 'in_progress': return '#2563EB';
-    case 'new':         return '#7C3AED';
-    case 'cancelled':   return '#9CA3AF';
-    default:            return '#6B7280';
+    case 'delivered':   return { label: '✓ Доставлено', bg: '#DCFCE7', color: '#16A34A' };
+    case 'in_progress': return { label: '● В работе',   bg: '#DBEAFE', color: '#2563EB' };
+    case 'new':         return { label: 'Новая',         bg: '#EDE9FE', color: '#7C3AED' };
+    case 'cancelled':   return { label: 'Отменена',      bg: '#F3F4F6', color: '#9CA3AF' };
+    default:            return { label: order.status,    bg: '#F3F4F6', color: '#6B7280' };
   }
 }
-
-const countBusinessDays = (from: Date, to: Date): number => {
-  let count = 0;
-  const cur = new Date(from);
-  while (cur < to) {
-    cur.setDate(cur.getDate() + 1);
-    if (cur.getDay() !== 0 && cur.getDay() !== 6) count++;
-  }
-  return count;
-};
 
 const isOverdue = (o: any) => !o.client_paid && daysSince(o.load_date) >= 15;
 
@@ -299,104 +273,102 @@ export default function Orders() {
 }
 
 function OrderCard({ order, onPress, testID }: any) {
+  const { gradient, border, dot } = getOrderColors(order);
+  const badge = getBadge(order);
   const margin = (order.client_rate || 0) - (order.carrier_rate || 0);
-  const overdue = isOverdue(order);
-  const days = daysSince(order.load_date);
-  const accent = getOrderAccent(order);
-  const gradColors = getOrderGradient(order);
 
   return (
-    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.82} style={{ marginHorizontal: 16, marginBottom: 8 }}>
+    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.82} style={{ marginHorizontal: 16, marginBottom: 10 }}>
       <LinearGradient
-        colors={gradColors}
+        colors={gradient}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{
-          borderRadius: 16,
-          padding: 14,
+          borderRadius: 18,
+          padding: 16,
           borderWidth: 0.5,
-          borderColor: accent + '30',
-          shadowColor: accent,
+          borderColor: border,
+          shadowColor: dot,
           shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: theme.dark ? 0.3 : 0.06,
+          shadowOpacity: 0.08,
           shadowRadius: 8,
           elevation: 2,
-          overflow: 'hidden',
         }}
       >
-        {overdue && (
-          <View style={[styles.overdueBanner, { marginHorizontal: -14, marginTop: -14 }]}>
-            <AlertTriangle size={11} color="#fff" strokeWidth={2} />
-            <Text style={styles.overdueText}>ПРОСРОЧКА · {days} ДН. БЕЗ ОПЛАТЫ</Text>
-          </View>
-        )}
-
-        {/* Row 1: number + status badge */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: accent, letterSpacing: 0.5 }}>
-            {order.order_number}
+        {/* Строка 1: номер + бейдж */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <Text style={{ fontSize: 11, fontWeight: '500', color: '#9CA3AF' }}>
+            № {order.order_number}
           </Text>
-          <View style={{ backgroundColor: accent + '18', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 }}>
-            <Text style={{ fontSize: 10, fontWeight: '600', color: accent }}>
-              {statusLabels[order.status] || order.status}
-            </Text>
+          <View style={{ backgroundColor: badge.bg, borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3 }}>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: badge.color }}>{badge.label}</Text>
           </View>
         </View>
 
-        {/* Row 2: client */}
-        <Text style={{ fontSize: 13, color: theme.dark ? '#E5E7EB' : '#1a1a2e', fontWeight: '500', marginBottom: 3 }} numberOfLines={1}>
+        {/* Клиент */}
+        <Text style={{ fontSize: 14, fontWeight: '600', color: '#1a1a2e', marginBottom: 14 }} numberOfLines={1}>
           {order.client_name || '—'}
         </Text>
 
-        {/* Row 3: route */}
-        <Text style={{ fontSize: 11, color: theme.dark ? '#9CA3AF' : '#6B7280', marginBottom: 8 }} numberOfLines={1}>
-          {order.route_from} → {order.route_to}
-        </Text>
+        {/* Маршрут */}
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+          {/* Вертикальная линия с точками */}
+          <View style={{ alignItems: 'center', paddingTop: 4, width: 10 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: dot }} />
+            <View style={{ flex: 1, marginVertical: 3, gap: 2, alignItems: 'center' }}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <View key={i} style={{ width: 1.5, height: 3, backgroundColor: '#CBD5E1' }} />
+              ))}
+            </View>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#CBD5E1' }} />
+          </View>
 
-        {/* Row 4: date + rate + margin */}
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ fontSize: 11, color: theme.dark ? '#9CA3AF' : '#9CA3AF', flex: 1 }}>
-            {order.load_date ? formatDate(order.load_date) : '—'}
-          </Text>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: theme.dark ? '#F9FAFB' : '#1a1a2e' }}>
-            {formatMoney(order.client_rate)}
-          </Text>
-          {order.client_rate > 0 && order.carrier_rate > 0 && (
-            <Text style={{ fontSize: 11, color: margin >= 0 ? '#16A34A' : '#EF4444', marginLeft: 8, fontWeight: '500' }}>
-              {margin >= 0 ? '+' : ''}{formatMoney(margin)}
-            </Text>
-          )}
+          {/* Точки маршрута */}
+          <View style={{ flex: 1, justifyContent: 'space-between', gap: 10 }}>
+            <View>
+              <Text style={{ fontSize: 9, color: '#9CA3AF', fontWeight: '500', marginBottom: 1 }}>Откуда</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1a1a2e' }} numberOfLines={1}>
+                {order.route_from || '—'}
+              </Text>
+              {!!order.load_date && (
+                <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 1 }}>
+                  {order.load_date.slice(0, 10).split('-').reverse().join('.')}
+                </Text>
+              )}
+            </View>
+            <View>
+              <Text style={{ fontSize: 9, color: '#9CA3AF', fontWeight: '500', marginBottom: 1 }}>Куда</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1a1a2e' }} numberOfLines={1}>
+                {order.route_to || '—'}
+              </Text>
+              {!!order.unload_date && (
+                <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 1 }}>
+                  {order.unload_date.slice(0, 10).split('-').reverse().join('.')}
+                </Text>
+              )}
+            </View>
+          </View>
         </View>
 
-        {/* Row 5: pay status badges */}
-        <View style={{ flexDirection: 'row', gap: 5, marginTop: 8 }}>
-          {order.client_paid ? (
-            <View style={{ backgroundColor: '#16A34A18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-              <Text style={{ fontSize: 9, color: '#16A34A', fontWeight: '600' }}>✓ Клиент</Text>
-            </View>
-          ) : (
-            <View style={{ backgroundColor: '#FF950018', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-              <Text style={{ fontSize: 9, color: '#FF9500', fontWeight: '600' }}>Ждём клиента</Text>
+        {/* Разделитель */}
+        <View style={{ height: 0.5, backgroundColor: 'rgba(0,0,0,0.08)', marginBottom: 12 }} />
+
+        {/* Ставка + маржа */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <View>
+            <Text style={{ fontSize: 9, color: '#9CA3AF', fontWeight: '500', marginBottom: 2 }}>Ставка клиента</Text>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5 }}>
+              {order.client_rate ? Number(order.client_rate).toLocaleString('ru-RU') + ' Br' : '—'}
+            </Text>
+          </View>
+          {margin > 0 && (
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={{ fontSize: 9, color: '#9CA3AF', fontWeight: '500', marginBottom: 2 }}>Маржа</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#16A34A' }}>
+                +{margin.toLocaleString('ru-RU')} Br
+              </Text>
             </View>
           )}
-          {order.carrier_paid ? (
-            <View style={{ backgroundColor: '#2563EB18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-              <Text style={{ fontSize: 9, color: '#2563EB', fontWeight: '600' }}>✓ Перевозчик</Text>
-            </View>
-          ) : (
-            <View style={{ backgroundColor: '#7C3AED18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-              <Text style={{ fontSize: 9, color: '#7C3AED', fontWeight: '600' }}>Долг перевозч.</Text>
-            </View>
-          )}
-          {!order.carrier_paid && order.carrier_payment_deadline && (() => {
-            const dl = countBusinessDays(new Date(), new Date(order.carrier_payment_deadline));
-            const c = dl <= 3 ? '#FF3B30' : dl <= 5 ? '#FF9500' : '#9CA3AF';
-            return (
-              <View style={{ backgroundColor: c + '18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-                <Text style={{ fontSize: 9, color: c, fontWeight: '600' }}>💸 {dl} дн.</Text>
-              </View>
-            );
-          })()}
         </View>
       </LinearGradient>
     </TouchableOpacity>
