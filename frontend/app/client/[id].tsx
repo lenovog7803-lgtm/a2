@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X, Trash2, Edit3, Phone, Mail, Copy } from 'lucide-react-native';
+import { ArrowLeft, Trash2, Edit3, Phone, Mail, Copy } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
@@ -127,12 +127,16 @@ export default function ClientDetail() {
   }
 
   const initials = client.name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase();
+  const AVATAR_COLORS = ['#2563EB', '#7C3AED', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#0EA5E9', '#14B8A6'];
+  let hash = 0;
+  for (let i = 0; i < client.name.length; i++) hash = (hash * 31 + client.name.charCodeAt(i)) & 0xffff;
+  const avatarAccent = AVATAR_COLORS[hash % AVATAR_COLORS.length];
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-          <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
+          <ArrowLeft size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
         </TouchableOpacity>
         <Text style={styles.topTitle} numberOfLines={1}>{editing ? 'Редактирование' : 'Клиент'}</Text>
         <View style={{ flexDirection: 'row', gap: 4 }}>
@@ -152,7 +156,7 @@ export default function ClientDetail() {
           <>
             {/* Header card */}
             <View style={styles.headerCard}>
-              <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>
+              <View style={[styles.avatar, { backgroundColor: avatarAccent + '20', borderColor: avatarAccent + '40' }]}><Text style={[styles.avatarText, { color: avatarAccent }]}>{initials}</Text></View>
               <Text style={styles.name}>{client.name}</Text>
               {!!client.contact_person && <Text style={styles.contact}>{client.contact_person}</Text>}
               <View style={styles.actionsRow}>

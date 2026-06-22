@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, Modal, FlatList, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X, Trash2, Edit3, Phone, Star, Truck as TruckIcon, Copy, ChevronDown, Check } from 'lucide-react-native';
+import { ArrowLeft, X, Trash2, Edit3, Phone, Star, Truck as TruckIcon, Copy, ChevronDown, Check } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
@@ -84,7 +84,7 @@ export default function CarrierDetail() {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-          <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
+          <ArrowLeft size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
         </TouchableOpacity>
         <Text style={styles.topTitle} numberOfLines={1}>{editing ? 'Редактирование' : 'Перевозчик'}</Text>
         <View style={{ flexDirection: 'row', gap: 4 }}>

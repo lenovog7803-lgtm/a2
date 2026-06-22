@@ -38,7 +38,10 @@ export default function Carriers() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <View style={{ paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text style={styles.title}>Перевозчики</Text>
+        <View>
+          <Text style={styles.title}>Перевозчики</Text>
+          <Text style={styles.subtitle}>{filtered.length} {filtered.length === 1 ? 'перевозчик' : filtered.length < 5 ? 'перевозчика' : 'перевозчиков'}</Text>
+        </View>
         <TouchableOpacity testID="add-carrier-btn" onPress={() => router.push('/carrier/new')} style={styles.fab} activeOpacity={0.8}>
           <Plus size={20} color="#fff" strokeWidth={2.2} />
         </TouchableOpacity>
@@ -141,6 +144,7 @@ function CarrierCard({ carrier, onPress, testID }: any) {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
+  subtitle: { fontSize: 13, color: theme.colors.textTertiary, marginTop: 1 },
   fab: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
 
   card: {

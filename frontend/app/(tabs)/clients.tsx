@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, TextInput, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, Phone, Mail, Search } from 'lucide-react-native';
+import { Plus, Phone, Mail, Search, UserPlus } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -45,9 +45,12 @@ export default function Clients() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <View style={{ paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text style={styles.title}>Клиенты</Text>
+        <View>
+          <Text style={styles.title}>Клиенты</Text>
+          <Text style={styles.subtitle}>{filtered.length} {filtered.length === 1 ? 'клиент' : filtered.length < 5 ? 'клиента' : 'клиентов'}</Text>
+        </View>
         <TouchableOpacity testID="add-client-btn" onPress={() => router.push('/client/new')} style={styles.fab} activeOpacity={0.8}>
-          <Plus size={20} color="#fff" strokeWidth={2.2} />
+          <UserPlus size={18} color="#fff" strokeWidth={2} />
         </TouchableOpacity>
       </View>
 
@@ -82,16 +85,24 @@ export default function Clients() {
   );
 }
 
+const AVATAR_COLORS = ['#2563EB', '#7C3AED', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#0EA5E9', '#14B8A6'];
+function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) & 0xffff;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
 function ClientCard({ client, onPress, testID }: any) {
   const { width: screenW } = useWindowDimensions();
   const initials = client.name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase();
   const chartWidth = screenW - 40 - 28;
+  const color = avatarColor(client.name);
 
   return (
     <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.7} style={styles.card}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initials}</Text>
+        <View style={[styles.avatar, { backgroundColor: color + '20', borderColor: color + '40' }]}>
+          <Text style={[styles.avatarText, { color }]}>{initials}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.name} numberOfLines={1}>{client.name}</Text>
@@ -150,6 +161,7 @@ function ClientCard({ client, onPress, testID }: any) {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
+  subtitle: { fontSize: 13, color: theme.colors.textTertiary, marginTop: 1 },
   fab: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
 
   card: {
