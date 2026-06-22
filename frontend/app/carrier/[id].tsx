@@ -1,22 +1,50 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, Modal, FlatList, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, TextInput, Modal, FlatList, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, X, Trash2, Edit3, Phone, Star, Truck as TruckIcon, Copy, ChevronDown, Check } from 'lucide-react-native';
+import { ArrowLeft, X, Trash2, Edit3, Phone, Star, Copy, ChevronDown, Check, Truck as TruckIcon, Building2, FileText, Landmark, Info } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
-import { Field } from '../../src/components/Field';
 import { MiniChart } from '../../src/components/MiniChart';
 
 const MONTHS_SHORT = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
-
-const BASIS_OPTIONS = [
-  { id: 'устава', label: 'Устава' },
-  { id: 'свидетельства', label: 'Свидетельства' },
-];
-
+const BASIS_OPTIONS = [{ id: 'устава', label: 'Устава' }, { id: 'свидетельства', label: 'Свидетельства' }];
 const VEHICLES = ['Тент', 'Реф', 'Изотерм', 'Бортовой', 'Контейнер'];
+
+// ── Form helpers ────────────────────────────────────────────────────────────
+function FormSection({ title, icon, children }: any) {
+  const icons: Record<string, any> = { building: Building2, file: FileText, bank: Landmark, info: Info, truck: TruckIcon };
+  const Icon = icons[icon] || Info;
+  return (
+    <View style={{ backgroundColor: theme.colors.surface, borderRadius: 16, overflow: 'hidden', borderWidth: 0.5, borderColor: theme.colors.border }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+        <Icon size={14} color={theme.colors.accent} strokeWidth={2} />
+        <Text style={{ fontSize: 11, fontWeight: '700', color: theme.colors.textPrimary, textTransform: 'uppercase', letterSpacing: 0.8 }}>{title}</Text>
+      </View>
+      <View style={{ padding: 14, gap: 10 }}>{children}</View>
+    </View>
+  );
+}
+
+function FormRow({ children }: any) {
+  return <View style={{ flexDirection: 'row', gap: 10 }}>{children}</View>;
+}
+
+function FormField({ label, value, onChange, placeholder, keyboardType, multiline, mono, flex }: any) {
+  return (
+    <View style={{ flex: flex || 1 }}>
+      {!!label && <Text style={{ fontSize: 10, fontWeight: '600', color: theme.colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 5 }}>{label}</Text>}
+      <TextInput
+        value={value || ''} onChangeText={onChange} placeholder={placeholder}
+        placeholderTextColor={theme.colors.textTertiary} keyboardType={keyboardType}
+        multiline={multiline}
+        style={{ backgroundColor: theme.colors.bg, borderRadius: 10, borderWidth: 0.5, borderColor: theme.colors.border, paddingHorizontal: 12, paddingVertical: 10, fontSize: mono ? 12 : 14, color: theme.colors.textPrimary, fontFamily: mono ? Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }) : undefined, minHeight: multiline ? 80 : undefined, textAlignVertical: multiline ? 'top' : 'center' }}
+      />
+    </View>
+  );
+}
+// ── End form helpers ─────────────────────────────────────────────────────────
 
 export default function CarrierDetail() {
   const insets = useSafeAreaInsets();
@@ -73,7 +101,8 @@ export default function CarrierDetail() {
 
   const copyText = async (text: string, label: string) => {
     if (!text) return;
-    try { await Clipboard.setStringAsync(text); Alert.alert('Скопировано', `${label}: ${text}`); } catch { Alert.alert(label, text); }
+    try { await Clipboard.setStringAsync(text); Alert.alert('Скопировано', `${label}: ${text}`); }
+    catch { Alert.alert(label, text); }
   };
 
   if (loading || !carrier) {
@@ -82,24 +111,34 @@ export default function CarrierDetail() {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-          <ArrowLeft size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
+      {/* Header */}
+      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 14, backgroundColor: theme.colors.surface, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <TouchableOpacity onPress={() => router.back()} style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: theme.colors.border }}>
+          <ArrowLeft size={16} color={theme.colors.textSecondary} strokeWidth={2} />
         </TouchableOpacity>
-        <Text style={styles.topTitle} numberOfLines={1}>{editing ? 'Редактирование' : 'Перевозчик'}</Text>
-        <View style={{ flexDirection: 'row', gap: 4 }}>
-          {!editing && (
-            <TouchableOpacity onPress={() => setEditing(true)} style={styles.iconBtn} testID="edit-carrier-btn">
-              <Edit3 size={18} color={theme.colors.accent} strokeWidth={1.6} />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity onPress={remove} style={styles.iconBtn}>
-            <Trash2 size={18} color={theme.colors.loss} strokeWidth={1.6} />
-          </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: theme.colors.textPrimary }} numberOfLines={1}>
+            {editing ? 'Редактирование' : carrier.company_name}
+          </Text>
+          {editing && <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 1 }}>Редактирование перевозчика</Text>}
         </View>
+        {!editing ? (
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity onPress={() => setEditing(true)} testID="edit-carrier-btn" style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: theme.colors.accent + '15', alignItems: 'center', justifyContent: 'center' }}>
+              <Edit3 size={15} color={theme.colors.accent} strokeWidth={1.8} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={remove} style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: '#FEE2E2', alignItems: 'center', justifyContent: 'center' }}>
+              <Trash2 size={15} color="#EF4444" strokeWidth={1.8} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity onPress={() => setEditing(false)} style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: theme.colors.border }}>
+            <Text style={{ fontSize: 11, color: theme.colors.textSecondary, fontWeight: '600' }}>✕</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 100 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 100 }}>
         {!editing ? (
           <>
             <View style={styles.headerCard}>
@@ -112,13 +151,8 @@ export default function CarrierDetail() {
               </View>
               {!!carrier.phone && (
                 <TouchableOpacity style={styles.callBtn} onPress={() => Linking.openURL(`tel:${carrier.phone}`)} activeOpacity={0.7}>
-                  <Phone size={14} color="#000" strokeWidth={2} />
+                  <Phone size={14} color="#fff" strokeWidth={2} />
                   <Text style={styles.callText}>{carrier.phone}</Text>
-                </TouchableOpacity>
-              )}
-              {!!carrier.email && (
-                <TouchableOpacity style={[styles.callBtn, { backgroundColor: theme.colors.surfaceElevated, marginTop: 6 }]} onPress={() => Linking.openURL(`mailto:${carrier.email}`)} activeOpacity={0.7}>
-                  <Text style={[styles.callText, { color: theme.colors.textPrimary }]}>{carrier.email}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -136,21 +170,21 @@ export default function CarrierDetail() {
               const mLabels = last6.map(ym => MONTHS_SHORT[parseInt(ym.slice(5), 10) - 1]);
               const chartW = screenW - 40 - 36;
               return (
-                <View style={[styles.section, { marginBottom: 12, padding: 14 }]}>
+                <View style={[styles.section, { marginBottom: 0, padding: 14 }]}>
                   <Text style={[styles.sectionTitle, { marginBottom: 10 }]}>РЕЙСЫ ПО МЕСЯЦАМ</Text>
                   <MiniChart data={tripsData} width={chartW} height={80} color="#7C3AED" showTooltip labels={mLabels} />
                 </View>
               );
             })()}
 
-            {(carrier.capacity_tons || carrier.capacity_m3) ? (
+            {(carrier.capacity_tons || carrier.capacity_m3) && (
               <Section title="ТРАНСПОРТ">
                 <Row label="Грузоподъёмность" value={carrier.capacity_tons ? `${carrier.capacity_tons} т` : ''} />
                 <Row label="Объём" value={carrier.capacity_m3 ? `${carrier.capacity_m3} м³` : ''} />
               </Section>
-            ) : null}
+            )}
 
-            {(carrier.unp || carrier.inn || carrier.kpp || carrier.address || carrier.legal_address || carrier.postal_address || carrier.director || carrier.basis) && (
+            {(carrier.unp || carrier.inn || carrier.address || carrier.legal_address || carrier.director || carrier.basis) && (
               <Section title="РЕКВИЗИТЫ">
                 <Row label="УНП" value={carrier.unp || carrier.inn || ''} onCopy={() => copyText(carrier.unp || carrier.inn || '', 'УНП')} />
                 <Row label="Адрес" value={carrier.address || carrier.legal_address || ''} multiline onCopy={() => copyText(carrier.address || carrier.legal_address || '', 'Адрес')} />
@@ -176,21 +210,14 @@ export default function CarrierDetail() {
               </Section>
             )}
 
-            {/* История заявок */}
-            <OrdersHistory
-              orders={orders}
-              rateKey="carrier_rate"
-              onPress={(oid: string) => router.push('/order/' + oid)}
-            />
+            <OrdersHistory orders={orders} rateKey="carrier_rate" onPress={(oid: string) => router.push('/order/' + oid)} />
 
-            {/* Акты сверки */}
             {acts.length > 0 && (
-              <View style={{ marginTop: 4, marginBottom: 12 }}>
+              <View style={{ marginBottom: 0 }}>
                 <Text style={styles.sectionTitle}>АКТЫ СВЕРКИ</Text>
                 <View style={styles.section}>
                   {acts.map((act: any, i: number) => (
-                    <TouchableOpacity
-                      key={i}
+                    <TouchableOpacity key={i}
                       onPress={() => Platform.OS === 'web' ? window.open(act.doc_url, '_blank') : Linking.openURL(act.doc_url)}
                       style={[styles.orderRow, i === acts.length - 1 && { borderBottomWidth: 0 }]}
                       activeOpacity={0.7}
@@ -206,97 +233,120 @@ export default function CarrierDetail() {
           </>
         ) : (
           <>
-            <Field label="Компания / ИП" value={carrier.company_name} onChangeText={(v: string) => update({ company_name: v })} />
-            <Field label="Водитель / контакт" value={carrier.driver_name} onChangeText={(v: string) => update({ driver_name: v })} />
-            <Field label="Телефон" keyboardType="phone-pad" value={carrier.phone} onChangeText={(v: string) => update({ phone: v })} />
-            <Field label="Email" keyboardType="email-address" autoCapitalize="none" value={carrier.email || ''} onChangeText={(v: string) => update({ email: v })} />
+            <FormSection title="Основная информация" icon="building">
+              <FormField label="Компания / ИП" value={carrier.company_name} onChange={(v: string) => update({ company_name: v })} placeholder="ООО 'Транспорт'" />
+              <FormRow>
+                <FormField label="Водитель / контакт" value={carrier.driver_name} onChange={(v: string) => update({ driver_name: v })} placeholder="Иванов Иван" />
+                <FormField label="Телефон" value={carrier.phone} onChange={(v: string) => update({ phone: v })} placeholder="+375 (29) 000-00-00" keyboardType="phone-pad" />
+              </FormRow>
+              <FormField label="Email" value={carrier.email || ''} onChange={(v: string) => update({ email: v })} placeholder="carrier@example.com" keyboardType="email-address" />
+            </FormSection>
 
-            <Text style={styles.groupLabel}>ТРАНСПОРТ</Text>
-            <Text style={styles.miniLabel}>ТИП ТС</Text>
-            <View style={styles.choiceRow}>
-              {VEHICLES.map(v => (
-                <TouchableOpacity key={v} onPress={() => update({ vehicle_type: v })} style={[styles.pill, carrier.vehicle_type === v && styles.pillActive]} activeOpacity={0.7}>
-                  <Text style={[styles.pillText, carrier.vehicle_type === v && styles.pillTextActive]}>{v}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-              <View style={{ flex: 1 }}><Field label="Тонн" keyboardType="numeric" value={String(carrier.capacity_tons || '')} onChangeText={(v: string) => update({ capacity_tons: parseFloat(v) || 0 })} /></View>
-              <View style={{ flex: 1 }}><Field label="Объём, м³" keyboardType="numeric" value={String(carrier.capacity_m3 || '')} onChangeText={(v: string) => update({ capacity_m3: parseFloat(v) || 0 })} /></View>
-            </View>
-            <Field label="Гос. номер" autoCapitalize="characters" value={carrier.plate} onChangeText={(v: string) => update({ plate: v })} />
-            <Field label="Рейтинг (0-5)" keyboardType="numeric" value={String(carrier.rating || '')} onChangeText={(v: string) => update({ rating: parseFloat(v) || 0 })} />
-
-            <Text style={styles.groupLabel}>РЕКВИЗИТЫ</Text>
-            <Field label="ИНН" keyboardType="numeric" value={carrier.inn} onChangeText={(v: string) => update({ inn: v })} />
-            <Field label="КПП" keyboardType="numeric" value={carrier.kpp} onChangeText={(v: string) => update({ kpp: v })} />
-            <Field label="Юр. адрес" multiline value={carrier.legal_address} onChangeText={(v: string) => update({ legal_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
-            <Field label="Почтовый адрес" multiline value={carrier.postal_address || ''} onChangeText={(v: string) => update({ postal_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
-            <Field label="Директор" value={carrier.director || ''} onChangeText={(v: string) => update({ director: v })} />
-
-            <Text style={styles.fieldLabel}>ОСНОВАНИЕ</Text>
-            <TouchableOpacity onPress={() => setBasisOpen(true)} activeOpacity={0.7} style={styles.dropdownBtn}>
-              <Text style={[styles.dropdownValue, !carrier.basis && { color: theme.colors.textTertiary }]}>
-                {BASIS_OPTIONS.find(o => o.id === carrier.basis)?.label || 'Выбрать…'}
-              </Text>
-              <ChevronDown size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
-            </TouchableOpacity>
-
-            <Modal visible={basisOpen} transparent animationType="fade" onRequestClose={() => setBasisOpen(false)}>
-              <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setBasisOpen(false)}>
-                <TouchableOpacity activeOpacity={1} style={styles.sheet} onPress={() => {}}>
-                  <View style={styles.sheetHead}>
-                    <Text style={styles.sheetTitle}>Основание</Text>
-                    <TouchableOpacity onPress={() => setBasisOpen(false)}>
-                      <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
+            <FormSection title="Транспорт" icon="truck">
+              <View>
+                <Text style={{ fontSize: 10, fontWeight: '600', color: theme.colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Тип ТС</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {VEHICLES.map(v => (
+                    <TouchableOpacity key={v} onPress={() => update({ vehicle_type: v })}
+                      style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: carrier.vehicle_type === v ? theme.colors.accent + '20' : theme.colors.bg, borderRadius: 8, borderWidth: 0.5, borderColor: carrier.vehicle_type === v ? theme.colors.accent : theme.colors.border }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ color: carrier.vehicle_type === v ? theme.colors.accent : theme.colors.textSecondary, fontSize: 12, fontWeight: '600' }}>{v}</Text>
                     </TouchableOpacity>
-                  </View>
-                  <FlatList
-                    data={BASIS_OPTIONS}
-                    keyExtractor={(i) => i.id}
-                    keyboardShouldPersistTaps="handled"
-                    renderItem={({ item }) => {
-                      const active = item.id === carrier.basis;
-                      return (
-                        <TouchableOpacity
-                          style={[styles.sheetItem, active && styles.sheetItemActive]}
-                          onPress={() => { update({ basis: item.id }); setBasisOpen(false); }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.sheetItemLabel, active && { color: theme.colors.accent }]}>{item.label}</Text>
-                          {active && <Check size={16} color={theme.colors.accent} strokeWidth={2} />}
-                        </TouchableOpacity>
-                      );
-                    }}
-                  />
+                  ))}
+                </View>
+              </View>
+              <FormRow>
+                <FormField label="Тонн" value={String(carrier.capacity_tons || '')} onChange={(v: string) => update({ capacity_tons: parseFloat(v) || 0 })} keyboardType="numeric" placeholder="20" />
+                <FormField label="Объём, м³" value={String(carrier.capacity_m3 || '')} onChange={(v: string) => update({ capacity_m3: parseFloat(v) || 0 })} keyboardType="numeric" placeholder="82" />
+              </FormRow>
+              <FormRow>
+                <FormField label="Гос. номер" value={carrier.plate} onChange={(v: string) => update({ plate: v })} placeholder="АА 0000-7" />
+                <FormField label="Рейтинг (0-5)" value={String(carrier.rating || '')} onChange={(v: string) => update({ rating: parseFloat(v) || 0 })} keyboardType="numeric" placeholder="5.0" />
+              </FormRow>
+            </FormSection>
+
+            <FormSection title="Реквизиты" icon="file">
+              <FormRow>
+                <FormField label="УНП / ИНН" value={carrier.inn || carrier.unp} onChange={(v: string) => update({ inn: v, unp: v })} placeholder="123456789" />
+                <FormField label="Директор" value={carrier.director || ''} onChange={(v: string) => update({ director: v })} placeholder="Иванов И.И." />
+              </FormRow>
+              <FormField label="Юридический адрес" value={carrier.legal_address || carrier.address} onChange={(v: string) => update({ legal_address: v, address: v })} placeholder="г. Минск, ул. Ленина, д. 1" />
+              <FormField label="Почтовый адрес" value={carrier.postal_address || ''} onChange={(v: string) => update({ postal_address: v })} placeholder="220000 г. Минск, а/я 1" />
+
+              <View>
+                <Text style={{ fontSize: 10, fontWeight: '600', color: theme.colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Основание</Text>
+                <TouchableOpacity onPress={() => setBasisOpen(true)} activeOpacity={0.7}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: theme.colors.bg, borderRadius: 10, borderWidth: 0.5, borderColor: theme.colors.border, paddingHorizontal: 12, paddingVertical: 10 }}
+                >
+                  <Text style={{ color: carrier.basis ? theme.colors.textPrimary : theme.colors.textTertiary, fontSize: 14 }}>
+                    {BASIS_OPTIONS.find(o => o.id === carrier.basis)?.label || 'Выбрать…'}
+                  </Text>
+                  <ChevronDown size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
                 </TouchableOpacity>
-              </TouchableOpacity>
-            </Modal>
+              </View>
+            </FormSection>
 
-            <Text style={styles.groupLabel}>БАНК</Text>
-            <Field label="Банк" value={carrier.bank_name} onChangeText={(v: string) => update({ bank_name: v })} />
-            <Field label="Расчётный счёт" keyboardType="numeric" value={carrier.bank_account} onChangeText={(v: string) => update({ bank_account: v })} />
-            <Field label="БИК" keyboardType="numeric" value={carrier.bank_bik} onChangeText={(v: string) => update({ bank_bik: v })} />
-            <Field label="Корр. счёт" keyboardType="numeric" value={carrier.bank_corr_account} onChangeText={(v: string) => update({ bank_corr_account: v })} />
+            <FormSection title="Банковские реквизиты" icon="bank">
+              <FormField label="Название банка" value={carrier.bank_name || carrier.bank} onChange={(v: string) => update({ bank_name: v, bank: v })} placeholder="ОАО 'БелВЭБ'" />
+              <FormRow>
+                <FormField label="Расчётный счёт" value={carrier.bank_account || carrier.rs} onChange={(v: string) => update({ bank_account: v, rs: v })} placeholder="BY00 BANK 0000..." mono />
+                <FormField label="БИК" value={carrier.bank_bik || carrier.bik} onChange={(v: string) => update({ bank_bik: v, bik: v })} placeholder="BELVBY2X" mono />
+              </FormRow>
+            </FormSection>
 
-            <Text style={styles.groupLabel}>ДОП ИНФО</Text>
-            <Field label="Что возят" multiline value={carrier.cargo_types} onChangeText={(v: string) => update({ cargo_types: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
-            <Field label="Регионы работы" multiline value={carrier.regions} onChangeText={(v: string) => update({ regions: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
-            <Field label="Заметки" multiline value={carrier.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
+            <FormSection title="Дополнительно" icon="info">
+              <FormField label="Что возят" value={carrier.cargo_types} onChange={(v: string) => update({ cargo_types: v })} placeholder="Оборудование, ТНП..." />
+              <FormField label="Регионы работы" value={carrier.regions} onChange={(v: string) => update({ regions: v })} placeholder="Россия, Беларусь, Европа..." />
+              <FormField label="Заметки" value={carrier.notes} onChange={(v: string) => update({ notes: v })} placeholder="Особые условия..." multiline />
+            </FormSection>
 
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity onPress={() => setEditing(false)} style={styles.cancelBtn} activeOpacity={0.7}><Text style={styles.cancelText}>Отмена</Text></TouchableOpacity>
-              <TouchableOpacity onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8} testID="save-carrier-btn">
-                {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveText}>Сохранить</Text>}
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity onPress={save} disabled={saving} testID="save-carrier-btn"
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: theme.colors.accent, borderRadius: 14, paddingVertical: 16, marginTop: 4, shadowColor: theme.colors.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, opacity: saving ? 0.6 : 1 }}
+              activeOpacity={0.8}
+            >
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Сохранить</Text>}
+            </TouchableOpacity>
           </>
         )}
       </ScrollView>
+
+      {/* Basis modal */}
+      <Modal visible={basisOpen} transparent animationType="fade" onRequestClose={() => setBasisOpen(false)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' }} activeOpacity={1} onPress={() => setBasisOpen(false)}>
+          <TouchableOpacity activeOpacity={1} style={{ backgroundColor: theme.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', paddingBottom: 20 }} onPress={() => {}}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+              <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' }}>Основание</Text>
+              <TouchableOpacity onPress={() => setBasisOpen(false)}>
+                <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={BASIS_OPTIONS}
+              keyExtractor={(i) => i.id}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const active = item.id === carrier.basis;
+                return (
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.border, backgroundColor: active ? theme.colors.accent + '10' : 'transparent' }}
+                    onPress={() => { update({ basis: item.id }); setBasisOpen(false); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ color: active ? theme.colors.accent : theme.colors.textPrimary, fontSize: 15, fontWeight: '500', flex: 1 }}>{item.label}</Text>
+                    {active && <Check size={16} color={theme.colors.accent} strokeWidth={2} />}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
 
+// ── View-mode helpers ────────────────────────────────────────────────────────
 const STATUS_LABELS: Record<string, string> = {
   new: 'Новая', in_progress: 'В пути', done: 'Завершена', cancelled: 'Отменена',
 };
@@ -312,16 +362,14 @@ function OrdersHistory({ orders, rateKey, onPress }: { orders: any[]; rateKey: s
   const count = orders.length;
   const word = count === 1 ? 'заявка' : count < 5 ? 'заявки' : 'заявок';
   return (
-    <View style={{ marginBottom: 12 }}>
+    <View style={{ marginBottom: 0 }}>
       <Text style={styles.sectionTitle}>ИСТОРИЯ ЗАЯВОК</Text>
       <View style={styles.section}>
         {count === 0 ? (
           <Text style={styles.emptyOrders}>Нет заявок</Text>
         ) : (
           orders.map((o, i) => (
-            <TouchableOpacity
-              key={o.id}
-              onPress={() => onPress(o.id)}
+            <TouchableOpacity key={o.id} onPress={() => onPress(o.id)}
               style={[styles.orderRow, i === count - 1 && { borderBottomWidth: 0 }]}
               activeOpacity={0.7}
             >
@@ -331,7 +379,7 @@ function OrdersHistory({ orders, rateKey, onPress }: { orders: any[]; rateKey: s
                 {!!o.load_date && <Text style={styles.orderDate}>{o.load_date}</Text>}
               </View>
               <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                <Text style={styles.orderRate}>{o[rateKey] ? `${Number(o[rateKey]).toLocaleString()} ₽` : '—'}</Text>
+                <Text style={styles.orderRate}>{o[rateKey] ? `${Number(o[rateKey]).toLocaleString()} Br` : '—'}</Text>
                 <Text style={[styles.orderStatus, { color: statusColor(o.status) }]}>{STATUS_LABELS[o.status] || o.status}</Text>
               </View>
             </TouchableOpacity>
@@ -340,7 +388,7 @@ function OrdersHistory({ orders, rateKey, onPress }: { orders: any[]; rateKey: s
         {count > 0 && (
           <View style={styles.orderTotals}>
             <Text style={styles.orderTotalsLabel}>Итого {count} {word}</Text>
-            <Text style={styles.orderTotalsValue}>{Number(total).toLocaleString()} ₽</Text>
+            <Text style={styles.orderTotalsValue}>{Number(total).toLocaleString()} Br</Text>
           </View>
         )}
       </View>
@@ -350,7 +398,7 @@ function OrdersHistory({ orders, rateKey, onPress }: { orders: any[]; rateKey: s
 
 function Section({ title, children }: any) {
   return (
-    <View style={{ marginBottom: 12 }}>
+    <View style={{ marginBottom: 0 }}>
       <Text style={styles.sectionTitle}>{title}</Text>
       <View style={styles.section}>{children}</View>
     </View>
@@ -379,45 +427,21 @@ function Row({ label, value, mono, multiline, onCopy }: any) {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  topTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600', flex: 1, textAlign: 'center' },
-  headerCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 16, padding: 20, alignItems: 'center', marginBottom: 12 },
+
+  headerCard: { backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: 16, padding: 20, alignItems: 'center' },
   avatar: { width: 64, height: 64, borderRadius: 14, backgroundColor: theme.colors.accent + '15', borderWidth: 1, borderColor: theme.colors.accent + '40', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   name: { color: theme.colors.textPrimary, fontSize: 18, fontWeight: '600', textAlign: 'center' },
   contact: { color: theme.colors.textSecondary, fontSize: 13, marginTop: 4 },
   ratingBox: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 },
   rating: { color: theme.colors.accent, fontSize: 14, fontWeight: '700' },
-  callBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: theme.colors.accent, borderRadius: 8 },
-  callText: { color: '#000', fontSize: 13, fontWeight: '700' },
+  callBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: theme.colors.accent, borderRadius: 10 },
+  callText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
   sectionTitle: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 8, marginLeft: 4 },
-  section: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 16 },
+  section: { backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 16 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   rowLabel: { color: theme.colors.textTertiary, fontSize: 12, fontWeight: '600', minWidth: 110 },
   rowValue: { color: theme.colors.textPrimary, fontSize: 13, fontWeight: '500', textAlign: 'right', flexShrink: 1 },
-
-  groupLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.accent, marginTop: 16, marginBottom: 8 },
-  fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 6, marginTop: 4 },
-  dropdownBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: theme.colors.surfaceElevated, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 16 },
-  dropdownValue: { color: theme.colors.textPrimary, fontSize: 15, flex: 1, marginRight: 8 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', paddingBottom: 20 },
-  sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  sheetTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
-  sheetItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  sheetItemActive: { backgroundColor: theme.colors.accent + '10' },
-  sheetItemLabel: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '500', flex: 1 },
-  miniLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.4, color: theme.colors.textTertiary, marginBottom: 6 },
-  choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  pill: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.colors.surfaceElevated, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
-  pillActive: { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent },
-  pillText: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
-  pillTextActive: { color: theme.colors.accent },
-  saveBtn: { flex: 1, backgroundColor: theme.colors.accent, paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
-  saveText: { color: '#000', fontSize: 14, fontWeight: '700' },
-  cancelBtn: { flex: 1, backgroundColor: theme.colors.surfaceElevated, paddingVertical: 14, borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border },
-  cancelText: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '600' },
 
   emptyOrders: { color: theme.colors.textTertiary, fontSize: 13, paddingVertical: 16, textAlign: 'center' },
   orderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
