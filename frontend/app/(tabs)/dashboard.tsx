@@ -14,6 +14,7 @@ import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ROLE_KEY } from '../../src/auth';
 import AnalyticsTab from '../../src/components/AnalyticsTab';
+import { MiniChart } from '../../src/components/MiniChart';
 
 const MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
@@ -925,24 +926,23 @@ function PressableGradient({ colors, onPress, children, style }: { colors: strin
 
 function ExpandModal({ visible, onClose, title, subtitle, children }: { visible: boolean; onClose: () => void; title: string; subtitle?: string; children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
-  const progress = useSharedValue(0);
+  const translateY = useSharedValue(500);
+  const overlayOpacity = useSharedValue(0);
 
   useEffect(() => {
     if (visible) {
-      progress.value = withSpring(1, { damping: 18, stiffness: 180 });
+      overlayOpacity.value = withTiming(1, { duration: 250 });
+      translateY.value = withSpring(0, { damping: 26, stiffness: 220, mass: 0.8 });
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } else {
-      progress.value = withTiming(0, { duration: 250 });
+      overlayOpacity.value = withTiming(0, { duration: 200 });
+      translateY.value = withTiming(500, { duration: 280 });
     }
   }, [visible]);
 
-  const overlayStyle = useAnimatedStyle(() => ({ opacity: interpolate(progress.value, [0, 1], [0, 1]) }));
+  const overlayStyle = useAnimatedStyle(() => ({ opacity: overlayOpacity.value }));
   const sheetStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateY: interpolate(progress.value, [0, 1], [120, 0]) },
-      { scale: interpolate(progress.value, [0, 1], [0.94, 1]) },
-    ],
-    opacity: interpolate(progress.value, [0, 1], [0, 1]),
+    transform: [{ translateY: translateY.value }],
   }));
 
   if (!visible) return null;
@@ -1123,35 +1123,14 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
     });
     const entries = Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b));
     if (entries.length < 2) return null;
-    const maxVal = Math.max(...entries.map(([, v]) => v), 1);
-    const pts = entries.map(([, val], i) => ({
-      x: (i / (entries.length - 1)) * W,
-      y: H - (val / maxVal) * H * 0.85,
-    }));
-    const linePath = smoothPath(pts);
-    const fillPath = linePath + ` L ${W} ${H} L 0 ${H} Z`;
+    const chartData = entries.map(([, v]) => v);
+    const chartLabels = entries.map(([ym]) => MONTHS[parseInt(ym.slice(5), 10) - 1]);
 
     return (
       <View style={cStyles.chartCard}>
         <Text style={cStyles.header}>Прибыль по периодам</Text>
         <Text style={cStyles.headerSub}>По месяцам</Text>
-        <Svg width={W} height={H} style={{ marginBottom: 8 }}>
-          <Defs>
-            <SvgGradient id="fillAll" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor="#2563EB" stopOpacity="0.2" />
-              <Stop offset="1" stopColor="#2563EB" stopOpacity="0" />
-            </SvgGradient>
-          </Defs>
-          <Path d={fillPath} fill="url(#fillAll)" />
-          <Path d={linePath} stroke="#2563EB" strokeWidth={2.5} fill="none" strokeLinecap="round" />
-        </Svg>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          {entries.filter((_, i) => i === 0 || i === Math.floor(entries.length / 2) || i === entries.length - 1).map(([ym]) => (
-            <Text key={ym} style={{ fontSize: 10, color: theme.colors.textTertiary }}>
-              {MONTHS[parseInt(ym.slice(5), 10) - 1]}
-            </Text>
-          ))}
-        </View>
+        <MiniChart data={chartData} width={W} height={110} color="#2563EB" showTooltip labels={chartLabels} />
       </View>
     );
   }

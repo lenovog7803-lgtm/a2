@@ -6,10 +6,10 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { X } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
-import { Field } from '../../src/components/Field';
 import { Picker } from '../../src/components/Picker';
 import { DateField } from '../../src/components/DateField';
 import { CityInput } from '../../src/components/CityInput';
+import { FormField, FormSection } from '../../src/components/FormField';
 
 const DRAFT_KEY = 'draft_order';
 
@@ -155,36 +155,47 @@ export default function NewOrder() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: insets.bottom + 100 }}>
-        <Field label="Номер заявки" value={data.order_number} onChangeText={(v: string) => update({ order_number: v })} testID="new-order-number" />
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 100 }}>
+        <FormSection title="ОСНОВНОЕ">
+          <FormField label="Номер заявки" value={data.order_number} onChangeText={(v: string) => update({ order_number: v })} testID="new-order-number" />
+          <Picker label="Клиент" value={data.client_id} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client-new" />
+          <Picker label="Перевозчик" value={data.carrier_id} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier-new" />
+        </FormSection>
 
-        <Picker label="Клиент" value={data.client_id} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client-new" />
-        <Picker label="Перевозчик" value={data.carrier_id} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier-new" />
+        <FormSection title="МАРШРУТ">
+          <CityInput label="Откуда (город)" value={data.route_from} onChangeText={(v: string) => update({ route_from: v })} testID="new-from" />
+          <CityInput label="Куда (город)" value={data.route_to} onChangeText={(v: string) => update({ route_to: v })} testID="new-to" />
+          <FormField label="Адрес загрузки" multiline value={data.route_from_address} onChangeText={(v: string) => update({ route_from_address: v })} />
+          <FormField label="Адрес выгрузки" multiline value={data.route_to_address} onChangeText={(v: string) => update({ route_to_address: v })} />
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={{ flex: 1 }}><DateField label="Дата загр." value={data.load_date} onChange={(v: string) => update({ load_date: v })} /></View>
+            <View style={{ flex: 1 }}><DateField label="Дата выгр." value={data.unload_date} onChange={(v: string) => update({ unload_date: v })} /></View>
+          </View>
+        </FormSection>
 
-        <Text style={styles.groupLabel}>МАРШРУТ</Text>
-        <CityInput label="Откуда (город)" value={data.route_from} onChangeText={(v: string) => update({ route_from: v })} testID="new-from" />
-        <CityInput label="Куда (город)" value={data.route_to} onChangeText={(v: string) => update({ route_to: v })} testID="new-to" />
-        <Field label="Точный адрес загрузки" multiline value={data.route_from_address} onChangeText={(v: string) => update({ route_from_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
-        <Field label="Точный адрес выгрузки" multiline value={data.route_to_address} onChangeText={(v: string) => update({ route_to_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ flex: 1 }}><DateField label="Дата загр." value={data.load_date} onChange={(v: string) => update({ load_date: v })} /></View>
-          <View style={{ flex: 1 }}><DateField label="Дата выгр." value={data.unload_date} onChange={(v: string) => update({ unload_date: v })} /></View>
-        </View>
+        <FormSection title="ТРАНСПОРТ">
+          <FormField label="Данные на ТС" multiline value={data.driver_name} onChangeText={(v: string) => update({ driver_name: v })} />
+        </FormSection>
 
-        <Text style={styles.groupLabel}>ДАННЫЕ ПО ВОДИТЕЛЮ И ТС</Text>
-        <Field label="Данные на ТС" multiline value={data.driver_name} onChangeText={(v: string) => update({ driver_name: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
+        <FormSection title="ФИНАНСЫ">
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <FormField label="Ставка клиента, Br" keyboardType="numeric" value={String(data.client_rate || '')} onChangeText={(v: string) => update({ client_rate: parseFloat(v) || 0 })} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <FormField label="Ставка перев., Br" keyboardType="numeric" value={String(data.carrier_rate || '')} onChangeText={(v: string) => update({ carrier_rate: parseFloat(v) || 0 })} />
+            </View>
+          </View>
+          <FormField label="Дней на оплату перевозчика" keyboardType="numeric" value={String(data.carrier_payment_days ?? 20)} onChangeText={(v: string) => update({ carrier_payment_days: parseInt(v) || 20 })} />
+          <FormField label="Груз" value={data.cargo} onChangeText={(v: string) => update({ cargo: v })} />
+        </FormSection>
 
-        <Text style={styles.groupLabel}>ГРУЗ И СТАВКИ</Text>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ flex: 1 }}><Field label="Ставка клиента, Br" keyboardType="numeric" value={String(data.client_rate || '')} onChangeText={(v: string) => update({ client_rate: parseFloat(v) || 0 })} /></View>
-          <View style={{ flex: 1 }}><Field label="Ставка перев., Br" keyboardType="numeric" value={String(data.carrier_rate || '')} onChangeText={(v: string) => update({ carrier_rate: parseFloat(v) || 0 })} /></View>
-        </View>
-        <Field label="Банковских дней на оплату перевозчика" keyboardType="numeric" value={String(data.carrier_payment_days ?? 20)} onChangeText={(v: string) => update({ carrier_payment_days: parseInt(v) || 20 })} />
-        <Field label="Груз" value={data.cargo} onChangeText={(v: string) => update({ cargo: v })} />
-        <Field label="Заметки" multiline value={data.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 70, textAlignVertical: 'top' }} />
+        <FormSection title="ЗАМЕТКИ">
+          <FormField label="Заметки" multiline value={data.notes} onChangeText={(v: string) => update({ notes: v })} />
+        </FormSection>
 
         <TouchableOpacity testID="create-order-submit" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8}>
-          {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveText}>Создать заявку</Text>}
+          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Создать заявку</Text>}
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -192,10 +203,9 @@ export default function NewOrder() {
 }
 
 const styles = StyleSheet.create({
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border },
   iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   topTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
-  groupLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.accent, marginTop: 12, marginBottom: 10 },
-  saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 16 },
-  saveText: { color: '#000', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
+  saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginTop: 8, marginBottom: 8 },
+  saveText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
 });

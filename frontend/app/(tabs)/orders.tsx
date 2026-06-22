@@ -2,10 +2,10 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput, Modal, TouchableWithoutFeedback } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, ArrowRight, MapPin, Calendar, AlertTriangle, Filter as FilterIcon, RefreshCw, Search, Menu } from 'lucide-react-native';
-import { theme, formatMoney, statusLabels, statusColors } from '../../src/theme';
+import { Plus, AlertTriangle, Filter as FilterIcon, RefreshCw, Search, Menu } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { theme, formatMoney, statusLabels } from '../../src/theme';
 import { api } from '../../src/api';
-import { Badge } from '../../src/components/Badge';
 import { Picker } from '../../src/components/Picker';
 
 const PAY_FILTER = [
@@ -31,6 +31,44 @@ const daysSince = (dateStr: string): number => {
   if (isNaN(d)) return 0;
   return Math.floor((Date.now() - d) / (1000 * 60 * 60 * 24));
 };
+
+const formatDate = (iso: string): string => {
+  if (!iso) return '—';
+  const d = iso.slice(0, 10).split('-');
+  return `${d[2]}.${d[1]}.${d[0]}`;
+};
+
+function getOrderGradient(order: any): [string, string] {
+  if (theme.dark) {
+    if (isOverdue(order)) return ['#2D1212', '#1F0A0A'];
+    switch (order.status) {
+      case 'delivered': return ['#0A1F12', '#0D2618'];
+      case 'in_progress': return ['#0A1525', '#0D1D36'];
+      case 'new':       return ['#150D2D', '#1A1038'];
+      case 'cancelled': return ['#1A1A1A', '#141414'];
+      default:          return ['#1C1C1E', '#141414'];
+    }
+  }
+  if (isOverdue(order)) return ['#FFF0EF', '#FEE8E8'];
+  switch (order.status) {
+    case 'delivered': return ['#F0FDF4', '#E8F8F0'];
+    case 'in_progress': return ['#EFF6FF', '#E8F2FF'];
+    case 'new':       return ['#F5F3FF', '#EEE9FF'];
+    case 'cancelled': return ['#F8F8F8', '#F0F0F0'];
+    default:          return ['#FFFFFF', '#F8F8F8'];
+  }
+}
+
+function getOrderAccent(order: any): string {
+  if (isOverdue(order)) return '#EF4444';
+  switch (order.status) {
+    case 'delivered':   return '#16A34A';
+    case 'in_progress': return '#2563EB';
+    case 'new':         return '#7C3AED';
+    case 'cancelled':   return '#9CA3AF';
+    default:            return '#6B7280';
+  }
+}
 
 const countBusinessDays = (from: Date, to: Date): number => {
   let count = 0;
@@ -264,52 +302,103 @@ function OrderCard({ order, onPress, testID }: any) {
   const margin = (order.client_rate || 0) - (order.carrier_rate || 0);
   const overdue = isOverdue(order);
   const days = daysSince(order.load_date);
+  const accent = getOrderAccent(order);
+  const gradColors = getOrderGradient(order);
 
   return (
-    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.7} style={[styles.card, overdue && styles.cardOverdue, order.is_overdue && styles.cardDeliveryOverdue]}>
-      {overdue && (
-        <View style={styles.overdueBanner}>
-          <AlertTriangle size={12} color={theme.colors.bg} strokeWidth={2} />
-          <Text style={styles.overdueText}>ПРОСРОЧКА · {days} ДН. БЕЗ ОПЛАТЫ ОТ КЛИЕНТА</Text>
+    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.82} style={{ marginHorizontal: 16, marginBottom: 8 }}>
+      <LinearGradient
+        colors={gradColors}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{
+          borderRadius: 16,
+          padding: 14,
+          borderWidth: 0.5,
+          borderColor: accent + '30',
+          shadowColor: accent,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: theme.dark ? 0.3 : 0.06,
+          shadowRadius: 8,
+          elevation: 2,
+          overflow: 'hidden',
+        }}
+      >
+        {overdue && (
+          <View style={[styles.overdueBanner, { marginHorizontal: -14, marginTop: -14 }]}>
+            <AlertTriangle size={11} color="#fff" strokeWidth={2} />
+            <Text style={styles.overdueText}>ПРОСРОЧКА · {days} ДН. БЕЗ ОПЛАТЫ</Text>
+          </View>
+        )}
+
+        {/* Row 1: number + status badge */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: accent, letterSpacing: 0.5 }}>
+            {order.order_number}
+          </Text>
+          <View style={{ backgroundColor: accent + '18', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 }}>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: accent }}>
+              {statusLabels[order.status] || order.status}
+            </Text>
+          </View>
         </View>
-      )}
-      <View style={styles.cardHeader}>
-        <Text style={styles.orderNum}>{order.order_number}</Text>
-        <Badge label={statusLabels[order.status] || order.status} color={statusColors[order.status] || theme.colors.textTertiary} />
-      </View>
 
-      <View style={styles.routeRow}>
-        <MapPin size={14} color={theme.colors.accent} strokeWidth={1.6} />
-        <Text style={styles.routeText} numberOfLines={1}>{order.route_from}</Text>
-        <ArrowRight size={14} color={theme.colors.textTertiary} strokeWidth={1.6} />
-        <Text style={styles.routeText} numberOfLines={1}>{order.route_to}</Text>
-      </View>
+        {/* Row 2: client */}
+        <Text style={{ fontSize: 13, color: theme.dark ? '#E5E7EB' : '#1a1a2e', fontWeight: '500', marginBottom: 3 }} numberOfLines={1}>
+          {order.client_name || '—'}
+        </Text>
 
-      <Text style={styles.client} numberOfLines={1}>{order.client_name || '—'}</Text>
+        {/* Row 3: route */}
+        <Text style={{ fontSize: 11, color: theme.dark ? '#9CA3AF' : '#6B7280', marginBottom: 8 }} numberOfLines={1}>
+          {order.route_from} → {order.route_to}
+        </Text>
 
-      <View style={styles.bottomRow}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Calendar size={12} color={theme.colors.textTertiary} strokeWidth={1.6} />
-          <Text style={styles.date}>{order.load_date || '—'}</Text>
+        {/* Row 4: date + rate + margin */}
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ fontSize: 11, color: theme.dark ? '#9CA3AF' : '#9CA3AF', flex: 1 }}>
+            {order.load_date ? formatDate(order.load_date) : '—'}
+          </Text>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: theme.dark ? '#F9FAFB' : '#1a1a2e' }}>
+            {formatMoney(order.client_rate)}
+          </Text>
+          {order.client_rate > 0 && order.carrier_rate > 0 && (
+            <Text style={{ fontSize: 11, color: margin >= 0 ? '#16A34A' : '#EF4444', marginLeft: 8, fontWeight: '500' }}>
+              {margin >= 0 ? '+' : ''}{formatMoney(margin)}
+            </Text>
+          )}
         </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.rate}>{formatMoney(order.client_rate)}</Text>
-          <Text style={[styles.margin, { color: margin >= 0 ? theme.colors.profit : theme.colors.loss }]}>+{formatMoney(margin)} маржа</Text>
-        </View>
-      </View>
 
-      <View style={styles.payRow}>
-        <View style={[styles.payDot, { backgroundColor: order.client_paid ? theme.colors.profit : theme.colors.surfaceHigh }]} />
-        <Text style={[styles.payText, { color: order.client_paid ? theme.colors.profit : theme.colors.textTertiary }]}>{order.client_paid ? 'Клиент оплатил' : 'Ждём от клиента'}</Text>
-        <View style={{ width: 12 }} />
-        <View style={[styles.payDot, { backgroundColor: order.carrier_paid ? theme.colors.profit : theme.colors.surfaceHigh }]} />
-        <Text style={[styles.payText, { color: order.carrier_paid ? theme.colors.profit : theme.colors.textTertiary }]}>{order.carrier_paid ? 'Перевозчик оплачен' : 'Долг перевозчику'}</Text>
-        {!order.carrier_paid && order.docs_from_carrier_received && order.carrier_payment_deadline && (() => {
-          const dl = countBusinessDays(new Date(), new Date(order.carrier_payment_deadline));
-          const color = dl <= 3 ? '#FF3B30' : dl <= 5 ? '#FF9500' : theme.colors.textTertiary;
-          return <Text style={[styles.payText, { color, marginLeft: 4 }]}>{`💸 ${dl} дн.`}</Text>;
-        })()}
-      </View>
+        {/* Row 5: pay status badges */}
+        <View style={{ flexDirection: 'row', gap: 5, marginTop: 8 }}>
+          {order.client_paid ? (
+            <View style={{ backgroundColor: '#16A34A18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+              <Text style={{ fontSize: 9, color: '#16A34A', fontWeight: '600' }}>✓ Клиент</Text>
+            </View>
+          ) : (
+            <View style={{ backgroundColor: '#FF950018', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+              <Text style={{ fontSize: 9, color: '#FF9500', fontWeight: '600' }}>Ждём клиента</Text>
+            </View>
+          )}
+          {order.carrier_paid ? (
+            <View style={{ backgroundColor: '#2563EB18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+              <Text style={{ fontSize: 9, color: '#2563EB', fontWeight: '600' }}>✓ Перевозчик</Text>
+            </View>
+          ) : (
+            <View style={{ backgroundColor: '#7C3AED18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+              <Text style={{ fontSize: 9, color: '#7C3AED', fontWeight: '600' }}>Долг перевозч.</Text>
+            </View>
+          )}
+          {!order.carrier_paid && order.carrier_payment_deadline && (() => {
+            const dl = countBusinessDays(new Date(), new Date(order.carrier_payment_deadline));
+            const c = dl <= 3 ? '#FF3B30' : dl <= 5 ? '#FF9500' : '#9CA3AF';
+            return (
+              <View style={{ backgroundColor: c + '18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                <Text style={{ fontSize: 9, color: c, fontWeight: '600' }}>💸 {dl} дн.</Text>
+              </View>
+            );
+          })()}
+        </View>
+      </LinearGradient>
     </TouchableOpacity>
   );
 }

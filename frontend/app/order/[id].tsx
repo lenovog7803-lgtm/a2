@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X, Trash2, Copy, Check, AlertTriangle, FileText, ExternalLink, RefreshCw, Calendar, History } from 'lucide-react-native';
+import { X, Trash2, Copy, Check, AlertTriangle, FileText, ExternalLink, Calendar, History } from 'lucide-react-native';
 import { theme, formatMoney, statusLabels } from '../../src/theme';
 import { api } from '../../src/api';
-import { Field } from '../../src/components/Field';
 import { Picker } from '../../src/components/Picker';
 import { DateField } from '../../src/components/DateField';
+import { FormField, FormSection, PillPicker } from '../../src/components/FormField';
 
 const STATUS_OPTIONS = ['new', 'in_progress', 'delivered', 'cancelled'];
 
@@ -231,7 +231,7 @@ export default function OrderDetail() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 100 }}>
         {overdue && (
           <View style={styles.overdueBanner}>
             <AlertTriangle size={16} color="#fff" strokeWidth={2} />
@@ -257,54 +257,52 @@ export default function OrderDetail() {
           </View>
         )}
 
-        <Field label="Номер заявки" value={order.order_number} onChangeText={(v: string) => update({ order_number: v })} />
-
-        <Picker label="Клиент" value={order.client_id || ''} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client" />
-        <Picker label="Перевозчик" value={order.carrier_id || ''} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier" />
-        {!!order.carrier_id && (
-          <TouchableOpacity
-            onPress={() => router.push(`/carrier/${order.carrier_id}`)}
-            style={styles.entityLink}
-            activeOpacity={0.7}
-          >
-            <ExternalLink size={13} color={theme.colors.accent} strokeWidth={1.8} />
-            <Text style={styles.entityLinkText}>Карточка перевозчика</Text>
-          </TouchableOpacity>
-        )}
-
-        <Text style={styles.groupLabel}>МАРШРУТ</Text>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ flex: 1 }}><Field label="Откуда (город)" value={order.route_from} onChangeText={(v: string) => update({ route_from: v })} /></View>
-          <View style={{ flex: 1 }}><Field label="Куда (город)" value={order.route_to} onChangeText={(v: string) => update({ route_to: v })} /></View>
-        </View>
-        <Field label="Точный адрес загрузки" multiline value={order.route_from_address} onChangeText={(v: string) => update({ route_from_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
-        <Field label="Точный адрес выгрузки" multiline value={order.route_to_address} onChangeText={(v: string) => update({ route_to_address: v })} style={{ minHeight: 60, textAlignVertical: 'top' }} />
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ flex: 1 }}><DateField label="Дата загрузки" value={order.load_date} onChange={(v: string) => update({ load_date: v })} /></View>
-          <View style={{ flex: 1 }}><DateField label="Дата выгрузки" value={order.unload_date} onChange={(v: string) => update({ unload_date: v })} /></View>
-        </View>
-
-        <Text style={styles.groupLabel}>ДАННЫЕ ПО ВОДИТЕЛЮ И ТС</Text>
-        <Field label="Данные на ТС" multiline value={order.driver_name || ''} onChangeText={(v: string) => update({ driver_name: v })} style={{ minHeight: 80, textAlignVertical: 'top' }} />
-
-        <Text style={styles.groupLabel}>ГРУЗ И СТАВКИ</Text>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ flex: 1 }}><Field label="Ставка клиента, Br" keyboardType="numeric" value={String(order.client_rate || '')} onChangeText={(v: string) => update({ client_rate: parseFloat(v) || 0 })} /></View>
-          <View style={{ flex: 1 }}><Field label="Ставка перев., Br" keyboardType="numeric" value={String(order.carrier_rate || '')} onChangeText={(v: string) => update({ carrier_rate: parseFloat(v) || 0 })} /></View>
-        </View>
-        <Field label="Груз" value={order.cargo} onChangeText={(v: string) => update({ cargo: v })} />
-        <Field label="Вес, тонн" keyboardType="numeric" value={String(order.weight_tons || '')} onChangeText={(v: string) => update({ weight_tons: parseFloat(v) || 0 })} />
-
-        <Text style={styles.groupLabel}>СТАТУС</Text>
-        <View style={styles.choiceRow}>
-          {STATUS_OPTIONS.map(s => (
-            <TouchableOpacity key={s} onPress={() => update({ status: s })} style={[styles.choice, order.status === s && styles.choiceActive]} activeOpacity={0.7}>
-              <Text style={[styles.choiceText, order.status === s && styles.choiceTextActive]}>{statusLabels[s]}</Text>
+        <FormSection title="ОСНОВНОЕ">
+          <FormField label="Номер заявки" value={order.order_number} onChangeText={(v: string) => update({ order_number: v })} />
+          <Picker label="Клиент" value={order.client_id || ''} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client" />
+          <Picker label="Перевозчик" value={order.carrier_id || ''} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier" />
+          {!!order.carrier_id && (
+            <TouchableOpacity onPress={() => router.push(`/carrier/${order.carrier_id}`)} style={styles.entityLink} activeOpacity={0.7}>
+              <ExternalLink size={13} color={theme.colors.accent} strokeWidth={1.8} />
+              <Text style={styles.entityLinkText}>Карточка перевозчика</Text>
             </TouchableOpacity>
-          ))}
-        </View>
+          )}
+          <FormField label="Статус">
+            <PillPicker
+              options={STATUS_OPTIONS.map(s => ({ id: s, label: statusLabels[s] || s }))}
+              value={order.status}
+              onChange={(s: string) => update({ status: s })}
+            />
+          </FormField>
+        </FormSection>
 
-        <Text style={styles.groupLabel}>ОПЛАТЫ</Text>
+        <FormSection title="МАРШРУТ">
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={{ flex: 1 }}><FormField label="Откуда" value={order.route_from} onChangeText={(v: string) => update({ route_from: v })} /></View>
+            <View style={{ flex: 1 }}><FormField label="Куда" value={order.route_to} onChangeText={(v: string) => update({ route_to: v })} /></View>
+          </View>
+          <FormField label="Адрес загрузки" multiline value={order.route_from_address} onChangeText={(v: string) => update({ route_from_address: v })} />
+          <FormField label="Адрес выгрузки" multiline value={order.route_to_address} onChangeText={(v: string) => update({ route_to_address: v })} />
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={{ flex: 1 }}><DateField label="Дата загрузки" value={order.load_date} onChange={(v: string) => update({ load_date: v })} /></View>
+            <View style={{ flex: 1 }}><DateField label="Дата выгрузки" value={order.unload_date} onChange={(v: string) => update({ unload_date: v })} /></View>
+          </View>
+        </FormSection>
+
+        <FormSection title="ТРАНСПОРТ">
+          <FormField label="Данные на ТС" multiline value={order.driver_name || ''} onChangeText={(v: string) => update({ driver_name: v })} />
+        </FormSection>
+
+        <FormSection title="ФИНАНСЫ">
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={{ flex: 1 }}><FormField label="Ставка клиента, Br" keyboardType="numeric" value={String(order.client_rate || '')} onChangeText={(v: string) => update({ client_rate: parseFloat(v) || 0 })} /></View>
+            <View style={{ flex: 1 }}><FormField label="Ставка перев., Br" keyboardType="numeric" value={String(order.carrier_rate || '')} onChangeText={(v: string) => update({ carrier_rate: parseFloat(v) || 0 })} /></View>
+          </View>
+          <FormField label="Груз" value={order.cargo} onChangeText={(v: string) => update({ cargo: v })} />
+          <FormField label="Вес, тонн" keyboardType="numeric" value={String(order.weight_tons || '')} onChangeText={(v: string) => update({ weight_tons: parseFloat(v) || 0 })} />
+        </FormSection>
+
+        <FormSection title="ОПЛАТЫ">
         <DocToggle
           label="Клиент оплатил"
           value={order.client_paid}
@@ -334,7 +332,9 @@ export default function OrderDetail() {
           deadlineColor={deadlineColor}
         />
 
-        <Text style={styles.groupLabel}>ДОКУМЕНТЫ</Text>
+        </FormSection>
+
+        <FormSection title="ДОКУМЕНТЫ">
         <DocToggle
           label="Документы отправлены клиенту"
           value={order.docs_to_client_sent}
@@ -384,12 +384,17 @@ export default function OrderDetail() {
           testID="doc-from-carrier"
         />
 
-        <Field label="Заметки" multiline value={order.notes} onChangeText={(v: string) => update({ notes: v })} style={{ minHeight: 80, textAlignVertical: 'top', marginTop: 16 }} />
+        </FormSection>
 
-        <Text style={styles.groupLabel}>ДОКУМЕНТЫ GOOGLE DOCS</Text>
-        <DocGenButton label="Заявка клиенту" url={order.doc_url_client} />
-        <DocGenButton label="Договор-заявка перевозчику" url={order.doc_url_carrier} />
-        <DocGenButton label="Счёт-Акт" url={order.doc_url_act} />
+        <FormSection title="ЗАМЕТКИ">
+          <FormField label="Заметки" multiline value={order.notes} onChangeText={(v: string) => update({ notes: v })} />
+        </FormSection>
+
+        <FormSection title="GOOGLE DOCS">
+          <DocGenButton label="Заявка клиенту" url={order.doc_url_client} />
+          <DocGenButton label="Договор-заявка перевозчику" url={order.doc_url_carrier} />
+          <DocGenButton label="Счёт-Акт" url={order.doc_url_act} />
+        </FormSection>
 
         {!!order.calendar_event_url && (
           <TouchableOpacity onPress={() => Linking.openURL(order.calendar_event_url)} style={styles.calBtn} activeOpacity={0.8}>
@@ -404,7 +409,7 @@ export default function OrderDetail() {
         </TouchableOpacity>
 
         <TouchableOpacity testID="save-btn" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8}>
-          {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveText}>Сохранить</Text>}
+          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Сохранить</Text>}
         </TouchableOpacity>
       </ScrollView>
 
@@ -516,12 +521,6 @@ const styles = StyleSheet.create({
   sumLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary, marginBottom: 4 },
   sumValue: { fontSize: 22, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
 
-  groupLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.accent, marginTop: 16, marginBottom: 10 },
-  choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
-  choice: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.colors.surfaceElevated, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
-  choiceActive: { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent },
-  choiceText: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
-  choiceTextActive: { color: theme.colors.accent },
 
   toggle: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 14, backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 8 },
   toggleOn: { borderColor: theme.colors.profit + '40', backgroundColor: theme.colors.profit + '08' },
@@ -539,8 +538,8 @@ const styles = StyleSheet.create({
   },
   logsBtnText: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' },
 
-  saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 12 },
-  saveText: { color: '#000', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
+  saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginTop: 8, marginBottom: 8 },
+  saveText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
 
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   modalSheet: {
