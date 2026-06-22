@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, Modal, FlatList } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, Modal, FlatList, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { X, Trash2, Edit3, Phone, Star, Truck as TruckIcon, Copy, ChevronDown, Check } from 'lucide-react-native';
@@ -7,6 +7,9 @@ import * as Clipboard from 'expo-clipboard';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
+import { MiniChart } from '../../src/components/MiniChart';
+
+const MONTHS_SHORT = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
 const BASIS_OPTIONS = [
   { id: 'устава', label: 'Устава' },
@@ -17,6 +20,7 @@ const VEHICLES = ['Тент', 'Реф', 'Изотерм', 'Бортовой', '�
 
 export default function CarrierDetail() {
   const insets = useSafeAreaInsets();
+  const { width: screenW } = useWindowDimensions();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [carrier, setCarrier] = useState<any>(null);
@@ -118,6 +122,26 @@ export default function CarrierDetail() {
                 </TouchableOpacity>
               )}
             </View>
+
+            {/* Trips MiniChart */}
+            {orders.length > 1 && (() => {
+              const last6 = Array.from({ length: 6 }, (_, i) => {
+                const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 5 + i);
+                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+              });
+              const tripsData = last6.map(ym =>
+                orders.filter((o: any) => (o.unload_date || o.load_date || '').startsWith(ym)).length
+              );
+              if (tripsData.every((v: number) => v === 0)) return null;
+              const mLabels = last6.map(ym => MONTHS_SHORT[parseInt(ym.slice(5), 10) - 1]);
+              const chartW = screenW - 40 - 36;
+              return (
+                <View style={[styles.section, { marginBottom: 12, padding: 14 }]}>
+                  <Text style={[styles.sectionTitle, { marginBottom: 10 }]}>РЕЙСЫ ПО МЕСЯЦАМ</Text>
+                  <MiniChart data={tripsData} width={chartW} height={80} color="#7C3AED" showTooltip labels={mLabels} />
+                </View>
+              );
+            })()}
 
             {(carrier.capacity_tons || carrier.capacity_m3) ? (
               <Section title="ТРАНСПОРТ">

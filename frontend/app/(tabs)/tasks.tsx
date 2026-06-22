@@ -189,12 +189,9 @@ export default function Tasks() {
   ) : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.bg, paddingTop: insets.top + 16 }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.bg, paddingTop: insets.top + 8 }}>
       <View style={styles.headerWrap}>
-        <View>
-          <Text style={styles.kicker}>ПЛАНИРОВАНИЕ</Text>
-          <Text style={styles.title}>{mode === 'tasks' ? 'Задачи' : mode === 'notes' ? 'Заметки' : 'Инструкции'}</Text>
-        </View>
+        <Text style={styles.title}>{mode === 'tasks' ? 'Задачи' : mode === 'notes' ? 'Заметки' : 'Инструкции'}</Text>
         {mode !== 'instructions' && (
           <TouchableOpacity
             onPress={() => mode === 'tasks' ? router.push('/task/new') : setShowAddNote(true)}
@@ -417,10 +414,9 @@ function TaskCard({ task, onPress, onDone, onDelete }: { task: any; onPress: () 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  headerWrap: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 14 },
-  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 4 },
-  title: { fontSize: 34, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
-  fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
+  headerWrap: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 0, paddingBottom: 12 },
+  title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
+  fab: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
 
   modeToggle: {
     flexDirection: 'row', marginHorizontal: 20, marginBottom: 12,

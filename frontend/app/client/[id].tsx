@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Linking, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { X, Trash2, Edit3, Phone, Mail, Copy } from 'lucide-react-native';
@@ -7,9 +7,13 @@ import * as Clipboard from 'expo-clipboard';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import { Field } from '../../src/components/Field';
+import { MiniChart } from '../../src/components/MiniChart';
+
+const MONTHS_SHORT = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
 export default function ClientDetail() {
   const insets = useSafeAreaInsets();
+  const { width: screenW } = useWindowDimensions();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [client, setClient] = useState<any>(null);
@@ -166,6 +170,27 @@ export default function ClientDetail() {
                 )}
               </View>
             </View>
+
+            {/* Revenue MiniChart */}
+            {orders.length > 1 && (() => {
+              const last6 = Array.from({ length: 6 }, (_, i) => {
+                const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 5 + i);
+                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+              });
+              const revData = last6.map(ym =>
+                orders.filter((o: any) => (o.unload_date || o.load_date || '').startsWith(ym))
+                      .reduce((s: number, o: any) => s + (o.client_rate || 0), 0)
+              );
+              if (revData.every((v: number) => v === 0)) return null;
+              const mLabels = last6.map(ym => MONTHS_SHORT[parseInt(ym.slice(5), 10) - 1]);
+              const chartW = screenW - 40 - 36;
+              return (
+                <View style={[styles.section, { marginBottom: 12, padding: 14 }]}>
+                  <Text style={[styles.sectionTitle, { marginBottom: 10 }]}>ВЫРУЧКА ПО МЕСЯЦАМ</Text>
+                  <MiniChart data={revData} width={chartW} height={80} color="#2563EB" showTooltip labels={mLabels} />
+                </View>
+              );
+            })()}
 
             {/* Реквизиты */}
             {(client.inn || client.kpp || client.legal_address) && (

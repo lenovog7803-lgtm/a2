@@ -124,13 +124,10 @@ export default function Orders() {
   const activeFilters = (payFilter !== 'any' ? 1 : 0) + (docFilter !== 'any' ? 1 : 0);
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.bg, paddingTop: insets.top + 16 }}>
-      <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+      <View style={{ paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 8 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View>
-            <Text style={styles.kicker}>СДЕЛКИ</Text>
-            <Text style={styles.title}>Заявки</Text>
-          </View>
+          <Text style={styles.title}>Заявки</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity testID="mode-btn" onPress={() => setModeVisible(true)} style={styles.iconBtn} activeOpacity={0.7}>
               <Menu size={18} color={theme.colors.textSecondary} strokeWidth={1.6} />
@@ -149,10 +146,10 @@ export default function Orders() {
         </View>
 
         <View style={styles.searchBox}>
-          <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+          <Search size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Поиск по номеру, клиенту, перевозчику, маршруту"
+            placeholder="Поиск..."
             placeholderTextColor={theme.colors.textTertiary}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -232,9 +229,9 @@ export default function Orders() {
           testID="orders-list"
           data={filtered}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.colors.accent} />}
-          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
           renderItem={({ item, index }) => <OrderCard order={item} onPress={() => router.push(`/order/${item.id}`)} testID={`order-card-${index}`} />}
           ListEmptyComponent={<Text style={styles.empty}>Нет заявок по фильтру</Text>}
         />
@@ -319,8 +316,7 @@ function OrderCard({ order, onPress, testID }: any) {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 4 },
-  title: { fontSize: 34, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
+  title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
   fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
   iconBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.surface, alignItems: 'center', justifyContent: 'center', shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 1, shadowRadius: 4, elevation: 1 },
   dot: { position: 'absolute', top: 4, right: 4, minWidth: 16, height: 16, paddingHorizontal: 4, borderRadius: 8, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
@@ -340,27 +336,40 @@ const styles = StyleSheet.create({
   resetBtn: { paddingVertical: 8, alignItems: 'center' },
   resetText: { color: theme.colors.accent, fontSize: 12, fontWeight: '600' },
 
-  card: { backgroundColor: theme.colors.surface, borderRadius: 16, padding: 16, overflow: 'hidden', shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
-  cardOverdue: { shadowColor: theme.colors.loss, shadowOpacity: 0.18 },
-  cardDeliveryOverdue: { borderLeftWidth: 4, borderLeftColor: '#FF3B30' },
-  overdueBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.loss, marginHorizontal: -16, marginTop: -16, marginBottom: 12, paddingVertical: 6, paddingHorizontal: 12 },
+  card: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 14,
+    padding: 12,
+    marginHorizontal: 16,
+    borderWidth: 0.5,
+    borderColor: theme.colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+    overflow: 'hidden',
+  },
+  cardOverdue: { borderColor: theme.colors.loss + '60', shadowColor: theme.colors.loss, shadowOpacity: 0.1 },
+  cardDeliveryOverdue: { borderLeftWidth: 3, borderLeftColor: '#FF3B30' },
+  overdueBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.loss, marginHorizontal: -12, marginTop: -12, marginBottom: 10, paddingVertical: 5, paddingHorizontal: 10 },
   overdueText: { color: theme.colors.bg, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
 
-  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  orderNum: { color: theme.colors.accent, fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
-  routeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  routeText: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600', flexShrink: 1 },
-  client: { color: theme.colors.textSecondary, fontSize: 13, marginBottom: 12 },
-  bottomRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  date: { color: theme.colors.textTertiary, fontSize: 12 },
-  rate: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '700' },
-  margin: { fontSize: 11, fontWeight: '700', marginTop: 2 },
-  payRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.border },
-  payDot: { width: 6, height: 6, borderRadius: 3 },
-  payText: { fontSize: 11, fontWeight: '600' },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  orderNum: { color: theme.colors.accent, fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
+  routeRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
+  routeText: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  client: { color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 },
+  bottomRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  date: { color: theme.colors.textTertiary, fontSize: 11 },
+  rate: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  margin: { fontSize: 10, fontWeight: '700', marginTop: 2 },
+  payRow: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingTop: 8, borderTopWidth: 0.5, borderTopColor: theme.colors.border },
+  payDot: { width: 5, height: 5, borderRadius: 3 },
+  payText: { fontSize: 10, fontWeight: '600' },
   empty: { color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 },
 
-  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surfaceElevated, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginTop: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: theme.colors.surface, borderRadius: 12, marginHorizontal: 16, marginTop: 10, marginBottom: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0.5, borderColor: theme.colors.border },
   searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
 
   modeOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },

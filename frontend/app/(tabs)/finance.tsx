@@ -2,8 +2,9 @@ import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView,
-  Platform, RefreshControl, Linking,
+  Platform, RefreshControl, Linking, useWindowDimensions,
 } from 'react-native';
+import { MiniChart } from '../../src/components/MiniChart';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
@@ -364,6 +365,8 @@ function FinanceInner() {
     }
   };
 
+  const { width: screenW } = useWindowDimensions();
+
   const cm = currentMonth();
   const monthsInOrders = Array.from(new Set(
     orders.map(o => {
@@ -480,7 +483,6 @@ function FinanceInner() {
         contentContainerStyle={{ paddingTop: insets.top + 16, paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.colors.accent} />}
       >
-        <Text style={styles.kicker}>ФИНАНСЫ</Text>
         <Text style={styles.title}>Финансы</Text>
 
         {/* Tab switcher */}
@@ -595,7 +597,24 @@ function FinanceInner() {
               )}
             </View>
 
-            <PlanChart orders={orders} allPlans={allPlans} months={[...monthsInOrders].reverse()} />
+            {(() => {
+              const chartMonths = [...monthsInOrders].reverse();
+              const profitData = chartMonths.map(ym => {
+                const mo = orders.filter(o => orderInPeriod(o, ym));
+                const rev = mo.reduce((s, o) => s + (o.client_rate || 0), 0);
+                const exp = mo.reduce((s, o) => s + (o.carrier_rate || 0), 0);
+                return Math.max(0, (rev - exp) * 0.8);
+              });
+              const mLabels = chartMonths.map(ym => MONTHS[parseInt(ym.slice(5), 10) - 1]);
+              const chartW = screenW - 40 - 36;
+              if (profitData.length < 2) return null;
+              return (
+                <View style={[styles.card, { marginTop: 8, marginBottom: 8 }]}>
+                  <Text style={[styles.sLabel, { marginBottom: 10 }]}>ЧИСТАЯ ПРИБЫЛЬ ПО МЕСЯЦАМ</Text>
+                  <MiniChart data={profitData} width={chartW} height={100} color="#2563EB" showTooltip labels={mLabels} />
+                </View>
+              );
+            })()}
           </>
         ) : tab === 'accounting' ? (
           <>
@@ -1234,8 +1253,7 @@ const webInputStyle: any = {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 6 },
-  title:  { fontSize: 34, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
+  title:  { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
 
   tabRow: {
     flexDirection: 'row',

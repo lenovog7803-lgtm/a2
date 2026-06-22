@@ -98,13 +98,10 @@ export default function Leads() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.bg, paddingTop: insets.top + 16 }}>
-      <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+      <View style={{ paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 8 }}>
         <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.kicker}>ПРОДАЖИ</Text>
-            <Text style={styles.title}>Обзвон</Text>
-          </View>
+          <Text style={styles.title}>Обзвон</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity onPress={syncAndReload} disabled={syncing} style={styles.syncBtn} activeOpacity={0.7}>
               {syncing
@@ -118,10 +115,10 @@ export default function Leads() {
         </View>
 
         <View style={styles.searchBox}>
-          <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+          <Search size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Поиск по имени, компании, телефону, городу"
+            placeholder="Поиск..."
             placeholderTextColor={theme.colors.textTertiary}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -478,10 +475,9 @@ function LeadCard({ lead, onPress, onAction, testID }: any) {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 4 },
-  title: { fontSize: 34, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
-  fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
-  syncBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
+  fab: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
+  syncBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' },
 
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -498,7 +494,8 @@ const styles = StyleSheet.create({
 
   card: {
     backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16,
+    borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: 14, padding: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 2,
   },
   cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 8 },
   name: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
@@ -525,7 +522,7 @@ const styles = StyleSheet.create({
 
   empty: { color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 },
 
-  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginTop: 12 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginTop: 10 },
   searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
 
   industryBtn: {

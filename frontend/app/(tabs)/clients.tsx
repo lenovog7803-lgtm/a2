@@ -1,11 +1,12 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, TextInput } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Linking, TextInput, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Plus, Phone, Mail, Search } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MiniChart } from '../../src/components/MiniChart';
 
 export default function Clients() {
   const insets = useSafeAreaInsets();
@@ -42,22 +43,19 @@ export default function Clients() {
     : clients;
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.bg, paddingTop: insets.top + 16 }}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.kicker}>БАЗА</Text>
-          <Text style={styles.title}>Клиенты</Text>
-        </View>
+    <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+      <View style={{ paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text style={styles.title}>Клиенты</Text>
         <TouchableOpacity testID="add-client-btn" onPress={() => router.push('/client/new')} style={styles.fab} activeOpacity={0.8}>
-          <Plus size={20} color="#000" strokeWidth={2.2} />
+          <Plus size={20} color="#fff" strokeWidth={2.2} />
         </TouchableOpacity>
       </View>
 
       <View style={styles.searchBox}>
-        <Search size={16} color={theme.colors.textTertiary} strokeWidth={1.6} />
+        <Search size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Поиск по названию, контакту, телефону"
+          placeholder="Поиск..."
           placeholderTextColor={theme.colors.textTertiary}
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -74,8 +72,8 @@ export default function Clients() {
           testID="clients-list"
           data={filtered}
           keyExtractor={(i) => i.id}
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
-          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 100 }}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
           renderItem={({ item, index }) => <ClientCard client={item} onPress={() => router.push(`/client/${item.id}`)} testID={`client-card-${index}`} />}
           ListEmptyComponent={<Text style={styles.empty}>Нет клиентов</Text>}
         />
@@ -85,7 +83,9 @@ export default function Clients() {
 }
 
 function ClientCard({ client, onPress, testID }: any) {
+  const { width: screenW } = useWindowDimensions();
   const initials = client.name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase();
+  const chartWidth = screenW - 40 - 28;
 
   return (
     <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.7} style={styles.card}>
@@ -138,20 +138,24 @@ function ClientCard({ client, onPress, testID }: any) {
           </TouchableOpacity>
         )}
       </View>
+      {client.monthlyRevenue && client.monthlyRevenue.length > 1 && (
+        <View style={{ marginTop: 10 }}>
+          <MiniChart data={client.monthlyRevenue} width={chartWidth} height={40} color="#2563EB" showTooltip={false} />
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 16 },
-  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 4 },
-  title: { fontSize: 34, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
-  fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
+  fab: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
 
   card: {
     backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16,
+    borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: 14, padding: 14,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 2,
   },
   avatar: {
     width: 44, height: 44, borderRadius: 22,
@@ -178,6 +182,6 @@ const styles = StyleSheet.create({
   actionText: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '500' },
   empty: { color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 },
 
-  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginHorizontal: 20, marginBottom: 12 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginHorizontal: 16, marginBottom: 10 },
   searchInput: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
 });
