@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { X } from 'lucide-react-native';
+import { ArrowLeft, Plus } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
@@ -26,6 +26,12 @@ const EMPTY: any = {
   cargo: '', weight_tons: 0, notes: '',
 };
 
+const TABS = [
+  { label: 'Основное', key: 'main' },
+  { label: 'Финансы', key: 'finance' },
+  { label: 'Документы', key: 'docs' },
+];
+
 export default function NewOrder() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -34,6 +40,7 @@ export default function NewOrder() {
   const [carriers, setCarriers] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [data, setData] = useState<any>(EMPTY);
+  const [activeTab, setActiveTab] = useState('main');
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isDirtyRef = useRef(false);
 
@@ -75,7 +82,6 @@ export default function NewOrder() {
         return;
       }
 
-      // Check for draft
       const draft = await AsyncStorage.getItem(DRAFT_KEY);
       if (draft) {
         const parsed = JSON.parse(draft);
@@ -95,7 +101,6 @@ export default function NewOrder() {
       }
     })();
 
-    // Auto-save every 3 seconds
     autoSaveRef.current = setInterval(async () => {
       if (isDirtyRef.current) {
         setData((current: any) => {
@@ -139,7 +144,8 @@ export default function NewOrder() {
     } catch (e: any) {
       Alert.alert('Ошибка', e.message);
     } finally {
-      setSaving(false); }
+      setSaving(false);
+    }
   };
 
   const clientItems = clients.map(c => ({ id: c.id, label: c.name, sublabel: c.contact_person || c.phone }));
@@ -147,65 +153,149 @@ export default function NewOrder() {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-          <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
-        </TouchableOpacity>
-        <Text style={styles.topTitle}>{duplicateFrom ? 'Дублирование заявки' : 'Новая заявка'}</Text>
-        <View style={{ width: 40 }} />
+
+      {/* Header */}
+      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 14, backgroundColor: theme.colors.surface, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <TouchableOpacity onPress={() => router.back()} style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: theme.colors.border }}>
+            <ArrowLeft size={16} color={theme.colors.textSecondary} strokeWidth={2} />
+          </TouchableOpacity>
+          <View>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: theme.colors.textPrimary, letterSpacing: -0.4 }}>
+              {duplicateFrom ? 'Дублирование заявки' : 'Создание новой заявки'}
+            </Text>
+            <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 1 }}>Заполните детали перевозки</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          {TABS.map((tab) => (
+            <TouchableOpacity key={tab.key} onPress={() => setActiveTab(tab.key)}
+              style={{ paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, backgroundColor: activeTab === tab.key ? theme.colors.accent : theme.colors.bg, borderWidth: 0.5, borderColor: activeTab === tab.key ? theme.colors.accent : theme.colors.border }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: activeTab === tab.key ? '600' : '400', color: activeTab === tab.key ? '#fff' : theme.colors.textSecondary }}>{tab.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 100 }}>
-        <FormSection title="ОСНОВНОЕ">
-          <FormField label="Номер заявки" value={data.order_number} onChangeText={(v: string) => update({ order_number: v })} testID="new-order-number" />
-          <Picker label="Клиент" value={data.client_id} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client-new" />
-          <Picker label="Перевозчик" value={data.carrier_id} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier-new" />
-        </FormSection>
+      {/* Tab: Основное */}
+      {activeTab === 'main' && (
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 100 }}>
+          <FormSection title="ОСНОВНЫЕ ДАННЫЕ">
+            <FormField label="Номер заявки" value={data.order_number} onChangeText={(v: string) => update({ order_number: v })} testID="new-order-number" placeholder="З-544/2026" />
+            <Picker label="Клиент" value={data.client_id} items={clientItems} onSelect={selectClient} placeholder="Выбрать клиента…" testID="picker-client-new" />
+            <Picker label="Перевозчик" value={data.carrier_id} items={carrierItems} onSelect={selectCarrier} placeholder="Выбрать перевозчика…" testID="picker-carrier-new" />
+          </FormSection>
 
-        <FormSection title="МАРШРУТ">
-          <CityInput label="Откуда (город)" value={data.route_from} onChangeText={(v: string) => update({ route_from: v })} testID="new-from" />
-          <CityInput label="Куда (город)" value={data.route_to} onChangeText={(v: string) => update({ route_to: v })} testID="new-to" />
-          <FormField label="Адрес загрузки" multiline value={data.route_from_address} onChangeText={(v: string) => update({ route_from_address: v })} />
-          <FormField label="Адрес выгрузки" multiline value={data.route_to_address} onChangeText={(v: string) => update({ route_to_address: v })} />
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <View style={{ flex: 1 }}><DateField label="Дата загр." value={data.load_date} onChange={(v: string) => update({ load_date: v })} /></View>
-            <View style={{ flex: 1 }}><DateField label="Дата выгр." value={data.unload_date} onChange={(v: string) => update({ unload_date: v })} /></View>
-          </View>
-        </FormSection>
-
-        <FormSection title="ТРАНСПОРТ">
-          <FormField label="Данные на ТС" multiline value={data.driver_name} onChangeText={(v: string) => update({ driver_name: v })} />
-        </FormSection>
-
-        <FormSection title="ФИНАНСЫ">
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <View style={{ flex: 1 }}>
-              <FormField label="Ставка клиента, Br" keyboardType="numeric" value={String(data.client_rate || '')} onChangeText={(v: string) => update({ client_rate: parseFloat(v) || 0 })} />
+          <FormSection title="МАРШРУТ И ТОЧКИ">
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <CityInput label="Откуда (город)" value={data.route_from} onChangeText={(v: string) => update({ route_from: v })} testID="new-from" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <CityInput label="Куда (город)" value={data.route_to} onChangeText={(v: string) => update({ route_to: v })} testID="new-to" />
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <FormField label="Ставка перев., Br" keyboardType="numeric" value={String(data.carrier_rate || '')} onChangeText={(v: string) => update({ carrier_rate: parseFloat(v) || 0 })} />
+            <FormField label="Адрес загрузки" multiline value={data.route_from_address} onChangeText={(v: string) => update({ route_from_address: v })} placeholder="Улица, дом, склад..." />
+            <FormField label="Адрес выгрузки" multiline value={data.route_to_address} onChangeText={(v: string) => update({ route_to_address: v })} placeholder="Улица, дом, склад..." />
+          </FormSection>
+
+          <FormSection title="ГРАФИК">
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <DateField label="Дата загрузки" value={data.load_date} onChange={(v: string) => update({ load_date: v })} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <DateField label="Дата выгрузки" value={data.unload_date} onChange={(v: string) => update({ unload_date: v })} />
+              </View>
             </View>
+          </FormSection>
+
+          <FormSection title="ТРАНСПОРТ И ГРУЗ">
+            <FormField label="Данные на ТС и водителя" multiline value={data.driver_name} onChangeText={(v: string) => update({ driver_name: v })} placeholder="Гос. номер, марка, ФИО, телефон..." />
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 2 }}>
+                <FormField label="Груз" value={data.cargo} onChangeText={(v: string) => update({ cargo: v })} placeholder="Описание груза" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <FormField label="Вес, т" keyboardType="numeric" value={String(data.weight_tons || '')} onChangeText={(v: string) => update({ weight_tons: parseFloat(v) || 0 })} placeholder="0.0" />
+              </View>
+            </View>
+          </FormSection>
+
+          <FormSection title="ПРИМЕЧАНИЯ">
+            <FormField label="" multiline value={data.notes} onChangeText={(v: string) => update({ notes: v })} placeholder="Дополнительная информация по заказу..." />
+          </FormSection>
+        </ScrollView>
+      )}
+
+      {/* Tab: Финансы */}
+      {activeTab === 'finance' && (
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 100 }}>
+          <FormSection title="ФИНАНСОВЫЕ УСЛОВИЯ">
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <FormField label="Ставка клиента, Br" keyboardType="numeric" value={String(data.client_rate || '')} onChangeText={(v: string) => update({ client_rate: parseFloat(v) || 0 })} placeholder="0.00" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <FormField label="Ставка перевозчика, Br" keyboardType="numeric" value={String(data.carrier_rate || '')} onChangeText={(v: string) => update({ carrier_rate: parseFloat(v) || 0 })} placeholder="0.00" />
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <FormField label="Оплата (дней)" keyboardType="numeric" value={String(data.carrier_payment_days ?? 20)} onChangeText={(v: string) => update({ carrier_payment_days: parseInt(v) || 20 })} placeholder="20" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <FormField label="Тип груза" value={data.cargo} onChangeText={(v: string) => update({ cargo: v })} placeholder="Характеристики..." />
+              </View>
+            </View>
+          </FormSection>
+
+          {!!(data.client_rate && data.carrier_rate) && (
+            <View style={{ backgroundColor: theme.colors.accent + '10', borderRadius: 14, padding: 14, borderWidth: 0.5, borderColor: theme.colors.accent + '30' }}>
+              <Text style={{ fontSize: 11, color: theme.colors.accent, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Предварительная маржа</Text>
+              <Text style={{ fontSize: 24, fontWeight: '700', color: theme.colors.accent, letterSpacing: -0.5 }}>
+                {(data.client_rate - data.carrier_rate).toLocaleString('ru-RU')} Br
+              </Text>
+              <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>
+                {(((data.client_rate - data.carrier_rate) / data.client_rate) * 100).toFixed(1)}% от ставки клиента
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+      )}
+
+      {/* Tab: Документы */}
+      {activeTab === 'docs' && (
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 100 }}>
+          <View style={{ backgroundColor: theme.colors.surface, borderRadius: 16, padding: 16, borderWidth: 0.5, borderColor: theme.colors.border }}>
+            <Text style={{ fontSize: 13, color: theme.colors.textTertiary, textAlign: 'center', paddingVertical: 20 }}>
+              Документы будут доступны после создания заявки
+            </Text>
           </View>
-          <FormField label="Дней на оплату перевозчика" keyboardType="numeric" value={String(data.carrier_payment_days ?? 20)} onChangeText={(v: string) => update({ carrier_payment_days: parseInt(v) || 20 })} />
-          <FormField label="Груз" value={data.cargo} onChangeText={(v: string) => update({ cargo: v })} />
-        </FormSection>
+        </ScrollView>
+      )}
 
-        <FormSection title="ЗАМЕТКИ">
-          <FormField label="Заметки" multiline value={data.notes} onChangeText={(v: string) => update({ notes: v })} />
-        </FormSection>
-
-        <TouchableOpacity testID="create-order-submit" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]} activeOpacity={0.8}>
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Создать заявку</Text>}
+      {/* Bottom bar */}
+      <View style={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 16, paddingTop: 12, backgroundColor: theme.colors.surface, borderTopWidth: 0.5, borderTopColor: theme.colors.border, flexDirection: 'row', gap: 10 }}>
+        <TouchableOpacity onPress={() => router.back()}
+          style={{ flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: theme.colors.bg, alignItems: 'center', borderWidth: 0.5, borderColor: theme.colors.border }}
+        >
+          <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textSecondary }}>Отмена</Text>
         </TouchableOpacity>
-      </ScrollView>
+        <TouchableOpacity testID="create-order-submit" onPress={save} disabled={saving}
+          style={{ flex: 2, paddingVertical: 14, borderRadius: 14, backgroundColor: theme.colors.accent, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8, shadowColor: theme.colors.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, opacity: saving ? 0.6 : 1 }}
+          activeOpacity={0.8}
+        >
+          {saving ? <ActivityIndicator color="#fff" /> : (
+            <>
+              <Plus size={16} color="#fff" strokeWidth={2.5} />
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>Создать заявку</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border },
-  iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  topTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
-  saveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginTop: 8, marginBottom: 8 },
-  saveText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
-});
