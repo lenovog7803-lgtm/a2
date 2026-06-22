@@ -8,7 +8,8 @@ import { MiniChart } from '../../src/components/MiniChart';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import { Plus, X, Trash2 } from 'lucide-react-native';
+import { Plus, X, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { theme, formatMoney } from '../../src/theme';
 import { api } from '../../src/api';
 import { Picker } from '../../src/components/Picker';
@@ -486,20 +487,18 @@ function FinanceInner() {
         <Text style={styles.title}>Финансы</Text>
 
         {/* Tab switcher */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
-          <View style={styles.tabRow}>
-            {([
-              { id: 'orders',       label: 'По заявкам' },
-              { id: 'accounting',   label: 'Бухгалтерия' },
-              { id: 'payments_in',  label: 'Поступления' },
-              { id: 'payments_out', label: 'Списания' },
-              { id: 'reconciliation', label: 'Акт сверки' },
-            ] as { id: TabType; label: string }[]).map(t => (
-              <TouchableOpacity key={t.id} style={[styles.tabBtn, tab === t.id && styles.tabBtnActive]} onPress={() => setTab(t.id)} activeOpacity={0.7}>
-                <Text style={[styles.tabBtnTxt, tab === t.id && styles.tabBtnTxtActive]}>{t.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }} contentContainerStyle={{ gap: 8, paddingBottom: 4 }}>
+          {([
+            { id: 'orders',         label: 'По заявкам' },
+            { id: 'accounting',     label: 'Бухгалтерия' },
+            { id: 'payments_in',    label: 'Поступления' },
+            { id: 'payments_out',   label: 'Списания' },
+            { id: 'reconciliation', label: 'Акт сверки' },
+          ] as { id: TabType; label: string }[]).map(t => (
+            <TouchableOpacity key={t.id} style={[styles.tabBtn, tab === t.id && styles.tabBtnActive]} onPress={() => setTab(t.id)} activeOpacity={0.7}>
+              <Text style={[styles.tabBtnTxt, tab === t.id && styles.tabBtnTxtActive]}>{t.label}</Text>
+            </TouchableOpacity>
+          ))}
         </ScrollView>
 
         {tab === 'orders' || tab === 'accounting' ? (
@@ -516,7 +515,15 @@ function FinanceInner() {
           <>
             {/* Plan card */}
             <View style={styles.card}>
-              <Text style={styles.sLabel}>{period === 'all' ? 'ПЛАН НА ПЕРИОД' : 'ПЛАН НА МЕСЯЦ'}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={[styles.sLabel, { marginBottom: 0 }]}>{period === 'all' ? 'ПЛАН НА ПЕРИОД' : 'ПЛАН НА МЕСЯЦ'}</Text>
+                {!editingPlan && (
+                  <TouchableOpacity onPress={() => { setPlanInput(plan); setEditingPlan(true); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.accent + '15', borderRadius: 8, borderWidth: 1, borderColor: theme.colors.accent + '40' }} activeOpacity={0.7}>
+                    <Pencil size={12} color={theme.colors.accent} strokeWidth={1.8} />
+                    <Text style={{ color: theme.colors.accent, fontSize: 12, fontWeight: '600' }}>Изменить</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
               {editingPlan ? (
                 <View style={styles.planRow}>
                   <TextInput
@@ -533,16 +540,20 @@ function FinanceInner() {
                   </TouchableOpacity>
                 </View>
               ) : (
-                <TouchableOpacity onPress={() => { setPlanInput(plan); setEditingPlan(true); }} activeOpacity={0.7}>
-                  <Text style={styles.planValue}>
-                    {plan ? `${Number(plan).toLocaleString()} Br` : 'Нажмите, чтобы задать план →'}
-                  </Text>
-                </TouchableOpacity>
+                <Text style={styles.planValue}>
+                  {plan ? `${Number(plan).toLocaleString()} Br` : 'Нажмите, чтобы задать план →'}
+                </Text>
               )}
               {planNum > 0 && (
                 <>
                   <View style={styles.progressBg}>
-                    <View style={[styles.progressFill, { width: `${Math.min(pct, 100)}%`, backgroundColor: barColor }]} />
+                    <View style={{ width: `${Math.min(pct, 100)}%` as any, height: '100%', overflow: 'hidden' }}>
+                      <LinearGradient
+                        colors={pct >= 100 ? ['#10B981', '#059669'] : ['#2563EB', '#7C3AED']}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                        style={{ height: '100%', minWidth: 4 }}
+                      />
+                    </View>
                   </View>
                   <Text style={[styles.pctBig, { color: barColor }]}>{pct.toFixed(1)}%</Text>
                   <Text style={styles.pctSub}>{pct >= 100 ? '🎯 перевыполнено' : 'выполнено'}</Text>
@@ -758,6 +769,7 @@ function FinanceInner() {
                 })
                 .map((p: any, i: number, arr: any[]) => (
                   <TouchableOpacity key={p.id} onPress={() => openEditPaymentIn(p)} activeOpacity={0.7} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                    <ArrowDownCircle size={18} color={theme.colors.profit} strokeWidth={1.8} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.wDate}>{p.date}  ПП {p.pp_number}</Text>
                       <Text style={styles.wNote}>{p.client_name}</Text>
@@ -805,6 +817,7 @@ function FinanceInner() {
                 .filter((p: any) => (!poFilterCarrier || p.carrier_id === poFilterCarrier) && (!poFilterMonth || (p.date || '').startsWith(poFilterMonth)))
                 .map((p: any, i: number, arr: any[]) => (
                   <TouchableOpacity key={p.id} onPress={() => openEditPaymentOut(p)} activeOpacity={0.7} style={[styles.wRow, i === arr.length - 1 && { borderBottomWidth: 0 }]}>
+                    <ArrowUpCircle size={18} color={theme.colors.loss} strokeWidth={1.8} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.wDate}>{p.date}  ПП {p.pp_number}</Text>
                       <Text style={styles.wNote}>{p.carrier_name}</Text>
@@ -1255,16 +1268,10 @@ const styles = StyleSheet.create({
 
   title:  { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
 
-  tabRow: {
-    flexDirection: 'row',
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border,
-    borderRadius: 12, padding: 4, gap: 4,
-  },
-  tabBtn: { paddingVertical: 9, paddingHorizontal: 14, borderRadius: 9, alignItems: 'center' },
-  tabBtnActive: { backgroundColor: theme.colors.accent },
-  tabBtnTxt: { fontSize: 13, fontWeight: '600', color: theme.colors.textTertiary },
-  tabBtnTxtActive: { color: '#000' },
+  tabBtn: { paddingHorizontal: 16, paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface, alignItems: 'center' },
+  tabBtnActive: { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent },
+  tabBtnTxt: { fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary },
+  tabBtnTxtActive: { color: theme.colors.accent },
 
   card: {
     backgroundColor: theme.colors.surface,
