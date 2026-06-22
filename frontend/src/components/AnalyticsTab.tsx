@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, TextInput, Alert,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Pencil, Check, X } from 'lucide-react-native';
 import { theme, formatShort } from '../theme';
 import { api } from '../api';
@@ -32,29 +33,8 @@ const monthLabel = (ym: string) => {
   return `${MONTHS_FULL[parseInt(m, 10) - 1]} ${y}`;
 };
 
-function ProgressBar({ pct, color }: { pct: number; color: string }) {
-  return (
-    <View style={s.pbTrack}>
-      <View style={[s.pbFill, { width: `${Math.min(pct, 100)}%`, backgroundColor: color }]} />
-    </View>
-  );
-}
-
-function SectionLabel({ children }: { children: string }) {
-  return <Text style={s.sectionLabel}>{children}</Text>;
-}
-
-function MarginBadge({ pct }: { pct: number }) {
-  const color = pct > 35 ? theme.colors.profit : pct >= 20 ? theme.colors.info : theme.colors.warning;
-  return (
-    <View style={[s.badge, { backgroundColor: color + '20' }]}>
-      <Text style={[s.badgeTxt, { color }]}>{pct.toFixed(1)}%</Text>
-    </View>
-  );
-}
-
-function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
-  title: string; fact: number; goal: number; unit: string;
+function GoalCard({ title, fact, goal, unit, color, onEditGoal, formatFn }: {
+  title: string; fact: number; goal: number; unit: string; color: string;
   onEditGoal?: (newGoal: number) => void;
   formatFn?: (n: number) => string;
 }) {
@@ -66,7 +46,6 @@ function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
   const pct = goal > 0 ? Math.min(Math.round((fact / goal) * 100), 100) : 0;
   const done = pct >= 100;
   const fmt = formatFn || ((n: number) => String(Math.round(n)));
-  const barColor = done ? theme.colors.profit : pct >= 80 ? theme.colors.warning : theme.colors.info;
 
   const confirmEdit = () => {
     const v = parseFloat(editVal.replace(',', '.'));
@@ -75,15 +54,21 @@ function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
   };
 
   return (
-    <View style={[s.goalCard, done && { borderColor: theme.colors.profit + '50' }]}>
-      <View style={s.goalHeader}>
-        <Text style={s.goalTitle} numberOfLines={2}>{title}</Text>
-        <TouchableOpacity onPress={() => onEditGoal ? setEditing(true) : null} activeOpacity={onEditGoal ? 0.6 : 1} style={{ padding: 2 }}>
-          {!!onEditGoal && <Pencil size={12} color={theme.colors.textTertiary} strokeWidth={1.8} />}
-        </TouchableOpacity>
+    <TouchableOpacity
+      onPress={() => onEditGoal ? setEditing(true) : null}
+      activeOpacity={onEditGoal ? 0.85 : 1}
+      style={[s.goalCard, done && { borderColor: color + '60' }]}
+    >
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <Text style={s.goalTitle}>{title}</Text>
+        {!!onEditGoal && (
+          <TouchableOpacity onPress={() => setEditing(true)} style={{ padding: 2 }} activeOpacity={0.7}>
+            <Pencil size={12} color={theme.colors.textTertiary} strokeWidth={1.8} />
+          </TouchableOpacity>
+        )}
       </View>
 
-      <Text style={[s.goalFact, { color: done ? theme.colors.profit : theme.colors.textPrimary }]}>
+      <Text style={[s.goalFact, { color: done ? color : theme.colors.textPrimary }]}>
         {fmt(fact)}
       </Text>
 
@@ -104,18 +89,49 @@ function GoalCard({ title, fact, goal, unit, onEditGoal, formatFn }: {
           </TouchableOpacity>
         </View>
       ) : (
-        <View style={s.goalSubRow}>
-          <Text style={s.goalSub}>из {fmt(goal)} {unit}</Text>
-          <View style={[s.goalBadge, { backgroundColor: done ? theme.colors.profit + '20' : theme.colors.info + '20' }]}>
-            <Text style={[s.goalBadgeTxt, { color: done ? theme.colors.profit : theme.colors.info }]}>
-              {done ? 'выполнено' : 'в процессе'}
-            </Text>
-          </View>
-        </View>
+        <Text style={s.goalSub}>из {fmt(goal)} {unit}</Text>
       )}
 
-      <ProgressBar pct={pct} color={barColor} />
-      <Text style={s.goalPct}>{pct}%</Text>
+      <View style={s.pbTrack}>
+        <View style={{ width: `${pct}%` as any, height: 4, overflow: 'hidden' }}>
+          <LinearGradient
+            colors={done ? ['#10B981', '#059669'] : [color, color + 'CC']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{ height: 4, minWidth: 4 }}
+          />
+        </View>
+      </View>
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+        <View style={[s.goalBadge, { backgroundColor: done ? color + '20' : theme.colors.surfaceElevated }]}>
+          <Text style={[s.goalBadgeTxt, { color: done ? color : theme.colors.textTertiary }]}>
+            {done ? 'Выполнено' : 'В процессе'}
+          </Text>
+        </View>
+        <Text style={[s.goalPct, { color: done ? color : theme.colors.textTertiary }]}>{pct}%</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function ProgressBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <View style={s.pbTrackLarge}>
+      <View style={[s.pbFill, { width: `${Math.min(pct, 100)}%`, backgroundColor: color }]} />
+    </View>
+  );
+}
+
+function SectionLabel({ children }: { children: string }) {
+  return <Text style={s.sectionLabel}>{children}</Text>;
+}
+
+function MarginBadge({ pct }: { pct: number }) {
+  const color = pct > 35 ? theme.colors.profit : pct >= 20 ? theme.colors.info : theme.colors.warning;
+  return (
+    <View style={[s.badge, { backgroundColor: color + '20' }]}>
+      <Text style={[s.badgeTxt, { color }]}>{pct.toFixed(1)}%</Text>
     </View>
   );
 }
@@ -130,6 +146,7 @@ export default function AnalyticsTab() {
   const [editingRates, setEditingRates] = useState(false);
   const [draftRates, setDraftRates] = useState<any[]>([]);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [showAllMarginClients, setShowAllMarginClients] = useState(false);
 
   const effectiveMonth = selectedPeriod === 'all' ? currentYM() : selectedPeriod;
 
@@ -208,8 +225,27 @@ export default function AnalyticsTab() {
   const lossTrips: any[] = data?.loss_trips || [];
   const totalLoss = lossTrips.reduce((acc: number, t: any) => acc + (t.loss || 0), 0);
   const monthlyMap: Record<string, any> = Object.fromEntries(monthly.map((m: any) => [m.month, m]));
-
   const rateMinimums: any[] = settings?.rate_minimums ?? [];
+
+  const currentMonthLabel = monthLabel(effectiveMonth);
+
+  const goalCards = [
+    { title: 'Прибыль месяца', fact: goalsData?.profit_fact ?? 0, goal: goalsData?.profit_goal ?? 7000, unit: 'BYN', color: '#F59E0B', formatFn: (n: number) => Math.round(n).toLocaleString('ru-RU'), onSave: (v: number) => saveGoal('profit_goal', v) },
+    { title: 'Новые клиенты', fact: goalsData?.new_clients_fact ?? 0, goal: goalsData?.new_clients_goal ?? 9, unit: 'клиентов', color: '#10B981', formatFn: undefined as ((n: number) => string) | undefined, onSave: (v: number) => saveGoal('new_clients_goal', v) },
+    { title: 'Рейсов в месяц', fact: goalsData?.trips_fact ?? 0, goal: goalsData?.trips_goal ?? 45, unit: 'рейсов', color: '#F59E0B', formatFn: undefined as ((n: number) => string) | undefined, onSave: (v: number) => saveGoal('trips_goal', v) },
+    { title: 'Ср. прибыль / рейс', fact: goalsData?.margin_fact ?? 0, goal: goalsData?.margin_goal ?? 230, unit: 'BYN цель', color: '#2563EB', formatFn: (n: number) => Math.round(n).toLocaleString('ru-RU'), onSave: (v: number) => saveGoal('margin_goal', v) },
+  ];
+
+  const summaryCards = [
+    { label: 'ВЫРУЧКА',  value: formatShort(summary.revenue ?? 0),  sub: 'BYN от клиентов', color: undefined as string | undefined },
+    { label: 'РАСХОДЫ',  value: formatShort(summary.expenses ?? 0), sub: 'BYN перевозчикам', color: theme.colors.loss as string | undefined },
+    { label: 'МАРЖА',    value: formatShort(summary.margin ?? 0),   sub: 'BYN',
+      color: ((summary.margin ?? 0) >= 0 ? theme.colors.profit : theme.colors.loss) as string | undefined },
+    { label: 'МАРЖА %',  value: `${summary.margin_pct ?? 0}%`,      sub: `${summary.trips_count ?? 0} рейсов`,
+      color: ((summary.margin_pct ?? 0) >= 20 ? theme.colors.profit : (summary.margin_pct ?? 0) >= 10 ? theme.colors.warning : theme.colors.loss) as string | undefined },
+  ];
+
+  const displayedClients = showAllMarginClients ? clients : clients.slice(0, 5);
 
   if (loading && !data) {
     return <View style={s.loadingWrap}><ActivityIndicator color={theme.colors.accent} /></View>;
@@ -231,60 +267,36 @@ export default function AnalyticsTab() {
         ))}
       </ScrollView>
 
-      {loading && <ActivityIndicator size="small" color={theme.colors.accent} style={{ marginBottom: 8 }} />}
-
-      {/* ── Цели месяца ────────────────────────────────────────────────────── */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 8 }}>
-        <Text style={s.sectionLabel}>
-          {'ЦЕЛИ — ' + monthLabel(effectiveMonth).toUpperCase()}
+      {/* ── Заголовок ──────────────────────────────────────────────────────── */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, marginTop: 4 }}>
+        <Text style={{ fontSize: 22, fontWeight: '700', color: theme.colors.textPrimary, letterSpacing: -0.5 }}>
+          Цели — {currentMonthLabel}
         </Text>
         {goalsLoading && <ActivityIndicator size="small" color={theme.colors.accent} />}
       </View>
+
+      {loading && <ActivityIndicator size="small" color={theme.colors.accent} style={{ marginBottom: 8 }} />}
+
+      {/* ── 4 карточки целей ───────────────────────────────────────────────── */}
       <View style={s.goalGrid}>
-        <GoalCard
-          title="Прибыль месяца"
-          fact={goalsData?.profit_fact ?? 0}
-          goal={goalsData?.profit_goal ?? 7000}
-          unit="BYN"
-          formatFn={n => Math.round(n).toLocaleString('ru-RU')}
-          onEditGoal={v => saveGoal('profit_goal', v)}
-        />
-        <GoalCard
-          title="Новые клиенты"
-          fact={goalsData?.new_clients_fact ?? 0}
-          goal={goalsData?.new_clients_goal ?? 9}
-          unit="план на мес."
-          onEditGoal={v => saveGoal('new_clients_goal', v)}
-        />
-        <GoalCard
-          title="Рейсов в месяц"
-          fact={goalsData?.trips_fact ?? 0}
-          goal={goalsData?.trips_goal ?? 45}
-          unit="план"
-          onEditGoal={v => saveGoal('trips_goal', v)}
-        />
-        <GoalCard
-          title="Ср. прибыль / рейс"
-          fact={goalsData?.margin_fact ?? 0}
-          goal={goalsData?.margin_goal ?? 230}
-          unit="BYN цель"
-          formatFn={n => Math.round(n).toLocaleString('ru-RU')}
-          onEditGoal={v => saveGoal('margin_goal', v)}
-        />
+        {goalCards.map((g, i) => (
+          <GoalCard
+            key={i}
+            title={g.title}
+            fact={g.fact}
+            goal={g.goal}
+            unit={g.unit}
+            color={g.color}
+            formatFn={g.formatFn}
+            onEditGoal={g.onSave}
+          />
+        ))}
       </View>
 
       {/* ── Финансовый итог ─────────────────────────────────────────────────── */}
       <SectionLabel>ФИНАНСОВЫЙ ИТОГ — {periodLabel.toUpperCase()}</SectionLabel>
       <View style={s.summaryGrid}>
-        {[
-          { label: 'ВЫРУЧКА',  value: formatShort(summary.revenue ?? 0),  sub: 'BYN от клиентов', color: undefined },
-          { label: 'РАСХОДЫ',  value: formatShort(summary.expenses ?? 0), sub: 'BYN перевозчикам', color: theme.colors.loss },
-          { label: 'МАРЖА',    value: formatShort(summary.margin ?? 0),   sub: 'BYN',
-            color: (summary.margin ?? 0) >= 0 ? theme.colors.profit : theme.colors.loss },
-          { label: 'МАРЖА %',  value: `${summary.margin_pct ?? 0}%`,      sub: `${summary.trips_count ?? 0} рейсов`,
-            color: (summary.margin_pct ?? 0) >= 20 ? theme.colors.profit
-              : (summary.margin_pct ?? 0) >= 10 ? theme.colors.warning : theme.colors.loss },
-        ].map(c => (
+        {summaryCards.map(c => (
           <View key={c.label} style={s.summaryCard}>
             <Text style={s.summaryLabel}>{c.label}</Text>
             <Text style={[s.summaryValue, c.color ? { color: c.color } : {}]}>{c.value}</Text>
@@ -306,7 +318,7 @@ export default function AnalyticsTab() {
                   <Text style={[s.th, s.thR, { width: 110 }]}>Ср. маржа</Text>
                   <Text style={[s.th, s.thR, { width: 120 }]}>Итого маржа</Text>
                 </View>
-                {routes.map((r: any, i: number) => (
+                {routes.slice(0, 5).map((r: any, i: number) => (
                   <View key={r.route} style={[s.tableRow, i % 2 === 1 && s.tableRowAlt]}>
                     <View style={{ flex: 1, minWidth: 160, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <Text style={s.td} numberOfLines={1}>{r.route}</Text>
@@ -328,7 +340,7 @@ export default function AnalyticsTab() {
         </>
       )}
 
-      {/* ── Топ клиенты ────────────────────────────────────────────────────── */}
+      {/* ── Клиенты по маржинальности ──────────────────────────────────────── */}
       {clients.length > 0 && (
         <>
           <SectionLabel>КЛИЕНТЫ ПО МАРЖИНАЛЬНОСТИ</SectionLabel>
@@ -342,7 +354,7 @@ export default function AnalyticsTab() {
                   <Text style={[s.th, s.thR, { width: 100 }]}>Маржа</Text>
                   <Text style={[s.th, s.thR, { width: 72 }]}>%</Text>
                 </View>
-                {clients.map((c: any, i: number) => (
+                {displayedClients.map((c: any, i: number) => (
                   <View key={c.name} style={[s.tableRow, i % 2 === 1 && s.tableRowAlt]}>
                     <View style={{ flex: 1, minWidth: 160, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                       <Text style={s.td} numberOfLines={1}>{c.name}</Text>
@@ -361,6 +373,11 @@ export default function AnalyticsTab() {
                 ))}
               </View>
             </ScrollView>
+            {!showAllMarginClients && clients.length > 5 && (
+              <TouchableOpacity onPress={() => setShowAllMarginClients(true)} style={s.showAllBtn} activeOpacity={0.7}>
+                <Text style={s.showAllBtnTxt}>Показать всех ({clients.length})</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </>
       )}
@@ -540,20 +557,19 @@ const s = StyleSheet.create({
   sectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 10, marginTop: 8 },
 
   goalGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
-  goalCard: { width: '48%', flexGrow: 1, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 14 },
-  goalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 4 },
-  goalTitle: { color: theme.colors.textTertiary, fontSize: 9, fontWeight: '700', letterSpacing: 1.2, flex: 1 },
+  goalCard: { width: '48%', flexGrow: 1, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 16, padding: 14 },
+  goalTitle: { color: theme.colors.textTertiary, fontSize: 10, fontWeight: '600', letterSpacing: 0.3, flex: 1 },
+  goalFact: { fontSize: 26, fontWeight: '800', letterSpacing: -1, color: theme.colors.textPrimary, marginBottom: 4 },
+  goalSub: { fontSize: 11, color: theme.colors.textTertiary, marginBottom: 12 },
   goalBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   goalBadgeTxt: { fontSize: 9, fontWeight: '700' },
-  goalFact: { fontSize: 26, fontWeight: '800', letterSpacing: -1, color: theme.colors.textPrimary },
-  goalSubRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2, marginBottom: 10 },
-  goalSub: { fontSize: 10, color: theme.colors.textTertiary, flex: 1 },
-  goalEditRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: 10 },
+  goalEditRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
   goalEditInput: { flex: 1, borderWidth: 1, borderColor: theme.colors.accent, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, color: theme.colors.textPrimary, fontSize: 13, fontWeight: '700' },
   goalEditBtn: { width: 28, height: 28, borderRadius: 8, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' },
-  goalPct: { fontSize: 10, color: theme.colors.textTertiary, marginTop: 4, textAlign: 'right' },
+  goalPct: { fontSize: 11, fontWeight: '700' },
 
   pbTrack: { height: 4, backgroundColor: theme.colors.surfaceElevated, borderRadius: 2, overflow: 'hidden' },
+  pbTrackLarge: { height: 4, backgroundColor: theme.colors.surfaceElevated, borderRadius: 2, overflow: 'hidden' },
   pbFill: { height: '100%', borderRadius: 2 },
 
   summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
@@ -571,6 +587,9 @@ const s = StyleSheet.create({
   td: { fontSize: 12, color: theme.colors.textPrimary, fontWeight: '500' },
   tdR: { textAlign: 'right' },
   inlineInput: { borderWidth: 1, borderColor: theme.colors.accent + '60', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, color: theme.colors.textPrimary, backgroundColor: theme.colors.surfaceElevated },
+
+  showAllBtn: { paddingVertical: 12, alignItems: 'center', borderTopWidth: 1, borderTopColor: theme.colors.border },
+  showAllBtnTxt: { color: theme.colors.accent, fontSize: 13, fontWeight: '600' },
 
   badge: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 },
   badgeTxt: { fontSize: 10, fontWeight: '700' },
