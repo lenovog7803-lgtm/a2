@@ -2,17 +2,17 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, TextInput, Modal, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, X, Search } from 'lucide-react-native';
+import { Plus, X, Search, Phone, DollarSign, FileText, CheckSquare, Calendar, Pencil } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import InstructionsTab from '../../src/components/InstructionsTab';
 
-const TASK_TYPES: Record<string, { label: string; emoji: string }> = {
-  call:    { label: 'Звонок',     emoji: '📞' },
-  meeting: { label: 'Встреча',    emoji: '🤝' },
-  docs:    { label: 'Документы',  emoji: '📄' },
-  order:   { label: 'Заявка',     emoji: '📦' },
-  other:   { label: 'Другое',     emoji: '✏️' },
+const TASK_TYPES: Record<string, { label: string; emoji: string; Icon: any; iconColor: string }> = {
+  call:    { label: 'Звонок',     emoji: '📞', Icon: Phone,       iconColor: '#10B981' },
+  meeting: { label: 'Встреча',    emoji: '🤝', Icon: Calendar,    iconColor: '#2563EB' },
+  docs:    { label: 'Документы',  emoji: '📄', Icon: FileText,    iconColor: '#7C3AED' },
+  order:   { label: 'Заявка',     emoji: '📦', Icon: CheckSquare, iconColor: '#F59E0B' },
+  other:   { label: 'Другое',     emoji: '✏️', Icon: Pencil,      iconColor: '#6B7280' },
 };
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -156,6 +156,7 @@ export default function Tasks() {
   );
 
   const overdueTasks = tasks.filter(t => t.due_date && t.due_date < TODAY && t.status !== 'done');
+  const activeCalls = tasks.filter(t => t.task_type === 'call' && t.status !== 'done');
 
   const counts = {
     all:      tasks.length,
@@ -171,27 +172,57 @@ export default function Tasks() {
     { id: 'done',     label: 'Выполненные' },
   ];
 
-  const overdueHeader = overdueTasks.length > 0 ? (
-    <View style={styles.overdueBlock}>
-      <Text style={styles.overdueTitle}>⚠ Просроченные задачи</Text>
-      <Text style={styles.overdueSub}>Требуют немедленного внимания — {overdueTasks.length} {overdueTasks.length === 1 ? 'задача' : overdueTasks.length < 5 ? 'задачи' : 'задач'}</Text>
-      {overdueTasks.map(t => (
-        <TouchableOpacity key={t.id} onPress={() => router.push(`/task/${t.id}` as any)} activeOpacity={0.85} style={styles.overdueCard}>
-          <Text style={styles.overdueTaskTitle} numberOfLines={2}>{t.title}</Text>
-          {!!t.description && <Text style={styles.overdueDesc} numberOfLines={1}>{t.description}</Text>}
-          <View style={styles.overdueMeta}>
-            <Text style={styles.overdueDue}>Дедлайн: {t.due_date}</Text>
-            <Text style={styles.overdueBy}>Просрочено на {overdueDays(t.due_date)} дн.</Text>
+  const overdueHeader = (
+    <View>
+      {overdueTasks.length > 0 && (
+        <View style={styles.overdueBlock}>
+          <Text style={styles.overdueTitle}>⚠ Просроченные задачи</Text>
+          <Text style={styles.overdueSub}>Требуют немедленного внимания — {overdueTasks.length} {overdueTasks.length === 1 ? 'задача' : overdueTasks.length < 5 ? 'задачи' : 'задач'}</Text>
+          {overdueTasks.map(t => (
+            <TouchableOpacity key={t.id} onPress={() => router.push(`/task/${t.id}` as any)} activeOpacity={0.85} style={styles.overdueCard}>
+              <Text style={styles.overdueTaskTitle} numberOfLines={2}>{t.title}</Text>
+              {!!t.description && <Text style={styles.overdueDesc} numberOfLines={1}>{t.description}</Text>}
+              <View style={styles.overdueMeta}>
+                <Text style={styles.overdueDue}>Дедлайн: {t.due_date}</Text>
+                <Text style={styles.overdueBy}>Просрочено на {overdueDays(t.due_date)} дн.</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+      {activeCalls.length > 0 && (
+        <View style={styles.callsBlock}>
+          <View style={styles.callsHeader}>
+            <Phone size={15} color="#10B981" strokeWidth={2} />
+            <Text style={styles.callsTitle}>Активные звонки</Text>
+            <View style={styles.callsBadge}><Text style={styles.callsBadgeTxt}>{activeCalls.length}</Text></View>
           </View>
-        </TouchableOpacity>
-      ))}
+          {activeCalls.map(t => (
+            <TouchableOpacity key={t.id} onPress={() => router.push(`/task/${t.id}` as any)} activeOpacity={0.85} style={styles.callCard}>
+              <View style={styles.callIconWrap}>
+                <Phone size={16} color="#10B981" strokeWidth={2} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.callTitle} numberOfLines={1}>{t.title}</Text>
+                {!!t.due_date && <Text style={styles.callDate}>{t.due_date}{t.due_time ? ` · ${t.due_time}` : ''}</Text>}
+              </View>
+              <TouchableOpacity onPress={() => markDone(t.id)} style={styles.callDoneBtn} activeOpacity={0.8}>
+                <Text style={styles.callDoneTxt}>✓</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </View>
-  ) : null;
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg, paddingTop: insets.top + 8 }}>
       <View style={styles.headerWrap}>
-        <Text style={styles.title}>{mode === 'tasks' ? 'Задачи' : mode === 'notes' ? 'Заметки' : 'Инструкции'}</Text>
+        <View>
+          <Text style={styles.title}>{mode === 'tasks' ? 'Задачи' : mode === 'notes' ? 'Заметки' : 'Инструкции'}</Text>
+          {mode === 'tasks' && <Text style={styles.subtitle}>Операционный контроль</Text>}
+        </View>
         {mode !== 'instructions' && (
           <TouchableOpacity
             onPress={() => mode === 'tasks' ? router.push('/task/new') : setShowAddNote(true)}
@@ -257,7 +288,7 @@ export default function Tasks() {
               contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
               ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
               ListHeaderComponent={overdueHeader}
-              ListEmptyComponent={overdueTasks.length === 0 ? <Text style={styles.empty}>Нет задач</Text> : null}
+              ListEmptyComponent={<Text style={styles.empty}>Нет задач</Text>}
               renderItem={({ item }) => (
                 <TaskCard
                   task={item}
@@ -372,17 +403,20 @@ function NoteCard({ note, onPress, onDelete }: { note: any; onPress: () => void;
 function TaskCard({ task, onPress, onDone, onDelete }: { task: any; onPress: () => void; onDone: () => void; onDelete: () => void }) {
   const typeInfo = TASK_TYPES[task.task_type] || TASK_TYPES.other;
   const isDone = task.status === 'done';
+  const IconComponent = typeInfo.Icon;
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.card, isDone && styles.cardDone]}>
       <View style={styles.cardMain}>
-        <View style={styles.emojiWrap}>
-          <Text style={styles.emoji}>{typeInfo.emoji}</Text>
+        <View style={[styles.iconWrap, { backgroundColor: typeInfo.iconColor + '18' }]}>
+          <IconComponent size={18} color={typeInfo.iconColor} strokeWidth={2} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={[styles.taskTitle, isDone && styles.taskTitleDone]} numberOfLines={2}>{task.title}</Text>
           {!!task.description && <Text style={styles.taskDesc} numberOfLines={1}>{task.description}</Text>}
           <View style={styles.metaRow}>
-            <Text style={styles.typeBadge}>{typeInfo.label}</Text>
+            <View style={[styles.typePill, { backgroundColor: typeInfo.iconColor + '18' }]}>
+              <Text style={[styles.typeBadge, { color: typeInfo.iconColor }]}>{typeInfo.label}</Text>
+            </View>
             {!!task.due_date && (
               <Text style={[styles.dueBadge, isDone && { color: theme.colors.textTertiary }]}>
                 {task.due_date}{task.due_time ? ` · ${task.due_time}` : ''}
@@ -395,7 +429,7 @@ function TaskCard({ task, onPress, onDone, onDelete }: { task: any; onPress: () 
       {!isDone && (
         <View style={styles.actions}>
           <TouchableOpacity onPress={onDone} style={styles.doneBtn} activeOpacity={0.8}>
-            <Text style={styles.doneBtnText}>✓ Выполнено</Text>
+            <Text style={styles.doneBtnText}>✓ Готово</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={onDelete} style={styles.deleteBtn} activeOpacity={0.8}>
             <Text style={styles.deleteBtnText}>Удалить</Text>
@@ -416,6 +450,7 @@ const styles = StyleSheet.create({
 
   headerWrap: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 0, paddingBottom: 12 },
   title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
+  subtitle: { fontSize: 13, color: theme.colors.textTertiary, marginTop: 1 },
   fab: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
 
   modeToggle: {
@@ -461,16 +496,28 @@ const styles = StyleSheet.create({
   overdueDue: { color: theme.colors.loss, fontSize: 11, fontWeight: '600' },
   overdueBy: { color: theme.colors.loss, fontSize: 11 },
 
+  callsBlock: { marginBottom: 16 },
+  callsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  callsTitle: { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary, flex: 1 },
+  callsBadge: { backgroundColor: '#10B98120', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  callsBadgeTxt: { color: '#10B981', fontSize: 12, fontWeight: '700' },
+  callCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#10B98108', borderWidth: 1, borderColor: '#10B98130', borderRadius: 12, padding: 12, marginBottom: 8 },
+  callIconWrap: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#10B98120', alignItems: 'center', justifyContent: 'center' },
+  callTitle: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '600' },
+  callDate: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
+  callDoneBtn: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center' },
+  callDoneTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
+
   card: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 14 },
   cardDone: { opacity: 0.65 },
   cardMain: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  emojiWrap: { width: 40, height: 40, borderRadius: 10, backgroundColor: theme.colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' },
-  emoji: { fontSize: 20 },
+  iconWrap: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   taskTitle: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '600', lineHeight: 20 },
   taskTitleDone: { textDecorationLine: 'line-through', color: theme.colors.textSecondary },
   taskDesc: { color: theme.colors.textTertiary, fontSize: 12, marginTop: 3 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' },
-  typeBadge: { fontSize: 10, fontWeight: '700', color: theme.colors.textTertiary, backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, letterSpacing: 0.5 },
+  typePill: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  typeBadge: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
   dueBadge: { fontSize: 11, color: theme.colors.accent, fontWeight: '600' },
   statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.warning, marginTop: 4 },
   statusDotDone: { backgroundColor: theme.colors.profit },
