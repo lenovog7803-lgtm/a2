@@ -1,53 +1,56 @@
 export const lightTheme = {
   dark: false,
   colors: {
-    bg: '#FFFFFF',
-    surface: '#F8F9FA',
+    bg: '#EDEFF3',
+    surface: '#FFFFFF',
     surfaceElevated: '#FFFFFF',
-    surfaceSecondary: '#F8F8FC',
-    surfaceHigh: '#EFEFF4',
+    surfaceSecondary: '#F4F6FA',
+    surfaceHigh: '#E8ECF2',
     card: '#FFFFFF',
 
-    textPrimary: '#1C1C1E',
-    textSecondary: '#6B6B7B',
-    textTertiary: '#AEAEB2',
+    textPrimary: '#0E1726',
+    textSecondary: '#5A6573',
+    textTertiary: '#8A93A0',
     textOnAccent: '#FFFFFF',
 
-    accent: '#007AFF',
-    accentBright: '#007AFF',
-    accentLight: '#E8F2FF',
-    info: '#007AFF',
+    accent: '#1366F0',
+    accentBright: '#1366F0',
+    accentLight: 'rgba(19,102,240,0.1)',
+    info: '#1366F0',
 
-    profit: '#34C759',
-    profitLight: '#E8F8ED',
-    loss: '#FF3B30',
-    lossLight: '#FFF0EF',
-    warning: '#FF9500',
-    warningLight: '#FFF5E6',
+    profit: '#1E9E5A',
+    profitLight: 'rgba(30,158,90,0.13)',
+    loss: '#E0473B',
+    lossLight: 'rgba(224,71,59,0.1)',
+    warning: '#D97706',
+    warningLight: 'rgba(217,119,6,0.13)',
 
-    border: 'rgba(0,0,0,0.08)',
-    borderStrong: 'rgba(0,0,0,0.16)',
+    border: 'rgba(14,23,38,0.08)',
+    borderStrong: 'rgba(14,23,38,0.16)',
     shadow: '#000000',
     overlay: 'rgba(0,0,0,0.4)',
 
-    tabBar: 'rgba(255,255,255,0.92)',
-    tabBarActive: '#007AFF',
-    tabBarInactive: '#8E8E93',
+    tabBar: 'rgba(255,255,255,0.95)',
+    tabBarActive: '#1366F0',
+    tabBarInactive: '#8A93A0',
+
+    purple: '#7C3AED',
+    purpleLight: 'rgba(124,58,237,0.13)',
   },
   gradients: {
-    blue:   ['#E8F4FD', '#D6EBF8'] as [string, string],
-    green:  ['#E8F8F0', '#D6F0E3'] as [string, string],
-    orange: ['#FEF3E8', '#FCE9D6'] as [string, string],
-    purple: ['#F3EEFE', '#EAE2FC'] as [string, string],
+    blue:   ['rgba(19,102,240,0.08)', 'rgba(19,102,240,0.04)'] as [string, string],
+    green:  ['rgba(30,158,90,0.1)', 'rgba(30,158,90,0.05)'] as [string, string],
+    orange: ['rgba(217,119,6,0.1)', 'rgba(217,119,6,0.05)'] as [string, string],
+    purple: ['rgba(124,58,237,0.1)', 'rgba(124,58,237,0.05)'] as [string, string],
     pink: ['#FF2D55', '#FF6B8A'] as [string, string],
-    card1: ['#667eea', '#764ba2'] as [string, string],
-    card2: ['#f093fb', '#f5576c'] as [string, string],
-    card3: ['#4facfe', '#00f2fe'] as [string, string],
+    card1: ['#0E1726', '#3A4A6B'] as [string, string],
+    card2: ['rgba(255,236,214,0.95)', 'rgba(255,213,170,0.85)'] as [string, string],
+    card3: ['rgba(224,224,255,0.95)', 'rgba(208,191,255,0.85)'] as [string, string],
     card4: ['#43e97b', '#38f9d7'] as [string, string],
-    blueAccent:   '#007AFF',
-    greenAccent:  '#34C759',
-    purpleAccent: '#AF52DE',
-    orangeAccent: '#FF9500',
+    blueAccent:   '#1366F0',
+    greenAccent:  '#1E9E5A',
+    purpleAccent: '#7C3AED',
+    orangeAccent: '#D97706',
   },
 };
 
@@ -166,10 +169,10 @@ export const statusLabels: Record<string, string> = {
 };
 
 export const statusColors: Record<string, string> = {
-  new: '#007AFF',
-  in_progress: '#FF9500',
-  delivered: '#34C759',
-  cancelled: '#FF3B30',
+  new: '#1366F0',
+  in_progress: '#D97706',
+  delivered: '#1E9E5A',
+  cancelled: '#E0473B',
 };
 
 export const docsLabels: Record<string, string> = {
@@ -188,10 +191,10 @@ export const leadStatusLabels: Record<string, string> = {
 };
 
 export const leadStatusColors: Record<string, string> = {
-  new: '#007AFF',
-  thinking: '#FF9500',
-  sent_kp: '#FF6B00',
-  won: '#34C759',
-  lost: '#AEAEB2',
-  callback: '#AF52DE',
+  new: '#1366F0',
+  thinking: '#D97706',
+  sent_kp: '#D97706',
+  won: '#1E9E5A',
+  lost: '#8A93A0',
+  callback: '#7C3AED',
 };

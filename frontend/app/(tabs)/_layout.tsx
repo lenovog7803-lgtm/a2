@@ -71,11 +71,11 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
             >
               {isFocused ? (
                 <View style={{ alignItems: 'center' }}>
-                  <IconComponent size={22} color="#007AFF" strokeWidth={2} />
-                  <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#007AFF', marginTop: 3 }} />
+                  <IconComponent size={22} color="#1366F0" strokeWidth={2} />
+                  <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#1366F0', marginTop: 3 }} />
                 </View>
               ) : (
-                <IconComponent size={22} color="#8E8E93" strokeWidth={1.5} />
+                <IconComponent size={22} color="#8A93A0" strokeWidth={1.5} />
               )}
               <Text style={{
                 fontSize: 10,

@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardOverdue: { borderColor: theme.colors.loss + '60', shadowColor: theme.colors.loss, shadowOpacity: 0.1 },
-  cardDeliveryOverdue: { borderLeftWidth: 3, borderLeftColor: '#FF3B30' },
+  cardDeliveryOverdue: { borderLeftWidth: 3, borderLeftColor: '#E0473B' },
   overdueBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.loss, marginHorizontal: -12, marginTop: -12, marginBottom: 10, paddingVertical: 5, paddingHorizontal: 10 },
   overdueText: { color: theme.colors.bg, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
 

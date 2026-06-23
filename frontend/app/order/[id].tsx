@@ -231,7 +231,7 @@ export default function OrderDetail() {
     ? countBusinessDays(new Date(), new Date(order.carrier_payment_deadline))
     : null;
   const deadlineColor = daysLeft !== null
-    ? (daysLeft <= 3 ? '#FF3B30' : daysLeft <= 5 ? '#FF9500' : theme.colors.textSecondary)
+    ? (daysLeft <= 3 ? '#E0473B' : daysLeft <= 5 ? '#D97706' : theme.colors.textSecondary)
     : theme.colors.textSecondary;
   const paymentProgress = [order.client_paid, order.carrier_paid].filter(Boolean).length * 50;
   const { label: statusLabel, color: statusColor } = statusMap[order.status] || { label: order.status, color: '#6B7280' };

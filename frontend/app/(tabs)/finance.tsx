@@ -549,7 +549,7 @@ function FinanceInner() {
                   <View style={styles.progressBg}>
                     <View style={{ width: `${Math.min(pct, 100)}%` as any, height: '100%', overflow: 'hidden' }}>
                       <LinearGradient
-                        colors={pct >= 100 ? ['#10B981', '#059669'] : ['#2563EB', '#7C3AED']}
+                        colors={pct >= 100 ? ['#1E9E5A', '#0D6B3C'] : ['#1366F0', '#0E1726']}
                         start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                         style={{ height: '100%', minWidth: 4 }}
                       />
@@ -580,7 +580,7 @@ function FinanceInner() {
                 <Text style={styles.withdrawnSub}>Снято за период: {formatMoney(totalWithdrawn)}</Text>
               )}
               <TouchableOpacity onPress={() => setWModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
-                <Plus size={16} color="#000" strokeWidth={2.5} />
+                <Plus size={16} color="#fff" strokeWidth={2.5} />
                 <Text style={styles.withdrawBtnTxt}>Записать снятие</Text>
               </TouchableOpacity>
               {periodWithdrawals.length > 0 && (
@@ -622,7 +622,7 @@ function FinanceInner() {
               return (
                 <View style={[styles.card, { marginTop: 8, marginBottom: 8 }]}>
                   <Text style={[styles.sLabel, { marginBottom: 10 }]}>ЧИСТАЯ ПРИБЫЛЬ ПО МЕСЯЦАМ</Text>
-                  <MiniChart data={profitData} width={chartW} height={100} color="#2563EB" showTooltip labels={mLabels} />
+                  <MiniChart data={profitData} width={chartW} height={100} color="#1366F0" showTooltip labels={mLabels} />
                 </View>
               );
             })()}
@@ -697,7 +697,7 @@ function FinanceInner() {
             <View style={[styles.card, { marginTop: 4 }]}>
               <Text style={styles.sLabel}>РУЧНЫЕ ТРАНЗАКЦИИ</Text>
               <TouchableOpacity onPress={() => setTxModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
-                <Plus size={16} color="#000" strokeWidth={2.5} />
+                <Plus size={16} color="#fff" strokeWidth={2.5} />
                 <Text style={styles.withdrawBtnTxt}>Добавить доход / расход</Text>
               </TouchableOpacity>
               {periodTxs.length > 0 ? (
@@ -745,7 +745,7 @@ function FinanceInner() {
               />
             </View>
             <TouchableOpacity onPress={() => setPiModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
-              <Plus size={16} color="#000" strokeWidth={2.5} />
+              <Plus size={16} color="#fff" strokeWidth={2.5} />
               <Text style={styles.withdrawBtnTxt}>+ Добавить</Text>
             </TouchableOpacity>
             <View style={[styles.card, { marginTop: 12 }]}>
@@ -805,7 +805,7 @@ function FinanceInner() {
               />
             </View>
             <TouchableOpacity onPress={() => setPoModalVisible(true)} style={styles.withdrawBtn} activeOpacity={0.8}>
-              <Plus size={16} color="#000" strokeWidth={2.5} />
+              <Plus size={16} color="#fff" strokeWidth={2.5} />
               <Text style={styles.withdrawBtnTxt}>+ Добавить</Text>
             </TouchableOpacity>
             <View style={[styles.card, { marginTop: 12 }]}>
@@ -933,7 +933,7 @@ function FinanceInner() {
                 activeOpacity={0.8}
               >
                 {recGenerating
-                  ? <ActivityIndicator color="#000" />
+                  ? <ActivityIndicator color="#fff" />
                   : <Text style={styles.mSaveTxt}>Сгенерировать акт</Text>
                 }
               </TouchableOpacity>
@@ -1288,7 +1288,7 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary, fontSize: 16,
   },
   planSaveBtn: { backgroundColor: theme.colors.accent, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
-  planSaveTxt: { color: '#000', fontWeight: '700', fontSize: 13 },
+  planSaveTxt: { color: '#fff', fontWeight: '700', fontSize: 13 },
   planValue: { color: theme.colors.textPrimary, fontSize: 18, fontWeight: '600', marginBottom: 16 },
 
   progressBg: { height: 10, backgroundColor: theme.colors.surfaceElevated, borderRadius: 5, overflow: 'hidden', marginBottom: 14 },
@@ -1311,7 +1311,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     backgroundColor: theme.colors.accent, paddingVertical: 12, borderRadius: 10, marginTop: 14,
   },
-  withdrawBtnTxt: { color: '#000', fontSize: 14, fontWeight: '700' },
+  withdrawBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
 
   wRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -1348,7 +1348,7 @@ const styles = StyleSheet.create({
   },
   accSegBtnActive: { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
   accSegTxt: { fontSize: 11, fontWeight: '600', color: theme.colors.textTertiary },
-  accSegTxtActive: { color: '#000' },
+  accSegTxtActive: { color: '#fff' },
 
   typeBtn: {
     flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
@@ -1371,7 +1371,7 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary, fontSize: 15, marginBottom: 12,
   },
   mSaveBtn: { backgroundColor: theme.colors.accent, paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginTop: 4 },
-  mSaveTxt: { color: '#000', fontSize: 15, fontWeight: '700' },
+  mSaveTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });
 
 export default function Finance() {

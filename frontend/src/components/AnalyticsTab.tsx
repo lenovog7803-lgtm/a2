@@ -233,7 +233,7 @@ export default function AnalyticsTab() {
     { title: 'Прибыль месяца', fact: goalsData?.profit_fact ?? 0, goal: goalsData?.profit_goal ?? 7000, unit: 'BYN', color: '#F59E0B', formatFn: (n: number) => Math.round(n).toLocaleString('ru-RU'), onSave: (v: number) => saveGoal('profit_goal', v) },
     { title: 'Новые клиенты', fact: goalsData?.new_clients_fact ?? 0, goal: goalsData?.new_clients_goal ?? 9, unit: 'клиентов', color: '#10B981', formatFn: undefined as ((n: number) => string) | undefined, onSave: (v: number) => saveGoal('new_clients_goal', v) },
     { title: 'Рейсов в месяц', fact: goalsData?.trips_fact ?? 0, goal: goalsData?.trips_goal ?? 45, unit: 'рейсов', color: '#F59E0B', formatFn: undefined as ((n: number) => string) | undefined, onSave: (v: number) => saveGoal('trips_goal', v) },
-    { title: 'Ср. прибыль / рейс', fact: goalsData?.margin_fact ?? 0, goal: goalsData?.margin_goal ?? 230, unit: 'BYN цель', color: '#2563EB', formatFn: (n: number) => Math.round(n).toLocaleString('ru-RU'), onSave: (v: number) => saveGoal('margin_goal', v) },
+    { title: 'Ср. прибыль / рейс', fact: goalsData?.margin_fact ?? 0, goal: goalsData?.margin_goal ?? 230, unit: 'BYN цель', color: '#1366F0', formatFn: (n: number) => Math.round(n).toLocaleString('ru-RU'), onSave: (v: number) => saveGoal('margin_goal', v) },
   ];
 
   const summaryCards = [

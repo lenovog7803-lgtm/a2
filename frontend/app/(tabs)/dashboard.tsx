@@ -407,83 +407,87 @@ export default function Dashboard() {
           {currentUserRole !== 'manager' && (
             <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
 
-              {/* Left: purple gradient — margin + profit */}
+              {/* Left: dark navy — margin + profit (new design) */}
               <LinearGradient
-                colors={['#d4b8f8', '#c4a8f4', '#b8b8f8', '#a8c8f8']}
+                colors={['#0E1726', '#243049', '#3A4A6B']}
                 start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                style={{ flex: 1, borderRadius: 20, padding: 20, justifyContent: 'space-between' }}
+                style={{ flex: 1, borderRadius: 22, padding: 20, justifyContent: 'space-between', overflow: 'hidden' }}
               >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Маржа всего</Text>
-                  <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
-                    <TrendingUp size={14} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
-                  </View>
+                  <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.1, color: 'rgba(255,255,255,0.55)' }}>МАРЖА ЗА ПЕРИОД</Text>
+                  {marginChangePct !== null && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: marginChangeIsPositive ? 'rgba(94,232,155,0.18)' : 'rgba(224,71,59,0.18)', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 3 }}>
+                      {marginChangeIsPositive
+                        ? <TrendingUp size={11} color="#5BE89B" strokeWidth={2.2} />
+                        : <TrendingDown size={11} color="#FF6B6B" strokeWidth={2.2} />}
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: marginChangeIsPositive ? '#5BE89B' : '#FF6B6B' }}>
+                        {marginChangeIsPositive ? '+' : ''}{marginChangePct.toFixed(1)}%
+                      </Text>
+                    </View>
+                  )}
                 </View>
-                <Text style={{ fontSize: 24, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.8, marginTop: 8 }}>
+                <Text style={{ fontSize: 32, fontWeight: '700', color: '#fff', letterSpacing: -1, marginTop: 12, lineHeight: 36 }}>
                   {totalMargin.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
                 </Text>
-                {marginChangePct !== null && prevMonthLabel && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.4)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 4, alignSelf: 'flex-start', marginTop: 6, flexWrap: 'wrap' }}>
-                    {marginChangeIsPositive
-                      ? <TrendingUp size={11} color="#16A34A" strokeWidth={2} />
-                      : <TrendingDown size={11} color="#EF4444" strokeWidth={2} />}
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: marginChangeIsPositive ? '#16A34A' : '#EF4444' }}>
-                      {marginChangeIsPositive ? '+' : ''}{marginChangePct.toFixed(1)}%
-                    </Text>
-                    <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.45)' }}>
-                      к {prevMonthLabel}
+                <View style={{ height: 0.5, backgroundColor: 'rgba(255,255,255,0.12)', marginVertical: 14 }} />
+                <View style={{ flexDirection: 'row', gap: 20 }}>
+                  <View>
+                    <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', fontWeight: '500' }}>Выручка</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: '#fff', marginTop: 3 }}>
+                      {(d.total_revenue || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
                     </Text>
                   </View>
-                )}
-                <View style={{ height: 0.5, backgroundColor: 'rgba(0,0,0,0.12)', marginVertical: 12 }} />
-                <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Прибыль после 20%</Text>
-                <Text style={{ fontSize: 19, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 4 }}>
-                  {totalProfit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
-                </Text>
+                  <View>
+                    <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', fontWeight: '500' }}>Прибыль (–20%)</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: '#5BE89B', marginTop: 3 }}>
+                      {totalProfit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
+                    </Text>
+                  </View>
+                </View>
               </LinearGradient>
 
               {/* Right column */}
               <View style={{ flex: 1, gap: 10 }}>
 
-                {/* Orange: awaiting from clients */}
-                <PressableGradient colors={['#f8c4b0', '#f4a896', '#f0b8b0', '#f8d0c0']} onPress={() => setShowClientDebtors(true)} style={{ flex: 1 }}>
+                {/* Orange/cream: awaiting from clients */}
+                <PressableGradient colors={['rgba(255,236,214,0.95)', 'rgba(255,213,170,0.85)', 'rgba(252,220,170,0.9)']} onPress={() => setShowClientDebtors(true)} style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>Ожидается</Text>
-                    <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
-                      <Clock size={12} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
+                    <Text style={{ fontSize: 10, fontWeight: '700', letterSpacing: 0.06, color: '#A86A20' }}>ОЖИДАЕТСЯ</Text>
+                    <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.7)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Clock size={12} color="#D97706" strokeWidth={1.8} />
                     </View>
                   </View>
                   <View>
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 5 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#7A4A12', letterSpacing: -0.5, marginTop: 5 }}>
                       {clientDebt.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
                     </Text>
-                    <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{clientDebtors.length} должников</Text>
+                    <Text style={{ fontSize: 9, color: '#A86A20', fontWeight: '500', marginTop: 2 }}>{clientDebtors.length} · к получению</Text>
                   </View>
                 </PressableGradient>
 
-                {/* Blue: to pay carriers */}
-                <PressableGradient colors={['#a8d8f8', '#90c8f4', '#b0d8f8', '#c8e8ff']} onPress={() => setShowCarrierDebtors(true)} style={{ flex: 1 }}>
+                {/* Purple: to pay carriers */}
+                <PressableGradient colors={['rgba(224,224,255,0.95)', 'rgba(208,191,255,0.85)', 'rgba(208,191,255,0.9)']} onPress={() => setShowCarrierDebtors(true)} style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <Text style={{ fontSize: 10, color: 'rgba(0,0,0,0.5)', fontWeight: '500' }}>К оплате</Text>
-                    <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center' }}>
-                      <CheckCircle size={12} color="rgba(0,0,0,0.4)" strokeWidth={1.8} />
+                    <Text style={{ fontSize: 10, fontWeight: '700', letterSpacing: 0.06, color: '#6B3FB8' }}>К ОПЛАТЕ</Text>
+                    <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.7)', alignItems: 'center', justifyContent: 'center' }}>
+                      <CheckCircle size={12} color="#7C3AED" strokeWidth={1.8} />
                     </View>
                   </View>
                   <View>
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5, marginTop: 5 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#4A2785', letterSpacing: -0.5, marginTop: 5 }}>
                       {carrierDebt.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} Br
                     </Text>
-                    <Text style={{ fontSize: 9, color: 'rgba(0,0,0,0.4)', marginTop: 2 }}>{carrierDebtors.length} перевозч.</Text>
+                    <Text style={{ fontSize: 9, color: '#6B3FB8', fontWeight: '500', marginTop: 2 }}>{carrierDebtors.length} · к выплате</Text>
                   </View>
                 </PressableGradient>
 
                 {/* Stats chips */}
-                <View style={{ borderRadius: 18, padding: 11, backgroundColor: theme.colors.surface, borderWidth: 0.5, borderColor: theme.colors.border, flexDirection: 'row' }}>
+                <View style={{ borderRadius: 18, padding: 11, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, flexDirection: 'row', shadowColor: '#0E1726', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }}>
                   {[
-                    { val: activeOrders, label: 'Активных', color: theme.colors.accent },
-                    { val: doneOrders, label: 'Доставлено', color: theme.colors.profit },
-                    { val: clientsCount, label: 'Клиентов', color: '#7C3AED' },
-                    { val: carriersCount, label: 'Перевозч.', color: '#EA580C' },
+                    { val: activeOrders, label: 'Активных', color: '#D97706' },
+                    { val: doneOrders, label: 'Доставлено', color: '#1E9E5A' },
+                    { val: clientsCount, label: 'Клиентов', color: '#1366F0' },
+                    { val: carriersCount, label: 'Перевозч.', color: '#7C3AED' },
                   ].map((item, i, arr) => (
                     <View key={i} style={{ flex: 1, alignItems: 'center', borderRightWidth: i < arr.length - 1 ? 0.5 : 0, borderRightColor: theme.colors.border }}>
                       <Text style={{ fontSize: 14, fontWeight: '700', color: item.color }}>{item.val}</Text>
@@ -539,16 +543,16 @@ export default function Dashboard() {
                       style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, borderBottomWidth: i < Math.min(topByMargin.length, 5) - 1 ? 0.5 : 0, borderBottomColor: theme.colors.border }}
                     >
                       <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#F0FDF4', alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ fontSize: 9, fontWeight: '500', color: '#16A34A' }}>{i + 1}</Text>
+                        <Text style={{ fontSize: 9, fontWeight: '500', color: '#1E9E5A' }}>{i + 1}</Text>
                       </View>
                       <Text style={{ flex: 1, fontSize: 11, color: theme.colors.textPrimary }} numberOfLines={1}>{client.name}</Text>
-                      <Text style={{ fontSize: 11, fontWeight: '500', color: '#16A34A' }}>
+                      <Text style={{ fontSize: 11, fontWeight: '500', color: '#1E9E5A' }}>
                         {(client.margin_percent || 0).toFixed(1)}%
                       </Text>
                     </TouchableOpacity>
                   ))}
                   <TouchableOpacity onPress={() => setShowAllTopMargin(true)}>
-                    <Text style={{ fontSize: 11, color: '#16A34A', marginTop: 8 }}>Все по марже →</Text>
+                    <Text style={{ fontSize: 11, color: '#1E9E5A', marginTop: 8 }}>Все по марже →</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -746,7 +750,7 @@ export default function Dashboard() {
               <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.count} заявок</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#FF9500' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#D97706' }}>{(item.debt || 0).toLocaleString()} Br</Text>
               <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
             </View>
           </TouchableOpacity>
@@ -771,7 +775,7 @@ export default function Dashboard() {
               <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }}>{item.count} заявок</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#AF52DE' }}>{(item.debt || 0).toLocaleString()} Br</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#7C3AED' }}>{(item.debt || 0).toLocaleString()} Br</Text>
               <ChevronRight size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
             </View>
           </TouchableOpacity>
@@ -807,7 +811,7 @@ export default function Dashboard() {
               {item.unload_date && <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginTop: 1 }}>{item.unload_date}</Text>}
             </View>
             <View style={{ alignItems: 'flex-end', gap: 3 }}>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: debtorOrdersDebtor?.isCreditor ? '#AF52DE' : '#FF9500' }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: debtorOrdersDebtor?.isCreditor ? '#7C3AED' : '#D97706' }}>
                 {formatMoney(debtorOrdersDebtor?.isCreditor ? item.carrier_rate : item.client_rate)}
               </Text>
               <ChevronRight size={13} color={theme.colors.textTertiary} strokeWidth={1.5} />
@@ -1130,7 +1134,7 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
       <View style={cStyles.chartCard}>
         <Text style={cStyles.header}>Прибыль по периодам</Text>
         <Text style={cStyles.headerSub}>По месяцам</Text>
-        <MiniChart data={chartData} width={W} height={110} color="#2563EB" showTooltip labels={chartLabels} />
+        <MiniChart data={chartData} width={W} height={110} color="#1366F0" showTooltip labels={chartLabels} />
       </View>
     );
   }
@@ -1216,7 +1220,7 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
       </View>
       <View style={{ flexDirection: 'row', gap: 14, marginBottom: 10 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <View style={{ width: 18, height: 2.5, borderRadius: 2, backgroundColor: '#2563EB' }} />
+          <View style={{ width: 18, height: 2.5, borderRadius: 2, backgroundColor: '#1366F0' }} />
           <Text style={{ fontSize: 11, color: theme.colors.textSecondary }}>Этот период</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -1246,12 +1250,12 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
           {/* Current period segments (spotlight opacity) */}
           {curPts.map((pt, i) => {
             if (i === 0) return null;
-            return <Path key={i} d={segPath(curPts[i - 1], pt)} stroke="#2563EB" strokeWidth={2.5} fill="none" strokeLinecap="round" opacity={getSegOpacity(i)} />;
+            return <Path key={i} d={segPath(curPts[i - 1], pt)} stroke="#1366F0" strokeWidth={2.5} fill="none" strokeLinecap="round" opacity={getSegOpacity(i)} />;
           })}
 
           {/* Vertical cursor line */}
           {hoveredIndex !== null && curPts[hoveredIndex] && (
-            <SvgLine x1={curPts[hoveredIndex].x} y1={10} x2={curPts[hoveredIndex].x} y2={CHART_H - 20} stroke="#2563EB" strokeWidth={1} strokeDasharray="3,3" opacity={0.4} />
+            <SvgLine x1={curPts[hoveredIndex].x} y1={10} x2={curPts[hoveredIndex].x} y2={CHART_H - 20} stroke="#1366F0" strokeWidth={1} strokeDasharray="3,3" opacity={0.4} />
           )}
 
           {/* Points */}
@@ -1263,22 +1267,22 @@ function ProfitChart({ chartOrders, period, onDayPress }: { chartOrders: any[]; 
               <React.Fragment key={i}>
                 {isToday && hoveredIndex === null && (
                   <>
-                    <SvgCircle cx={pt.x} cy={pt.y} r={10} fill="#2563EB" opacity={0.08} />
-                    <SvgCircle cx={pt.x} cy={pt.y} r={5} fill="#2563EB" opacity={0.9} />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={10} fill="#1366F0" opacity={0.08} />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={5} fill="#1366F0" opacity={0.9} />
                     <SvgCircle cx={pt.x} cy={pt.y} r={2.5} fill="#fff" />
-                    <SvgText x={pt.x} y={CHART_H - 2} fontSize={8} fill="#2563EB" textAnchor="middle" fontWeight="600">Сег.</SvgText>
+                    <SvgText x={pt.x} y={CHART_H - 2} fontSize={8} fill="#1366F0" textAnchor="middle" fontWeight="600">Сег.</SvgText>
                   </>
                 )}
                 {isHov && (
                   <>
-                    <SvgCircle cx={pt.x} cy={pt.y} r={14} fill="#2563EB" opacity={0.08} />
-                    <SvgCircle cx={pt.x} cy={pt.y} r={8} fill="#2563EB" opacity={0.15} />
-                    <SvgCircle cx={pt.x} cy={pt.y} r={5} fill="#2563EB" />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={14} fill="#1366F0" opacity={0.08} />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={8} fill="#1366F0" opacity={0.15} />
+                    <SvgCircle cx={pt.x} cy={pt.y} r={5} fill="#1366F0" />
                     <SvgCircle cx={pt.x} cy={pt.y} r={2.5} fill="#fff" />
                   </>
                 )}
                 {!isToday && !isHov && op > 0.1 && (
-                  <SvgCircle cx={pt.x} cy={pt.y} r={2.5} fill="#2563EB" opacity={op} />
+                  <SvgCircle cx={pt.x} cy={pt.y} r={2.5} fill="#1366F0" opacity={op} />
                 )}
                 {/* Hit area */}
                 <SvgRect
@@ -1980,7 +1984,7 @@ const styles = StyleSheet.create({
   marginRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
   marginName: { fontSize: 12, color: theme.colors.textPrimary, width: 90 },
   marginBarWrap: { flex: 1, height: 6, backgroundColor: theme.colors.border, borderRadius: 3, overflow: 'hidden' },
-  marginBar: { height: 6, backgroundColor: '#2563EB', borderRadius: 3 },
+  marginBar: { height: 6, backgroundColor: '#1366F0', borderRadius: 3 },
   marginPct: { fontSize: 11, color: theme.colors.textSecondary, width: 40, textAlign: 'right' },
 
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
