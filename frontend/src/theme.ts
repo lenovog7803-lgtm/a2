@@ -2,37 +2,48 @@ export const lightTheme = {
   dark: false,
   colors: {
     bg: '#EDEFF3',
-    surface: '#FFFFFF',
-    surfaceElevated: '#FFFFFF',
-    surfaceSecondary: '#F4F6FA',
+    surface: 'rgba(255,255,255,0.58)',
+    surfaceElevated: 'rgba(255,255,255,0.82)',
+    surfaceSecondary: 'rgba(255,255,255,0.42)',
     surfaceHigh: '#E8ECF2',
-    card: '#FFFFFF',
+    card: 'rgba(255,255,255,0.6)',
 
     textPrimary: '#0E1726',
     textSecondary: '#5A6573',
     textTertiary: '#8A93A0',
+    textMuted: '#A6AEB8',
     textOnAccent: '#FFFFFF',
 
     accent: '#1366F0',
     accentBright: '#1366F0',
-    accentLight: 'rgba(19,102,240,0.1)',
+    accentLight: 'rgba(19,102,240,0.10)',
+    accentDark: '#0E4EC7',
     info: '#1366F0',
 
     profit: '#1E9E5A',
-    profitLight: 'rgba(30,158,90,0.13)',
+    profitLight: 'rgba(30,158,90,0.10)',
     loss: '#E0473B',
-    lossLight: 'rgba(224,71,59,0.1)',
+    lossLight: 'rgba(224,71,59,0.10)',
     warning: '#D97706',
-    warningLight: 'rgba(217,119,6,0.13)',
+    warningLight: 'rgba(217,119,6,0.12)',
 
-    border: 'rgba(14,23,38,0.08)',
+    border: 'rgba(255,255,255,0.72)',
     borderStrong: 'rgba(14,23,38,0.16)',
-    shadow: '#000000',
+    borderInner: 'rgba(14,23,38,0.06)',
+    shadow: 'rgba(20,30,55,0.22)',
     overlay: 'rgba(0,0,0,0.4)',
+
+    // glassmorphism
+    glass: 'rgba(255,255,255,0.58)',
+    glassStrong: 'rgba(255,255,255,0.82)',
+    glassBorder: 'rgba(255,255,255,0.72)',
 
     tabBar: 'rgba(255,255,255,0.95)',
     tabBarActive: '#1366F0',
     tabBarInactive: '#8A93A0',
+
+    sidebar: '#FFFFFF',
+    sidebarBg: '#F4F5F8',
 
     purple: '#7C3AED',
     purpleLight: 'rgba(124,58,237,0.13)',
@@ -52,43 +63,63 @@ export const lightTheme = {
     purpleAccent: '#7C3AED',
     orangeAccent: '#D97706',
   },
+  fonts: {
+    heading: 'Onest_700Bold',
+    headingXBold: 'Onest_800ExtraBold',
+    body: 'Manrope_500Medium',
+    bodyBold: 'Manrope_700Bold',
+    mono: undefined as string | undefined, // JetBrains Mono if loaded
+  },
 };
 
 export const darkTheme = {
   dark: true,
   colors: {
-    bg: '#000000',
-    surface: '#1C1C1E',
-    surfaceElevated: '#2C2C2E',
-    surfaceSecondary: '#141414',
-    surfaceHigh: '#3A3A3C',
-    card: '#1C1C1E',
+    bg: '#0E1726',
+    surface: 'rgba(255,255,255,0.06)',
+    surfaceElevated: 'rgba(255,255,255,0.10)',
+    surfaceSecondary: 'rgba(255,255,255,0.04)',
+    surfaceHigh: '#1C2538',
+    card: 'rgba(255,255,255,0.07)',
 
-    textPrimary: '#FFFFFF',
-    textSecondary: 'rgba(235,235,245,0.6)',
-    textTertiary: 'rgba(235,235,245,0.3)',
+    textPrimary: '#F0F2F5',
+    textSecondary: '#8A93A0',
+    textTertiary: '#5A6573',
+    textMuted: '#3D4756',
     textOnAccent: '#FFFFFF',
 
-    accent: '#0A84FF',
-    accentBright: '#409CFF',
-    accentLight: 'rgba(10,132,255,0.15)',
-    info: '#0A84FF',
+    accent: '#1366F0',
+    accentBright: '#5B9BFF',
+    accentLight: 'rgba(19,102,240,0.18)',
+    accentDark: '#5B9BFF',
+    info: '#1366F0',
 
-    profit: '#32D74B',
-    profitLight: 'rgba(50,215,75,0.15)',
-    loss: '#FF453A',
-    lossLight: 'rgba(255,69,58,0.15)',
-    warning: '#FF9F0A',
-    warningLight: 'rgba(255,159,10,0.15)',
+    profit: '#1E9E5A',
+    profitLight: 'rgba(30,158,90,0.15)',
+    loss: '#E0473B',
+    lossLight: 'rgba(224,71,59,0.15)',
+    warning: '#D97706',
+    warningLight: 'rgba(217,119,6,0.15)',
 
-    border: 'rgba(255,255,255,0.1)',
+    border: 'rgba(255,255,255,0.10)',
     borderStrong: 'rgba(255,255,255,0.2)',
-    shadow: '#000000',
+    borderInner: 'rgba(255,255,255,0.06)',
+    shadow: 'rgba(0,0,0,0.4)',
     overlay: 'rgba(0,0,0,0.6)',
 
+    glass: 'rgba(255,255,255,0.06)',
+    glassStrong: 'rgba(255,255,255,0.12)',
+    glassBorder: 'rgba(255,255,255,0.10)',
+
     tabBar: 'rgba(28,28,30,0.92)',
-    tabBarActive: '#0A84FF',
+    tabBarActive: '#5B9BFF',
     tabBarInactive: 'rgba(235,235,245,0.3)',
+
+    sidebar: '#131E30',
+    sidebarBg: '#0E1726',
+
+    purple: '#7C3AED',
+    purpleLight: 'rgba(124,58,237,0.2)',
   },
   gradients: {
     blue: ['#0A84FF', '#30B0C7'] as [string, string],
@@ -105,6 +136,13 @@ export const darkTheme = {
     purpleAccent: '#BF5AF2',
     orangeAccent: '#FF9F0A',
   },
+  fonts: {
+    heading: 'Onest_700Bold',
+    headingXBold: 'Onest_800ExtraBold',
+    body: 'Manrope_500Medium',
+    bodyBold: 'Manrope_700Bold',
+    mono: undefined as string | undefined,
+  },
 };
 
 export type ThemeMode = 'dark' | 'light';
@@ -115,6 +153,7 @@ export const theme = {
   mode: 'light' as ThemeMode,
   colors: { ...lightTheme.colors },
   gradients: { ...lightTheme.gradients },
+  fonts: { ...lightTheme.fonts },
 };
 
 export function bootstrapTheme(mode?: ThemeMode): ThemeMode {
@@ -147,6 +186,7 @@ export function applyTheme(mode: ThemeMode) {
   theme.mode = mode;
   Object.assign(theme.colors, t.colors);
   Object.assign(theme.gradients, t.gradients);
+  Object.assign(theme.fonts, t.fonts);
 }
 
 export const formatMoney = (n: number) => {

@@ -474,13 +474,13 @@ function FinanceInner() {
   });
 
   if (loading) {
-    return <View style={[styles.center, { backgroundColor: theme.colors.bg }]}><ActivityIndicator color={theme.colors.accent} /></View>;
+    return <View style={[styles.center, { backgroundColor: Platform.OS === 'web' ? 'transparent' : theme.colors.bg }]}><ActivityIndicator color={theme.colors.accent} /></View>;
   }
 
   return (
     <>
       <ScrollView
-        style={{ flex: 1, backgroundColor: theme.colors.bg }}
+        style={{ flex: 1, backgroundColor: Platform.OS === 'web' ? 'transparent' : theme.colors.bg }}
         contentContainerStyle={{ paddingTop: insets.top + 16, paddingHorizontal: 20, paddingBottom: insets.bottom + 100 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.colors.accent} />}
       >
@@ -1266,17 +1266,18 @@ const webInputStyle: any = {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  title:  { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
+  title: { fontSize: 28, fontFamily: 'Onest_700Bold', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
 
-  tabBtn: { paddingHorizontal: 16, paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface, alignItems: 'center' },
-  tabBtnActive: { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent },
+  tabBtn: { paddingHorizontal: 16, paddingVertical: 9, borderRadius: 11, borderWidth: 1, borderColor: theme.colors.glassBorder, backgroundColor: theme.colors.glass, alignItems: 'center' },
+  tabBtnActive: { backgroundColor: '#0E1726', borderColor: 'transparent' },
   tabBtnTxt: { fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary },
-  tabBtnTxtActive: { color: theme.colors.accent },
+  tabBtnTxtActive: { color: '#fff' },
 
   card: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border,
-    borderRadius: 16, padding: 18, marginBottom: 12,
+    backgroundColor: theme.colors.glass,
+    borderWidth: 1, borderColor: theme.colors.glassBorder,
+    borderRadius: 20, padding: 18, marginBottom: 12,
+    shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.16, shadowRadius: 28, elevation: 4,
   },
   sLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 12 },
 
@@ -1299,8 +1300,9 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 4 },
   metricCard: {
     width: '47%', flexGrow: 1,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 14,
+    backgroundColor: theme.colors.glass,
+    borderWidth: 1, borderColor: theme.colors.glassBorder, borderRadius: 18, padding: 14,
+    shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.14, shadowRadius: 20, elevation: 3,
   },
   metricLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.4, color: theme.colors.textTertiary, marginBottom: 8 },
   metricValue: { fontSize: 16, fontWeight: '700', letterSpacing: -0.4 },
@@ -1325,9 +1327,10 @@ const styles = StyleSheet.create({
   wTotalValue: { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary },
 
   quarterCard: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border,
-    borderRadius: 14, padding: 14, marginBottom: 8,
+    backgroundColor: theme.colors.glass,
+    borderWidth: 1, borderColor: theme.colors.glassBorder,
+    borderRadius: 18, padding: 14, marginBottom: 8,
+    shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 3,
   },
   quarterHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   quarterName:   { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary },
@@ -1343,8 +1346,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row', gap: 6, marginBottom: 12,
   },
   accSegBtn: {
-    flex: 1, paddingVertical: 8, paddingHorizontal: 4, borderRadius: 10, alignItems: 'center',
-    borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface,
+    flex: 1, paddingVertical: 8, paddingHorizontal: 4, borderRadius: 11, alignItems: 'center',
+    borderWidth: 1, borderColor: theme.colors.glassBorder, backgroundColor: theme.colors.glass,
   },
   accSegBtnActive: { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
   accSegTxt: { fontSize: 11, fontWeight: '600', color: theme.colors.textTertiary },
@@ -1358,9 +1361,9 @@ const styles = StyleSheet.create({
 
   overlay: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
-    backgroundColor: theme.colors.surface,
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 20, borderTopWidth: 1, borderTopColor: theme.colors.border,
+    backgroundColor: theme.colors.glassStrong,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 20, borderTopWidth: 1, borderTopColor: theme.colors.glassBorder,
   },
   sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   sheetTitle: { color: theme.colors.textPrimary, fontSize: 17, fontWeight: '600' },

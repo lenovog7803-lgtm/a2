@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput, Modal, TouchableWithoutFeedback } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput, Modal, TouchableWithoutFeedback, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Plus, Filter as FilterIcon, RefreshCw, Search, Menu } from 'lucide-react-native';
@@ -143,7 +143,7 @@ export default function Orders() {
   const activeFilters = (payFilter !== 'any' ? 1 : 0) + (docFilter !== 'any' ? 1 : 0);
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+    <View style={{ flex: 1, backgroundColor: Platform.OS === 'web' ? 'transparent' : theme.colors.bg }}>
       <View style={{ paddingHorizontal: 16, paddingTop: insets.top + 10, paddingBottom: 8 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <View>
@@ -370,9 +370,9 @@ function OrderCard({ order, onPress, testID }: any) {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary },
+  title: { fontSize: 28, fontFamily: 'Onest_700Bold', letterSpacing: -0.5, color: theme.colors.textPrimary },
   fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
-  iconBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.surface, alignItems: 'center', justifyContent: 'center', shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 1, shadowRadius: 4, elevation: 1 },
+  iconBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: theme.colors.glass, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.glassBorder, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 14, elevation: 2 },
   dot: { position: 'absolute', top: 4, right: 4, minWidth: 16, height: 16, paddingHorizontal: 4, borderRadius: 8, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
   dotText: { color: theme.colors.bg, fontSize: 9, fontWeight: '700' },
 
@@ -386,7 +386,7 @@ const styles = StyleSheet.create({
   chipCountActive: { color: 'rgba(255,255,255,0.7)', backgroundColor: 'rgba(255,255,255,0.15)' },
   chipPayCountActive: { color: '#D97706', backgroundColor: 'rgba(217,119,6,0.15)' },
 
-  filterPanel: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, marginTop: 12 },
+  filterPanel: { backgroundColor: theme.colors.glass, borderWidth: 1, borderColor: theme.colors.glassBorder, borderRadius: 16, padding: 14, marginTop: 12, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 3 },
   resetBtn: { paddingVertical: 8, alignItems: 'center' },
   resetText: { color: theme.colors.accent, fontSize: 12, fontWeight: '600' },
 

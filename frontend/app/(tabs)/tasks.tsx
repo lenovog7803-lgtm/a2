@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, TextInput, Modal, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, TextInput, Modal, ScrollView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Plus, X, Search, Phone, DollarSign, FileText, CheckSquare, Calendar, AlertTriangle } from 'lucide-react-native';
@@ -185,7 +185,7 @@ export default function Tasks() {
   ) : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#EDEFF3' }}>
+    <View style={{ flex: 1, backgroundColor: Platform.OS === 'web' ? 'transparent' : '#EDEFF3' }}>
       {/* Header */}
       <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 10, paddingBottom: 14, backgroundColor: '#EDEFF3' }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>

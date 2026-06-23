@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Tabs } from 'expo-router';
+import { Platform, View, Text, TouchableOpacity } from 'react-native';
+import { Tabs, Slot } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import { View, Text, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LayoutDashboard, Package, Users, Truck, CheckSquare, Phone, DollarSign } from 'lucide-react-native';
 import { useTheme } from '../../src/themeContext';
+import { AuroraBackground } from '../../src/components/AuroraBackground';
+import { Sidebar } from '../../src/components/Sidebar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const TAB_ICONS: Record<string, any> = {
@@ -42,7 +44,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
         right: 0,
         paddingBottom: insets.bottom,
         borderTopWidth: 0.5,
-        borderTopColor: theme.colors.border,
+        borderTopColor: theme.colors.glassBorder,
         overflow: 'hidden',
       }}
     >
@@ -71,11 +73,11 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
             >
               {isFocused ? (
                 <View style={{ alignItems: 'center' }}>
-                  <IconComponent size={22} color="#1366F0" strokeWidth={2} />
-                  <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#1366F0', marginTop: 3 }} />
+                  <IconComponent size={22} color={theme.colors.tabBarActive} strokeWidth={2} />
+                  <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.tabBarActive, marginTop: 3 }} />
                 </View>
               ) : (
-                <IconComponent size={22} color="#8A93A0" strokeWidth={1.5} />
+                <IconComponent size={22} color={theme.colors.tabBarInactive} strokeWidth={1.5} />
               )}
               <Text style={{
                 fontSize: 10,
@@ -92,6 +94,31 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   );
 }
 
+// Web layout with sidebar
+function WebLayout({ role }: { role: string }) {
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+      <AuroraBackground />
+      <View style={{
+        position: 'relative',
+        zIndex: 1,
+        flex: 1,
+        flexDirection: 'row',
+        padding: 16,
+        gap: 16,
+        paddingTop: insets.top + 16,
+      }}>
+        <Sidebar />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Slot />
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function TabsLayout() {
   const [role, setRole] = useState<string>('');
 
@@ -101,6 +128,12 @@ export default function TabsLayout() {
 
   const isManager = role === 'manager';
 
+  // Web gets sidebar layout
+  if (Platform.OS === 'web') {
+    return <WebLayout role={role} />;
+  }
+
+  // Mobile keeps bottom tab bar
   return (
     <Tabs
       screenOptions={{ headerShown: false }}

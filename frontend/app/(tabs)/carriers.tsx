@@ -1,14 +1,24 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, TextInput, Platform } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, Search, ChevronRight, Star } from 'lucide-react-native';
+import { Plus, Search } from 'lucide-react-native';
 import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 
-const BG_COLORS = ['#EFF6FF', '#F5F3FF', '#F0FDF4', '#FFFBEB', '#FEF2F2'];
-const ACCENT_COLORS = ['#2563EB', '#7C3AED', '#10B981', '#F59E0B', '#EF4444'];
-function avatarIdx(name: string): number { return (name?.charCodeAt(0) || 0) % 5; }
+const GRADIENTS: [string, string][] = [
+  ['#A5D8FF', '#1366F0'],
+  ['#D0BFFF', '#7C3AED'],
+  ['#A7F3D0', '#1E9E5A'],
+  ['#FCD34D', '#D97706'],
+  ['#FCA5A5', '#E0473B'],
+  ['#BAE6FD', '#0891B2'],
+];
+function avatarIdx(name: string) { return (name?.charCodeAt(0) || 0) % GRADIENTS.length; }
+function initials(name: string) { return (name || '?').split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+const CARD_SHADOW = { shadowColor: '#0E1726', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 18, elevation: 4 };
 
 export default function Carriers() {
   const insets = useSafeAreaInsets();
@@ -39,23 +49,26 @@ export default function Carriers() {
     : carriers;
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 14, backgroundColor: theme.colors.surface, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
+    <View style={{ flex: 1, backgroundColor: Platform.OS === 'web' ? 'transparent' : theme.colors.bg }}>
+      {/* Header */}
+      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 10, paddingBottom: 14, backgroundColor: theme.colors.bg }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
           <View>
-            <Text style={{ fontSize: 28, fontWeight: '700', color: theme.colors.textPrimary, letterSpacing: -0.8 }}>Перевозчики</Text>
-            <Text style={{ fontSize: 12, color: theme.colors.textTertiary, marginTop: 2 }}>{carriers.length} контрагентов</Text>
+            <Text style={{ fontSize: 26, fontWeight: '800', color: '#0E1726', letterSpacing: -0.8 }}>Перевозчики</Text>
+            <Text style={{ fontSize: 12.5, color: '#8A93A0', marginTop: 2, fontWeight: '500' }}>
+              Всего: <Text style={{ fontWeight: '700', color: '#0E1726' }}>{carriers.length}</Text>
+            </Text>
           </View>
-          <TouchableOpacity testID="add-carrier-btn" onPress={() => router.push('/carrier/new')}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.accent, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 }}
-          >
-            <Plus size={14} color="#fff" strokeWidth={2} />
-            <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Новый перевозчик</Text>
+          <TouchableOpacity testID="add-carrier-btn" onPress={() => router.push('/carrier/new')} activeOpacity={0.85}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#0E1726', borderRadius: 13, paddingHorizontal: 16, paddingVertical: 11, shadowColor: '#0E1726', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16 }}>
+            <Plus size={15} color="#fff" strokeWidth={2.2} />
+            <Text style={{ fontSize: 13.5, fontWeight: '600', color: '#fff' }}>Добавить перевозчика</Text>
           </TouchableOpacity>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: theme.colors.bg, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0.5, borderColor: theme.colors.border }}>
-          <Search size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
-          <TextInput value={search} onChangeText={setSearch} placeholder="Поиск по названию, номеру, телефону..." placeholderTextColor={theme.colors.textTertiary} style={{ flex: 1, fontSize: 13, color: theme.colors.textPrimary }} clearButtonMode="while-editing" />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 13, paddingVertical: 11, borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', ...CARD_SHADOW }}>
+          <Search size={15} color="#8A93A0" strokeWidth={1.6} />
+          <TextInput value={search} onChangeText={setSearch} placeholder="Поиск по перевозчикам..." placeholderTextColor="#8A93A0"
+            style={{ flex: 1, fontSize: 13.5, color: '#0E1726' }} clearButtonMode="while-editing" />
         </View>
       </View>
 
@@ -68,11 +81,11 @@ export default function Carriers() {
           testID="carriers-list"
           data={filtered}
           keyExtractor={(i) => i.id}
-          contentContainerStyle={{ paddingTop: 12, paddingBottom: insets.bottom + 100 }}
-          renderItem={({ item, index }) => (
-            <CarrierCard carrier={item} onPress={() => router.push(`/carrier/${item.id}`)} testID={`carrier-card-${index}`} />
-          )}
-          ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', marginTop: 60, fontSize: 14 }}>Нет перевозчиков</Text>}
+          numColumns={2}
+          columnWrapperStyle={{ paddingHorizontal: 12, gap: 12 }}
+          contentContainerStyle={{ paddingTop: 8, paddingBottom: insets.bottom + 100, gap: 12 }}
+          renderItem={({ item, index }) => <CarrierCard carrier={item} onPress={() => router.push(`/carrier/${item.id}`)} testID={`carrier-card-${index}`} />}
+          ListEmptyComponent={<Text style={{ color: '#8A93A0', textAlign: 'center', marginTop: 60, fontSize: 14 }}>Нет перевозчиков</Text>}
         />
       )}
     </View>
@@ -80,33 +93,46 @@ export default function Carriers() {
 }
 
 function CarrierCard({ carrier, onPress, testID }: any) {
-  const initials = carrier.company_name?.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase() || '?';
   const idx = avatarIdx(carrier.company_name || '');
+  const mono = initials(carrier.company_name || '');
+  const rating = carrier.rating ? Number(carrier.rating).toFixed(1) : null;
   return (
-    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.78}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, backgroundColor: theme.colors.surface, borderRadius: 14, marginBottom: 8, marginHorizontal: 16, borderWidth: 0.5, borderColor: theme.colors.border, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6 }}
-    >
-      <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: BG_COLORS[idx], alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        <Text style={{ fontSize: 15, fontWeight: '700', color: ACCENT_COLORS[idx] }}>{initials}</Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>{carrier.company_name}</Text>
-        <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }} numberOfLines={1}>
-          {carrier.driver_name || carrier.phone || 'Нет контакта'}
-        </Text>
-        {(carrier.vehicle_type || carrier.plate) && (
-          <Text style={{ fontSize: 10, color: theme.colors.accent, marginTop: 3, fontWeight: '500' }}>
-            {[carrier.vehicle_type, carrier.plate].filter(Boolean).join(' · ')}
-          </Text>
+    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.88} style={{ flex: 1, backgroundColor: '#fff', borderRadius: 22, padding: 18, borderWidth: 1, borderColor: 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
+      {/* Avatar row */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, marginBottom: 14 }}>
+        <LinearGradient colors={GRADIENTS[idx]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={{ width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center', shadowColor: '#0E1726', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.22, shadowRadius: 10 }}>
+          <Text style={{ fontSize: 15, fontWeight: '800', color: '#fff' }}>{mono}</Text>
+        </LinearGradient>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: '#0E1726', letterSpacing: -0.3 }} numberOfLines={1}>{carrier.company_name}</Text>
+          <Text style={{ fontSize: 11.5, color: '#8A93A0', marginTop: 2 }} numberOfLines={1}>{carrier.driver_name || '—'}</Text>
+        </View>
+        {rating && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(217,119,6,0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 9 }}>
+            <Text style={{ fontSize: 10 }}>★</Text>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#A86A20' }}>{rating}</Text>
+          </View>
         )}
       </View>
-      {!!carrier.rating && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginRight: 4 }}>
-          <Star size={11} color={theme.colors.accent} fill={theme.colors.accent} />
-          <Text style={{ fontSize: 12, fontWeight: '700', color: theme.colors.accent }}>{(carrier.rating || 0).toFixed(1)}</Text>
-        </View>
+
+      {/* Vehicle info */}
+      <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap' }}>
+        {carrier.vehicle_type && (
+          <View style={{ borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(14,23,38,0.05)' }}>
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#0E1726' }}>{carrier.vehicle_type}</Text>
+          </View>
+        )}
+        {carrier.plate && (
+          <View style={{ borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(14,23,38,0.05)' }}>
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#0E1726', letterSpacing: 0.5 }}>{carrier.plate}</Text>
+          </View>
+        )}
+      </View>
+
+      {carrier.phone && (
+        <Text style={{ fontSize: 12, color: '#5A6573', marginTop: 12 }} numberOfLines={1}>{carrier.phone}</Text>
       )}
-      <ChevronRight size={16} color={theme.colors.textTertiary} strokeWidth={1.5} />
     </TouchableOpacity>
   );
 }

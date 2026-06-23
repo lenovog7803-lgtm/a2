@@ -9,6 +9,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { TrendingUp, TrendingDown, ArrowDownRight, ArrowUpRight, ArrowDownCircle, ArrowUpCircle, Briefcase, DollarSign, Clock, CheckCircle, Wallet, Users, Truck, RefreshCw, CheckCircle2, AlertTriangle, Sun, Moon, Link2, LogIn, LogOut, ChevronRight, X, UserPlus, Trash2, Search, Bell, Calendar, ChevronDown } from 'lucide-react-native';
 import { theme, formatMoney, formatShort, leadStatusColors, leadStatusLabels } from '../../src/theme';
 import { useTheme } from '../../src/themeContext';
+import { GlassCard } from '../../src/components/GlassCard';
 import { api } from '../../src/api';
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -286,7 +287,7 @@ export default function Dashboard() {
     <>
     <ScrollView
       testID="dashboard-screen"
-      style={{ flex: 1, backgroundColor: theme.colors.bg }}
+      style={{ flex: 1, backgroundColor: Platform.OS === 'web' ? 'transparent' : theme.colors.bg }}
       contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => {
         setRefreshing(true);
@@ -482,19 +483,19 @@ export default function Dashboard() {
                 </PressableGradient>
 
                 {/* Stats chips */}
-                <View style={{ borderRadius: 18, padding: 11, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, flexDirection: 'row', shadowColor: '#0E1726', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }}>
+                <GlassCard padding={11} borderRadius={18} style={{ flexDirection: 'row' } as any}>
                   {[
                     { val: activeOrders, label: 'Активных', color: '#D97706' },
                     { val: doneOrders, label: 'Доставлено', color: '#1E9E5A' },
                     { val: clientsCount, label: 'Клиентов', color: '#1366F0' },
                     { val: carriersCount, label: 'Перевозч.', color: '#7C3AED' },
                   ].map((item, i, arr) => (
-                    <View key={i} style={{ flex: 1, alignItems: 'center', borderRightWidth: i < arr.length - 1 ? 0.5 : 0, borderRightColor: theme.colors.border }}>
-                      <Text style={{ fontSize: 14, fontWeight: '700', color: item.color }}>{item.val}</Text>
+                    <View key={i} style={{ flex: 1, alignItems: 'center', borderRightWidth: i < arr.length - 1 ? 0.5 : 0, borderRightColor: theme.colors.borderInner }}>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: item.color }}>{item.val}</Text>
                       <Text style={{ fontSize: 9, color: theme.colors.textTertiary, marginTop: 2 }}>{item.label}</Text>
                     </View>
                   ))}
-                </View>
+                </GlassCard>
               </View>
             </View>
           )}
@@ -512,8 +513,8 @@ export default function Dashboard() {
           {currentUserRole !== 'manager' && (topClients.length > 0 || topByMargin.length > 0) && (
             <View style={{ flexDirection: Platform.OS === 'web' ? 'row' : 'column', gap: 12, marginBottom: 12 }}>
               {topClients.length > 0 && (
-                <View style={{ flex: 1, backgroundColor: theme.colors.surface, borderRadius: 20, padding: 16, borderWidth: 0.5, borderColor: theme.colors.border }}>
-                  <Text style={{ fontSize: 13, fontWeight: '500', color: theme.colors.textPrimary, marginBottom: 2 }}>Топ клиентов</Text>
+                <GlassCard padding={16} borderRadius={20} style={{ flex: 1 } as any}>
+                  <Text style={{ fontSize: 13, fontFamily: 'Onest_700Bold', color: theme.colors.textPrimary, marginBottom: 2 }}>Топ клиентов</Text>
                   <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginBottom: 10 }}>по выручке</Text>
                   {topClients.slice(0, 5).map((client: any, i: number) => (
                     <TouchableOpacity key={i} onPress={() => setShowAllTopClients(true)}
@@ -531,12 +532,12 @@ export default function Dashboard() {
                   <TouchableOpacity onPress={() => setShowAllTopClients(true)}>
                     <Text style={{ fontSize: 11, color: theme.colors.accent, marginTop: 8 }}>Все клиенты →</Text>
                   </TouchableOpacity>
-                </View>
+                </GlassCard>
               )}
 
               {topByMargin.length > 0 && (
-                <View style={{ flex: 1, backgroundColor: theme.colors.surface, borderRadius: 20, padding: 16, borderWidth: 0.5, borderColor: theme.colors.border }}>
-                  <Text style={{ fontSize: 13, fontWeight: '500', color: theme.colors.textPrimary, marginBottom: 2 }}>Топ по марже</Text>
+                <GlassCard padding={16} borderRadius={20} style={{ flex: 1 } as any}>
+                  <Text style={{ fontSize: 13, fontFamily: 'Onest_700Bold', color: theme.colors.textPrimary, marginBottom: 2 }}>Топ по марже</Text>
                   <Text style={{ fontSize: 10, color: theme.colors.textTertiary, marginBottom: 10 }}>% маржинальности</Text>
                   {topByMargin.slice(0, 5).map((client: any, i: number) => (
                     <TouchableOpacity key={i} onPress={() => setShowAllTopMargin(true)}
@@ -554,7 +555,7 @@ export default function Dashboard() {
                   <TouchableOpacity onPress={() => setShowAllTopMargin(true)}>
                     <Text style={{ fontSize: 11, color: '#1E9E5A', marginTop: 8 }}>Все по марже →</Text>
                   </TouchableOpacity>
-                </View>
+                </GlassCard>
               )}
             </View>
           )}
@@ -958,15 +959,16 @@ function ExpandModal({ visible, onClose, title, subtitle, children }: { visible:
       </Animated.View>
       <Animated.View style={[sheetStyle, {
         position: 'absolute', bottom: 0, left: 0, right: 0,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.glassStrong,
         borderTopLeftRadius: 28, borderTopRightRadius: 28,
         paddingBottom: insets.bottom + 20,
         maxHeight: '88%',
-        shadowColor: '#000', shadowOffset: { width: 0, height: -8 },
-        shadowOpacity: 0.15, shadowRadius: 24, elevation: 24,
+        borderWidth: 1, borderColor: theme.colors.glassBorder,
+        shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: -8 },
+        shadowOpacity: 0.2, shadowRadius: 24, elevation: 24,
       }]}>
-        <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: theme.colors.border, alignSelf: 'center', marginTop: 12, marginBottom: 4 }} />
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+        <View style={{ width: 44, height: 4, borderRadius: 2, backgroundColor: theme.colors.borderInner, alignSelf: 'center', marginTop: 12, marginBottom: 4 }} />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: theme.colors.borderInner }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 17, fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>{title}</Text>
             {subtitle && <Text style={{ fontSize: 12, color: theme.colors.textTertiary, marginTop: 2 }}>{subtitle}</Text>}
@@ -1798,8 +1800,9 @@ function ManagerView({ leads, activityStats, managers, setManagers, isAdmin, cur
 const mStyles = StyleSheet.create({
   summaryRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   summaryCard: {
-    flex: 1, backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 12,
+    flex: 1, backgroundColor: theme.colors.glass,
+    borderWidth: 1, borderColor: theme.colors.glassBorder, borderRadius: 14, padding: 13,
+    shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.14, shadowRadius: 20, elevation: 3,
   },
   summaryLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5, color: theme.colors.textTertiary },
   summaryValue: { fontSize: 24, fontWeight: '700', letterSpacing: -0.5, marginTop: 4 },
@@ -1807,7 +1810,7 @@ const mStyles = StyleSheet.create({
 
   sectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 10, marginTop: 8 },
 
-  funnelCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 14, padding: 16, marginBottom: 16 },
+  funnelCard: { backgroundColor: theme.colors.glass, borderWidth: 1, borderColor: theme.colors.glassBorder, borderRadius: 18, padding: 16, marginBottom: 16, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 3 },
   barLabel: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '500' },
   barCount: { fontSize: 13, fontWeight: '700' },
   barBg: { height: 4, backgroundColor: theme.colors.surfaceElevated, borderRadius: 2, overflow: 'hidden' },
@@ -1815,16 +1818,17 @@ const mStyles = StyleSheet.create({
 
   actCard: {
     flexDirection: 'row', height: 80,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border,
-    borderRadius: 14, marginBottom: 16, overflow: 'hidden',
+    backgroundColor: theme.colors.glass,
+    borderWidth: 1, borderColor: theme.colors.glassBorder,
+    borderRadius: 18, marginBottom: 16, overflow: 'hidden',
+    shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 3,
   },
   actCol: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   actNum: { fontSize: 24, fontWeight: '800', letterSpacing: -1 },
   actDate: { fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 },
 
-  listCard: { backgroundColor: theme.colors.surface, borderRadius: 16, marginBottom: 16, paddingHorizontal: 16, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
-  leadRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  listCard: { backgroundColor: theme.colors.glass, borderRadius: 18, marginBottom: 16, paddingHorizontal: 16, borderWidth: 1, borderColor: theme.colors.glassBorder, shadowColor: theme.colors.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.14, shadowRadius: 24, elevation: 3 },
+  leadRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: theme.colors.borderInner },
   leadName: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '500' },
   leadMeta: { color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 },
   leadPhone: { color: theme.colors.accent, fontSize: 12, fontWeight: '600' },
@@ -1890,27 +1894,27 @@ const styles = StyleSheet.create({
   themeBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingHorizontal: 10, paddingVertical: 6,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border,
+    backgroundColor: theme.colors.glass,
+    borderWidth: 1, borderColor: theme.colors.glassBorder,
     borderRadius: 999,
   },
   logoutBtn: {
     width: 34, height: 34, borderRadius: 17,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1, borderColor: theme.colors.border,
+    backgroundColor: theme.colors.glass,
+    borderWidth: 1, borderColor: theme.colors.glassBorder,
   },
   label: { fontSize: 10, fontWeight: '700', letterSpacing: 1.8, color: theme.colors.textTertiary, marginBottom: 6 },
-  title: { fontSize: 34, fontWeight: '700', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
+  title: { fontSize: 34, fontFamily: 'Onest_700Bold', letterSpacing: -0.5, color: theme.colors.textPrimary, marginBottom: 16 },
 
   modeToggle: {
     flexDirection: 'row', marginBottom: 14,
-    backgroundColor: theme.colors.surfaceElevated,
+    backgroundColor: theme.colors.glass,
     borderRadius: 12, padding: 3,
-    borderWidth: 1, borderColor: theme.colors.border,
+    borderWidth: 1, borderColor: theme.colors.glassBorder,
   },
   modeBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
-  modeBtnActive: { backgroundColor: theme.colors.surface },
+  modeBtnActive: { backgroundColor: theme.colors.glassStrong },
   modeBtnText: { color: theme.colors.textTertiary, fontSize: 13, fontWeight: '600' },
   modeBtnTextActive: { color: theme.colors.textPrimary, fontWeight: '700' },
 
