@@ -32,25 +32,32 @@ const daysSince = (dateStr: string): number => {
   return Math.floor((Date.now() - d) / (1000 * 60 * 60 * 24));
 };
 
+const GRADIENTS_AV: [string, string][] = [
+  ['#A5D8FF', '#1366F0'], ['#D0BFFF', '#7C3AED'], ['#A7F3D0', '#1E9E5A'],
+  ['#FCD34D', '#D97706'], ['#FCA5A5', '#E0473B'], ['#BAE6FD', '#0891B2'],
+];
+function avIdx(name: string) { return (name?.charCodeAt(0) || 0) % GRADIENTS_AV.length; }
+function avMono(name: string) { return (name || '?').split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase(); }
+
 function getOrderColors(order: any): { gradient: [string, string]; border: string; dot: string } {
-  if (isOverdue(order)) return { gradient: ['#FFF7ED', '#FEE2E2'], border: '#FECACA', dot: '#EF4444' };
+  if (isOverdue(order)) return { gradient: ['#FFF7ED', '#FEF3E8'], border: 'rgba(217,119,6,0.2)', dot: '#D97706' };
   switch (order.status) {
-    case 'delivered':   return { gradient: ['#F0FDF4', '#DCFCE7'], border: '#BBF7D0', dot: '#16A34A' };
-    case 'in_progress': return { gradient: ['#EFF6FF', '#DBEAFE'], border: '#BFDBFE', dot: '#2563EB' };
-    case 'new':         return { gradient: ['#F5F3FF', '#EDE9FE'], border: '#DDD6FE', dot: '#7C3AED' };
-    case 'cancelled':   return { gradient: ['#F9FAFB', '#F3F4F6'], border: '#E5E7EB', dot: '#9CA3AF' };
-    default:            return { gradient: ['#FFFFFF', '#F9FAFB'], border: '#E5E7EB', dot: '#6B7280' };
+    case 'delivered':   return { gradient: ['#F0FDF8', '#E8FAF2'], border: 'rgba(30,158,90,0.15)', dot: '#1E9E5A' };
+    case 'in_progress': return { gradient: ['#EEF4FF', '#E3ECFF'], border: 'rgba(19,102,240,0.15)', dot: '#1366F0' };
+    case 'new':         return { gradient: ['#F5F3FF', '#EDE9FE'], border: 'rgba(124,58,237,0.15)', dot: '#7C3AED' };
+    case 'cancelled':   return { gradient: ['#F9FAFB', '#F4F6FA'], border: 'rgba(14,23,38,0.08)', dot: '#8A93A0' };
+    default:            return { gradient: ['#FFFFFF', '#F9FAFB'], border: 'rgba(14,23,38,0.08)', dot: '#8A93A0' };
   }
 }
 
 function getBadge(order: any): { label: string; bg: string; color: string } {
-  if (isOverdue(order)) return { label: '⚠ Просрочена', bg: '#FEE2E2', color: '#EF4444' };
+  if (isOverdue(order)) return { label: '⚠ Просрочена', bg: 'rgba(217,119,6,0.13)', color: '#D97706' };
   switch (order.status) {
-    case 'delivered':   return { label: '✓ Доставлено', bg: '#DCFCE7', color: '#16A34A' };
-    case 'in_progress': return { label: '● В работе',   bg: '#DBEAFE', color: '#2563EB' };
-    case 'new':         return { label: 'Новая',         bg: '#EDE9FE', color: '#7C3AED' };
-    case 'cancelled':   return { label: 'Отменена',      bg: '#F3F4F6', color: '#9CA3AF' };
-    default:            return { label: order.status,    bg: '#F3F4F6', color: '#6B7280' };
+    case 'delivered':   return { label: '✓ Доставлено', bg: 'rgba(30,158,90,0.12)', color: '#1E9E5A' };
+    case 'in_progress': return { label: '● В работе',   bg: 'rgba(19,102,240,0.12)', color: '#1366F0' };
+    case 'new':         return { label: 'Новая',         bg: 'rgba(124,58,237,0.12)', color: '#7C3AED' };
+    case 'cancelled':   return { label: 'Отменена',      bg: 'rgba(14,23,38,0.06)', color: '#8A93A0' };
+    default:            return { label: order.status,    bg: 'rgba(14,23,38,0.06)', color: '#8A93A0' };
   }
 }
 
@@ -137,22 +144,29 @@ export default function Orders() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <View style={{ paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 8 }}>
+      <View style={{ paddingHorizontal: 16, paddingTop: insets.top + 10, paddingBottom: 8 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={styles.title}>Заявки</Text>
+          <View>
+            <Text style={[styles.title, { fontSize: 26, fontWeight: '800', color: '#0E1726', letterSpacing: -0.8 }]}>Заявки</Text>
+            <Text style={{ fontSize: 12.5, color: '#8A93A0', marginTop: 2, fontWeight: '500' }}>
+              Всего: <Text style={{ fontWeight: '700', color: '#0E1726' }}>{orders.length}</Text>
+            </Text>
+          </View>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity testID="mode-btn" onPress={() => setModeVisible(true)} style={styles.iconBtn} activeOpacity={0.7}>
-              <Menu size={18} color={theme.colors.textSecondary} strokeWidth={1.6} />
+            <TouchableOpacity testID="mode-btn" onPress={() => setModeVisible(true)} style={[styles.iconBtn, { borderRadius: 13, backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', width: 42, height: 42 }]} activeOpacity={0.7}>
+              <Menu size={17} color="#5A6573" strokeWidth={1.6} />
             </TouchableOpacity>
-            <TouchableOpacity testID="sync-btn" onPress={syncAndReload} disabled={syncing} style={styles.iconBtn} activeOpacity={0.7}>
-              {syncing ? <ActivityIndicator size="small" color={theme.colors.accent} /> : <RefreshCw size={18} color={theme.colors.textSecondary} strokeWidth={1.6} />}
+            <TouchableOpacity testID="sync-btn" onPress={syncAndReload} disabled={syncing} style={[styles.iconBtn, { borderRadius: 13, backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', width: 42, height: 42 }]} activeOpacity={0.7}>
+              {syncing ? <ActivityIndicator size="small" color={theme.colors.accent} /> : <RefreshCw size={17} color="#5A6573" strokeWidth={1.6} />}
             </TouchableOpacity>
-            <TouchableOpacity testID="toggle-filters" onPress={() => setShowFilters(!showFilters)} style={[styles.iconBtn, showFilters && { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent }]} activeOpacity={0.7}>
-              <FilterIcon size={18} color={showFilters ? theme.colors.accent : theme.colors.textSecondary} strokeWidth={1.6} />
+            <TouchableOpacity testID="toggle-filters" onPress={() => setShowFilters(!showFilters)} style={[styles.iconBtn, { borderRadius: 13, width: 42, height: 42, backgroundColor: showFilters ? 'rgba(19,102,240,0.1)' : '#fff', borderWidth: 1, borderColor: showFilters ? '#1366F0' : 'rgba(14,23,38,0.08)' }]} activeOpacity={0.7}>
+              <FilterIcon size={17} color={showFilters ? '#1366F0' : '#5A6573'} strokeWidth={1.6} />
               {activeFilters > 0 && <View style={styles.dot}><Text style={styles.dotText}>{activeFilters}</Text></View>}
             </TouchableOpacity>
-            <TouchableOpacity testID="add-order-btn" onPress={() => router.push('/order/new')} style={styles.fab} activeOpacity={0.8}>
-              <Plus size={20} color={theme.colors.bg} strokeWidth={2.2} />
+            <TouchableOpacity testID="add-order-btn" onPress={() => router.push('/order/new')} activeOpacity={0.85}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#0E1726', borderRadius: 13, paddingHorizontal: 14, paddingVertical: 10, shadowColor: '#0E1726', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16 }}>
+              <Plus size={15} color="#fff" strokeWidth={2.2} />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Новая</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -273,104 +287,83 @@ export default function Orders() {
 }
 
 function OrderCard({ order, onPress, testID }: any) {
-  const { gradient, border, dot } = getOrderColors(order);
   const badge = getBadge(order);
   const margin = (order.client_rate || 0) - (order.carrier_rate || 0);
+  const marginPct = order.client_rate > 0 ? ((margin / order.client_rate) * 100).toFixed(1) : null;
+  const idx = avIdx(order.client_name || '');
+  const mono = avMono(order.client_name || '');
 
   return (
-    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.82} style={{ marginHorizontal: 16, marginBottom: 10 }}>
-      <LinearGradient
-        colors={gradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={{
-          borderRadius: 18,
-          padding: 16,
-          borderWidth: 0.5,
-          borderColor: border,
-          shadowColor: dot,
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.08,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        {/* Строка 1: номер + бейдж */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <Text style={{ fontSize: 11, fontWeight: '500', color: '#9CA3AF' }}>
-            № {order.order_number}
-          </Text>
-          <View style={{ backgroundColor: badge.bg, borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3 }}>
-            <Text style={{ fontSize: 10, fontWeight: '600', color: badge.color }}>{badge.label}</Text>
-          </View>
-        </View>
+    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.88}
+      style={{ marginHorizontal: 14, marginBottom: 10, backgroundColor: '#fff', borderRadius: 22, padding: 18, borderWidth: 1, borderColor: 'rgba(14,23,38,0.07)', shadowColor: '#0E1726', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.07, shadowRadius: 18, elevation: 3 }}>
 
-        {/* Клиент */}
-        <Text style={{ fontSize: 14, fontWeight: '600', color: '#1a1a2e', marginBottom: 14 }} numberOfLines={1}>
-          {order.client_name || '—'}
+      {/* Top: order number + badge */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <Text style={{ fontSize: 12.5, fontWeight: '600', color: '#8A93A0', letterSpacing: 0.3 }}>
+          № {order.order_number}
         </Text>
+        <View style={{ backgroundColor: badge.bg, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}>
+          <Text style={{ fontSize: 11.5, fontWeight: '700', color: badge.color }}>{badge.label}</Text>
+        </View>
+      </View>
 
-        {/* Маршрут */}
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-          {/* Вертикальная линия с точками */}
-          <View style={{ alignItems: 'center', paddingTop: 4, width: 10 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: dot }} />
-            <View style={{ flex: 1, marginVertical: 3, gap: 2, alignItems: 'center' }}>
-              {Array.from({ length: 5 }).map((_, i) => (
-                <View key={i} style={{ width: 1.5, height: 3, backgroundColor: '#CBD5E1' }} />
-              ))}
-            </View>
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#CBD5E1' }} />
+      {/* Route */}
+      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
+        <View style={{ alignItems: 'center', paddingTop: 3, width: 11 }}>
+          <View style={{ width: 11, height: 11, borderRadius: 6, borderWidth: 3, borderColor: '#1E9E5A', backgroundColor: '#fff' }} />
+          <View style={{ width: 1.5, flex: 1, minHeight: 22, backgroundColor: 'rgba(14,23,38,0.12)', marginVertical: 3 }} />
+          <View style={{ width: 11, height: 11, borderRadius: 6, borderWidth: 3, borderColor: '#E0473B', backgroundColor: '#fff' }} />
+        </View>
+        <View style={{ flex: 1, justifyContent: 'space-between', gap: 8 }}>
+          <View>
+            <Text style={{ fontSize: 10.5, color: '#8A93A0', fontWeight: '500' }}>
+              {order.load_date ? order.load_date.slice(0, 10).split('-').reverse().join('.') : 'Загрузка'}
+            </Text>
+            <Text style={{ fontSize: 13.5, fontWeight: '600', color: '#0E1726', marginTop: 1 }} numberOfLines={1}>{order.route_from || '—'}</Text>
           </View>
-
-          {/* Точки маршрута */}
-          <View style={{ flex: 1, justifyContent: 'space-between', gap: 10 }}>
-            <View>
-              <Text style={{ fontSize: 9, color: '#9CA3AF', fontWeight: '500', marginBottom: 1 }}>Откуда</Text>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1a1a2e' }} numberOfLines={1}>
-                {order.route_from || '—'}
-              </Text>
-              {!!order.load_date && (
-                <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 1 }}>
-                  {order.load_date.slice(0, 10).split('-').reverse().join('.')}
-                </Text>
-              )}
-            </View>
-            <View>
-              <Text style={{ fontSize: 9, color: '#9CA3AF', fontWeight: '500', marginBottom: 1 }}>Куда</Text>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1a1a2e' }} numberOfLines={1}>
-                {order.route_to || '—'}
-              </Text>
-              {!!order.unload_date && (
-                <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 1 }}>
-                  {order.unload_date.slice(0, 10).split('-').reverse().join('.')}
-                </Text>
-              )}
-            </View>
+          <View>
+            <Text style={{ fontSize: 10.5, color: '#8A93A0', fontWeight: '500' }}>
+              {order.unload_date ? order.unload_date.slice(0, 10).split('-').reverse().join('.') : 'Выгрузка'}
+            </Text>
+            <Text style={{ fontSize: 13.5, fontWeight: '600', color: '#0E1726', marginTop: 1 }} numberOfLines={1}>{order.route_to || '—'}</Text>
           </View>
         </View>
+      </View>
 
-        {/* Разделитель */}
-        <View style={{ height: 0.5, backgroundColor: 'rgba(0,0,0,0.08)', marginBottom: 12 }} />
+      {/* Client row */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(14,23,38,0.06)' }}>
+        <LinearGradient colors={GRADIENTS_AV[idx]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={{ width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#fff' }}>{mono}</Text>
+        </LinearGradient>
+        <Text style={{ flex: 1, fontSize: 13, color: '#5A6573', fontWeight: '500' }} numberOfLines={1}>{order.client_name || '—'}</Text>
+      </View>
 
-        {/* Ставка + маржа */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-          <View>
-            <Text style={{ fontSize: 9, color: '#9CA3AF', fontWeight: '500', marginBottom: 2 }}>Ставка клиента</Text>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1a1a2e', letterSpacing: -0.5 }}>
-              {order.client_rate ? Number(order.client_rate).toLocaleString('ru-RU') + ' Br' : '—'}
-            </Text>
-          </View>
+      {/* Bottom: rates + margin + payments */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View>
+          <Text style={{ fontSize: 10.5, color: '#8A93A0', marginBottom: 3 }}>Ставка клиента</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: '#0E1726', letterSpacing: -0.5 }}>
+            {order.client_rate ? Number(order.client_rate).toLocaleString('ru-RU') + ' Br' : '—'}
+          </Text>
+        </View>
+        <View style={{ alignItems: 'flex-end', gap: 6 }}>
           {margin > 0 && (
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={{ fontSize: 9, color: '#9CA3AF', fontWeight: '500', marginBottom: 2 }}>Маржа</Text>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#16A34A' }}>
-                +{margin.toLocaleString('ru-RU')} Br
-              </Text>
+            <View>
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#1E9E5A' }}>+{margin.toLocaleString('ru-RU')} Br</Text>
+              {marginPct && <Text style={{ fontSize: 10.5, color: '#8A93A0', textAlign: 'right' }}>{marginPct}%</Text>}
             </View>
           )}
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            <View style={{ paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, backgroundColor: order.client_paid ? 'rgba(30,158,90,0.12)' : 'rgba(217,119,6,0.12)' }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: order.client_paid ? '#1E9E5A' : '#D97706' }}>К</Text>
+            </View>
+            <View style={{ paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, backgroundColor: order.carrier_paid ? 'rgba(30,158,90,0.12)' : 'rgba(124,58,237,0.12)' }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: order.carrier_paid ? '#1E9E5A' : '#7C3AED' }}>П</Text>
+            </View>
+          </View>
         </View>
-      </LinearGradient>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -383,15 +376,15 @@ const styles = StyleSheet.create({
   dot: { position: 'absolute', top: 4, right: 4, minWidth: 16, height: 16, paddingHorizontal: 4, borderRadius: 8, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' },
   dotText: { color: theme.colors.bg, fontSize: 9, fontWeight: '700' },
 
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 999 },
-  chipActive: { backgroundColor: theme.colors.accent + '20', borderColor: theme.colors.accent },
-  chipPayActive: { backgroundColor: theme.colors.warning + '20', borderColor: theme.colors.warning },
-  chipText: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' },
-  chipTextActive: { color: theme.colors.accent },
-  chipPayTextActive: { color: theme.colors.warning },
-  chipCount: { color: theme.colors.textTertiary, fontSize: 11, fontWeight: '700', backgroundColor: theme.colors.surfaceElevated, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 },
-  chipCountActive: { color: theme.colors.accent, backgroundColor: theme.colors.accent + '20' },
-  chipPayCountActive: { color: theme.colors.warning, backgroundColor: theme.colors.warning + '20' },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: 'rgba(255,255,255,0.7)', borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', borderRadius: 11 },
+  chipActive: { backgroundColor: '#0E1726', borderColor: 'transparent' },
+  chipPayActive: { backgroundColor: 'rgba(217,119,6,0.12)', borderColor: 'rgba(217,119,6,0.3)' },
+  chipText: { color: '#5A6573', fontSize: 13, fontWeight: '600' },
+  chipTextActive: { color: '#fff' },
+  chipPayTextActive: { color: '#D97706' },
+  chipCount: { color: '#8A93A0', fontSize: 11.5, fontWeight: '700', backgroundColor: 'rgba(14,23,38,0.06)', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 5 },
+  chipCountActive: { color: 'rgba(255,255,255,0.7)', backgroundColor: 'rgba(255,255,255,0.15)' },
+  chipPayCountActive: { color: '#D97706', backgroundColor: 'rgba(217,119,6,0.15)' },
 
   filterPanel: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, marginTop: 12 },
   resetBtn: { paddingVertical: 8, alignItems: 'center' },

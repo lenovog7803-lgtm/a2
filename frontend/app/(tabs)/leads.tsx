@@ -7,13 +7,22 @@ import { theme } from '../../src/theme';
 import { api } from '../../src/api';
 import { ClientModal } from '../../src/components/ClientModal';
 
+const GRADIENTS_AV: [string, string][] = [
+  ['#A5D8FF', '#1366F0'], ['#D0BFFF', '#7C3AED'], ['#A7F3D0', '#1E9E5A'],
+  ['#FCD34D', '#D97706'], ['#FCA5A5', '#E0473B'], ['#BAE6FD', '#0891B2'],
+];
+function avIdx(name: string) { return (name?.charCodeAt(0) || 0) % GRADIENTS_AV.length; }
+function avMono(name: string) { return (name || '?').split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+const CARD_SHADOW = { shadowColor: '#0E1726', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 18, elevation: 4 };
+
 const statusStats = [
-  { label: 'Новые',         key: 'new',      color: '#2563EB' },
-  { label: 'Думают',        key: 'thinking', color: '#F59E0B' },
-  { label: 'КП отправлено', key: 'sent_kp',  color: '#8B5CF6' },
-  { label: 'Перезвонить',   key: 'callback', color: '#EF4444' },
-  { label: 'Клиенты',       key: 'won',      color: '#10B981' },
-  { label: 'Отказ',         key: 'lost',     color: '#9CA3AF' },
+  { label: 'Новые',         key: 'new',      color: '#1366F0',  bg: 'rgba(19,102,240,0.12)' },
+  { label: 'Думают',        key: 'thinking', color: '#D97706',  bg: 'rgba(217,119,6,0.12)' },
+  { label: 'КП',            key: 'sent_kp',  color: '#7C3AED',  bg: 'rgba(124,58,237,0.12)' },
+  { label: 'Перезвон',      key: 'callback', color: '#E0473B',  bg: 'rgba(224,71,59,0.12)' },
+  { label: 'Клиенты',       key: 'won',      color: '#1E9E5A',  bg: 'rgba(30,158,90,0.12)' },
+  { label: 'Отказ',         key: 'lost',     color: '#8A93A0',  bg: 'rgba(14,23,38,0.06)' },
 ];
 
 export default function Leads() {
@@ -97,74 +106,103 @@ export default function Leads() {
     return new Date(l.next_call).getTime() - Date.now() < 60 * 60 * 1000;
   }).sort((a, b) => new Date(a.next_call).getTime() - new Date(b.next_call).getTime());
 
+  const totalLeads = leads.length;
+  const funnelSteps = statusStats.map(s => ({ ...s, cnt: leads.filter(l => l.status === s.key).length }));
+  const maxFunnel = Math.max(...funnelSteps.map(f => f.cnt), 1);
+
   const ListHeader = () => (
-    <>
-      {/* Статистика */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12, gap: 8, flexDirection: 'row' }}>
-        {statusStats.map((s) => {
-          const count = leads.filter(l => l.status === s.key).length;
+    <View style={{ paddingHorizontal: 14, paddingTop: 8 }}>
+      {/* Stats strip */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingBottom: 12 }}>
+        {funnelSteps.slice(0, 4).map((s) => {
           const isActive = filterStatus === s.key;
           return (
-            <TouchableOpacity
-              key={s.key}
-              onPress={() => setFilterStatus(isActive ? null : s.key)}
-              style={{ backgroundColor: isActive ? s.color + '15' : theme.colors.surface, borderRadius: 12, padding: 12, minWidth: 90, alignItems: 'center', borderWidth: 0.5, borderColor: isActive ? s.color + '40' : theme.colors.border, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 }}
-              activeOpacity={0.75}
-            >
-              <Text style={{ fontSize: 9, fontWeight: '700', color: theme.colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>{s.label}</Text>
-              <Text style={{ fontSize: 22, fontWeight: '700', color: s.color, letterSpacing: -0.5 }}>{count}</Text>
-              <View style={{ height: 2.5, width: 32, borderRadius: 2, backgroundColor: s.color, marginTop: 6, opacity: isActive ? 1 : 0.3 }} />
+            <TouchableOpacity key={s.key} onPress={() => setFilterStatus(isActive ? null : s.key)} activeOpacity={0.85}
+              style={{ backgroundColor: isActive ? s.bg : '#fff', borderRadius: 20, padding: 16, minWidth: 100, borderWidth: 1, borderColor: isActive ? 'transparent' : 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
+              <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: isActive ? s.color : s.bg, alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+                <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: isActive ? '#fff' : s.color }} />
+              </View>
+              <Text style={{ fontSize: 22, fontWeight: '700', color: '#0E1726', letterSpacing: -0.5 }}>{s.cnt}</Text>
+              <Text style={{ fontSize: 12, color: '#8A93A0', fontWeight: '500', marginTop: 3 }}>{s.label}</Text>
             </TouchableOpacity>
           );
         })}
+        {/* Funnel card */}
+        <View style={{ backgroundColor: '#fff', borderRadius: 20, padding: 16, minWidth: 180, borderWidth: 1, borderColor: 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
+          <Text style={{ fontSize: 10.5, fontWeight: '700', letterSpacing: 0.08, color: '#A6AEB8', marginBottom: 10 }}>ВОРОНКА</Text>
+          {funnelSteps.slice(0, 5).map(f => (
+            <View key={f.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+              <Text style={{ width: 68, fontSize: 11.5, color: '#5A6573', fontWeight: '500' }}>{f.label}</Text>
+              <View style={{ flex: 1, height: 12, borderRadius: 6, backgroundColor: 'rgba(14,23,38,0.05)', overflow: 'hidden' }}>
+                <View style={{ width: `${(f.cnt / maxFunnel) * 100}%` as any, height: '100%', borderRadius: 6, backgroundColor: f.color }} />
+              </View>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#0E1726', minWidth: 18, textAlign: 'right' }}>{f.cnt}</Text>
+            </View>
+          ))}
+        </View>
       </ScrollView>
 
       {/* Перезвонить сейчас */}
       {urgentLeads.length > 0 && (
-        <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
-          <Text style={{ fontSize: 17, fontWeight: '600', color: theme.colors.textPrimary, marginBottom: 10 }}>Перезвонить сейчас</Text>
+        <View style={{ marginBottom: 10 }}>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: '#0E1726', marginBottom: 10, letterSpacing: -0.3 }}>Перезвонить сейчас</Text>
           {urgentLeads.slice(0, 3).map(lead => (
             <UrgentLeadCard key={lead.id} lead={lead} onPress={() => router.push(`/lead/${lead.id}`)} />
           ))}
         </View>
       )}
 
-      {filtered.length > 0 && (
-        <Text style={{ fontSize: 12, fontWeight: '600', color: theme.colors.textTertiary, paddingHorizontal: 16, paddingBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-          {filterStatus ? statusStats.find(s => s.key === filterStatus)?.label : 'Все'} · {filtered.length}
-        </Text>
-      )}
-    </>
+      {/* Filter chips */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 10 }}>
+        <TouchableOpacity onPress={() => setFilterStatus(null)} activeOpacity={0.85}
+          style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11, backgroundColor: filterStatus === null ? '#0E1726' : '#fff', borderWidth: 1, borderColor: filterStatus === null ? 'transparent' : 'rgba(14,23,38,0.08)' }}>
+          <Text style={{ fontSize: 13, fontWeight: '600', color: filterStatus === null ? '#fff' : '#5A6573' }}>Все {totalLeads}</Text>
+        </TouchableOpacity>
+        {funnelSteps.map(s => {
+          const isActive = filterStatus === s.key;
+          return (
+            <TouchableOpacity key={s.key} onPress={() => setFilterStatus(isActive ? null : s.key)} activeOpacity={0.85}
+              style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11, backgroundColor: isActive ? s.bg : '#fff', borderWidth: 1, borderColor: isActive ? 'transparent' : 'rgba(14,23,38,0.08)' }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: isActive ? s.color : '#5A6573' }}>{s.label} {s.cnt}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
   );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       {/* Шапка */}
-      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 14, backgroundColor: theme.colors.surface, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border }}>
+      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 10, paddingBottom: 14, backgroundColor: theme.colors.bg }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
           <View>
-            <Text style={{ fontSize: 28, fontWeight: '700', color: theme.colors.textPrimary, letterSpacing: -0.8 }}>Команда</Text>
-            <Text style={{ fontSize: 12, color: theme.colors.textTertiary, marginTop: 2 }}>Дашборд обзвона</Text>
+            <Text style={{ fontSize: 26, fontWeight: '800', color: '#0E1726', letterSpacing: -0.8 }}>Обзвон</Text>
+            <Text style={{ fontSize: 12.5, color: '#8A93A0', marginTop: 2, fontWeight: '500' }}>
+              Всего: <Text style={{ fontWeight: '700', color: '#0E1726' }}>{leads.length}</Text>
+            </Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-            <TouchableOpacity onPress={syncAndReload} disabled={syncing} style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.bg, borderWidth: 0.5, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }} activeOpacity={0.7}>
-              {syncing ? <ActivityIndicator size="small" color={theme.colors.textSecondary} /> : <RefreshCw size={15} color={theme.colors.textSecondary} strokeWidth={1.8} />}
+            <TouchableOpacity onPress={syncAndReload} disabled={syncing} style={{ width: 42, height: 42, borderRadius: 13, backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', alignItems: 'center', justifyContent: 'center' }} activeOpacity={0.7}>
+              {syncing ? <ActivityIndicator size="small" color="#5A6573" /> : <RefreshCw size={16} color="#5A6573" strokeWidth={1.7} />}
             </TouchableOpacity>
-            <TouchableOpacity testID="add-lead-btn" onPress={() => router.push('/lead/new')} style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' }} activeOpacity={0.8}>
-              <Plus size={18} color="#fff" strokeWidth={2.2} />
+            <TouchableOpacity testID="add-lead-btn" onPress={() => router.push('/lead/new')} activeOpacity={0.85}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#0E1726', borderRadius: 13, paddingHorizontal: 14, paddingVertical: 10, shadowColor: '#0E1726', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16 }}>
+              <Plus size={15} color="#fff" strokeWidth={2.2} />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Добавить</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Поиск */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: theme.colors.bg, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0.5, borderColor: theme.colors.border }}>
-          <Search size={14} color={theme.colors.textTertiary} strokeWidth={1.5} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 13, paddingVertical: 11, borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', shadowColor: '#0E1726', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.06, shadowRadius: 12 }}>
+          <Search size={15} color="#8A93A0" strokeWidth={1.6} />
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholder="Поиск компании или контакта..."
-            placeholderTextColor={theme.colors.textTertiary}
-            style={{ flex: 1, fontSize: 13, color: theme.colors.textPrimary }}
+            placeholderTextColor="#8A93A0"
+            style={{ flex: 1, fontSize: 13.5, color: '#0E1726' }}
             clearButtonMode="while-editing"
           />
         </View>
@@ -233,7 +271,9 @@ export default function Leads() {
           testID="leads-list"
           data={filtered}
           keyExtractor={(i) => i.id}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 100 }}
+          numColumns={2}
+          columnWrapperStyle={{ paddingHorizontal: 14, gap: 12 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 100, gap: 12 }}
           ListHeaderComponent={<ListHeader />}
           renderItem={({ item, index }) => (
             <LeadCard
@@ -243,7 +283,7 @@ export default function Leads() {
               testID={`lead-card-${index}`}
             />
           )}
-          ListEmptyComponent={<Text style={{ color: theme.colors.textTertiary, textAlign: 'center', marginTop: 40, fontSize: 14 }}>Нет контактов для обзвона</Text>}
+          ListEmptyComponent={<Text style={{ color: '#8A93A0', textAlign: 'center', marginTop: 40, fontSize: 14 }}>Нет контактов для обзвона</Text>}
         />
       )}
 
@@ -265,121 +305,104 @@ function UrgentLeadCard({ lead, onPress }: any) {
   const timeLabel = isOverdue
     ? 'Просрочено на ' + Math.round(diff / 3600000) + 'ч'
     : 'Через ' + Math.round(diff / 60000) + ' мин';
-
+  const idx = avIdx(lead.name || '');
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.8}
-      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderRadius: 14, padding: 14, marginBottom: 8, borderWidth: 0.5, borderColor: isOverdue ? '#FECACA' : theme.colors.border, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6 }}
-    >
-      <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: isOverdue ? '#FEE2E2' : theme.colors.accentLight, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-        <Building2 size={18} color={isOverdue ? '#EF4444' : theme.colors.accent} strokeWidth={1.8} />
-      </View>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.88}
+      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: isOverdue ? 'rgba(224,71,59,0.2)' : 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
+      <LinearGradient colors={GRADIENTS_AV[idx]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+        <Text style={{ fontSize: 13, fontWeight: '800', color: '#fff' }}>{avMono(lead.name)}</Text>
+      </LinearGradient>
       <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>{lead.name}</Text>
-        <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 1 }} numberOfLines={1}>
-          {lead.phone}{lead.city ? ' • ' + lead.city : ''}
-        </Text>
+        <Text style={{ fontSize: 14, fontWeight: '600', color: '#0E1726' }} numberOfLines={1}>{lead.name}</Text>
+        <Text style={{ fontSize: 11, color: '#8A93A0', marginTop: 1 }} numberOfLines={1}>{lead.phone}{lead.city ? ' · ' + lead.city : ''}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-          <Clock size={10} color={isOverdue ? '#EF4444' : '#F59E0B'} strokeWidth={2} />
-          <Text style={{ fontSize: 10, fontWeight: '600', color: isOverdue ? '#EF4444' : '#F59E0B' }}>{timeLabel}</Text>
+          <Clock size={11} color={isOverdue ? '#E0473B' : '#D97706'} strokeWidth={2} />
+          <Text style={{ fontSize: 10.5, fontWeight: '600', color: isOverdue ? '#E0473B' : '#D97706' }}>{timeLabel}</Text>
         </View>
       </View>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        {!!lead.email && (
-          <TouchableOpacity
-            onPress={(e) => { e.stopPropagation?.(); Linking.openURL(`mailto:${lead.email}`); }}
-            style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.bg, alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: theme.colors.border }}
-          >
-            <Mail size={15} color={theme.colors.textSecondary} strokeWidth={1.8} />
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity
-          onPress={(e) => { e.stopPropagation?.(); Linking.openURL(`tel:${lead.phone}`); }}
-          style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Phone size={15} color="#fff" strokeWidth={2} />
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity onPress={(e) => { (e as any).stopPropagation?.(); Linking.openURL(`tel:${lead.phone}`); }}
+        style={{ width: 38, height: 38, borderRadius: 11, backgroundColor: '#0E1726', alignItems: 'center', justifyContent: 'center' }}>
+        <Phone size={15} color="#fff" strokeWidth={2} />
+      </TouchableOpacity>
     </TouchableOpacity>
   );
 }
 
 function LeadCard({ lead, onPress, onAction, testID }: any) {
   const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-    new:      { label: 'Новый',         color: '#2563EB', bg: '#EFF6FF' },
-    thinking: { label: 'Думает',        color: '#F59E0B', bg: '#FFFBEB' },
-    sent_kp:  { label: 'КП отправлено', color: '#8B5CF6', bg: '#F5F3FF' },
-    callback: { label: 'Перезвонить',   color: '#EF4444', bg: '#FEF2F2' },
-    won:      { label: 'Клиент',        color: '#10B981', bg: '#ECFDF5' },
-    lost:     { label: 'Отказ',         color: '#9CA3AF', bg: '#F9FAFB' },
+    new:      { label: 'Новый',    color: '#1366F0', bg: 'rgba(19,102,240,0.12)' },
+    thinking: { label: 'Думает',   color: '#D97706', bg: 'rgba(217,119,6,0.12)' },
+    sent_kp:  { label: 'КП',       color: '#7C3AED', bg: 'rgba(124,58,237,0.12)' },
+    callback: { label: 'Перезвон', color: '#E0473B', bg: 'rgba(224,71,59,0.12)' },
+    won:      { label: 'Клиент',   color: '#1E9E5A', bg: 'rgba(30,158,90,0.12)' },
+    lost:     { label: 'Отказ',    color: '#8A93A0', bg: 'rgba(14,23,38,0.06)' },
   };
   const s = statusConfig[lead.status] || statusConfig.new;
   const isOverdue = lead.next_call && new Date(lead.next_call) < new Date();
+  const idx = avIdx(lead.name || '');
+  const mono = avMono(lead.name || '');
 
   return (
-    <TouchableOpacity
-      testID={testID}
-      onPress={onPress}
-      activeOpacity={0.78}
-      style={{ backgroundColor: theme.colors.surface, borderRadius: 14, padding: 14, marginBottom: 8, borderWidth: 0.5, borderColor: isOverdue ? '#FECACA' : theme.colors.border, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6 }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <View style={{ flex: 1, marginRight: 10 }}>
-          <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }} numberOfLines={1}>{lead.name}</Text>
-          <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 2 }} numberOfLines={1}>
-            {lead.phone}{lead.city ? ' • ' + lead.city : ''}
-          </Text>
-        </View>
-        <View style={{ backgroundColor: s.bg, borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3 }}>
-          <Text style={{ fontSize: 10, fontWeight: '600', color: s.color }}>{s.label}</Text>
+    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.88}
+      style={{ flex: 1, backgroundColor: '#fff', borderRadius: 22, padding: 18, borderWidth: 1, borderColor: isOverdue ? 'rgba(224,71,59,0.2)' : 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
+
+      {/* Avatar + name + status */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <LinearGradient colors={GRADIENTS_AV[idx]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={{ width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 15, fontWeight: '800', color: '#fff' }}>{mono}</Text>
+        </LinearGradient>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0E1726' }} numberOfLines={1}>{lead.name}</Text>
+          <Text style={{ fontSize: 11.5, color: '#8A93A0', marginTop: 2 }} numberOfLines={1}>{lead.company || lead.city || '—'}</Text>
         </View>
       </View>
 
-      {(lead.industry || lead.contact_person) && (
-        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-          {lead.industry && (
-            <View style={{ backgroundColor: theme.colors.bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 0.5, borderColor: theme.colors.border }}>
-              <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>{lead.industry}</Text>
-            </View>
-          )}
-          {lead.contact_person && (
-            <View style={{ backgroundColor: theme.colors.bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 0.5, borderColor: theme.colors.border }}>
-              <Text style={{ fontSize: 10, color: theme.colors.textSecondary }}>{lead.contact_person}</Text>
-            </View>
-          )}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <View style={{ backgroundColor: s.bg, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 4 }}>
+          <Text style={{ fontSize: 11.5, fontWeight: '700', color: s.color }}>{s.label}</Text>
         </View>
-      )}
-
-      {lead.next_call && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 }}>
-          <Clock size={11} color={isOverdue ? '#EF4444' : theme.colors.textTertiary} strokeWidth={2} />
-          <Text style={{ fontSize: 11, color: isOverdue ? '#EF4444' : theme.colors.textTertiary, fontWeight: isOverdue ? '600' : '400' }}>
-            {isOverdue ? 'Просрочено: ' : 'Перезвонить: '}
-            {new Date(lead.next_call).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
-          </Text>
-        </View>
-      )}
+        {lead.next_call && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+            <Clock size={12} color={isOverdue ? '#E0473B' : '#D97706'} strokeWidth={2} />
+            <Text style={{ fontSize: 11.5, fontWeight: '600', color: isOverdue ? '#E0473B' : '#D97706' }}>
+              {new Date(lead.next_call).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+            </Text>
+          </View>
+        )}
+      </View>
 
       {lead.last_call_note && (
-        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 6, fontStyle: 'italic' }} numberOfLines={2}>
-          "{lead.last_call_note}"
-        </Text>
+        <Text style={{ fontSize: 12, color: '#5A6573', lineHeight: 17, marginBottom: 12 }} numberOfLines={2}>{lead.last_call_note}</Text>
       )}
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(14,23,38,0.06)' }}>
+        <TouchableOpacity onPress={(e) => { (e as any).stopPropagation?.(); Linking.openURL(`tel:${lead.phone}`); }}
+          style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#0E1726', alignItems: 'center', justifyContent: 'center' }}>
+          <Phone size={15} color="#fff" strokeWidth={2} />
+        </TouchableOpacity>
+        {lead.status !== 'won' && lead.status !== 'lost' && (
+          <TouchableOpacity onPress={(e) => { (e as any).stopPropagation?.(); onAction('won'); }}
+            style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: 'rgba(30,158,90,0.12)' }}>
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#1E9E5A' }}>Стал клиентом</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  industryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 9, marginTop: 10 },
-  industryBtnActive: { borderColor: theme.colors.accent, backgroundColor: theme.colors.accent + '15' },
-  industryBtnText: { color: theme.colors.textTertiary, fontSize: 14, flex: 1, marginRight: 8 },
-  industryBtnTextActive: { color: theme.colors.accent },
-  industryBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  industrySheet: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '75%', paddingBottom: 20 },
-  industrySheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  industrySheetTitle: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '600' },
-  industryItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  industryItemActive: { backgroundColor: theme.colors.accent + '10' },
-  industryItemText: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '500' },
+  industryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', borderRadius: 13, paddingHorizontal: 14, paddingVertical: 10, marginTop: 10 },
+  industryBtnActive: { borderColor: '#1366F0', backgroundColor: 'rgba(19,102,240,0.08)' },
+  industryBtnText: { color: '#8A93A0', fontSize: 14, flex: 1, marginRight: 8 },
+  industryBtnTextActive: { color: '#1366F0' },
+  industryBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  industrySheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '75%', paddingBottom: 20 },
+  industrySheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: 'rgba(14,23,38,0.07)' },
+  industrySheetTitle: { color: '#0E1726', fontSize: 16, fontWeight: '700' },
+  industryItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(14,23,38,0.06)' },
+  industryItemActive: { backgroundColor: 'rgba(19,102,240,0.07)' },
+  industryItemText: { color: '#0E1726', fontSize: 15, fontWeight: '500' },
 });
