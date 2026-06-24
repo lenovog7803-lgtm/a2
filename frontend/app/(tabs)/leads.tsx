@@ -1,408 +1,320 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, ScrollView, TouchableOpacity, ActivityIndicator, Linking, Alert, TextInput, Platform, Modal } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
-import { Plus, Phone, Mail, Clock, Building2, Search, RefreshCw, ChevronDown, Check, X } from 'lucide-react-native';
-import { theme } from '../../src/theme';
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Modal, Alert } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from 'expo-router';
+import { Plus, X, Phone, Clock } from 'lucide-react-native';
 import { api } from '../../src/api';
-import { ClientModal } from '../../src/components/ClientModal';
 
-const GRADIENTS_AV: [string, string][] = [
-  ['#A5D8FF', '#1366F0'], ['#D0BFFF', '#7C3AED'], ['#A7F3D0', '#1E9E5A'],
-  ['#FCD34D', '#D97706'], ['#FCA5A5', '#E0473B'], ['#BAE6FD', '#0891B2'],
+const LEAD_META: Record<string,{label:string;color:string;bg:string}> = {
+  new:       { label:'Новый',       color:'#1366F0', bg:'rgba(19,102,240,0.12)'  },
+  thinking:  { label:'Думают',      color:'#D97706', bg:'rgba(217,119,6,0.14)'   },
+  sent_kp:   { label:'Выслал КП',   color:'#C2410C', bg:'rgba(194,65,12,0.12)'   },
+  won:       { label:'Клиент',      color:'#1E9E5A', bg:'rgba(30,158,90,0.14)'   },
+  lost:      { label:'Потерян',     color:'#8A93A0', bg:'rgba(138,147,160,0.14)' },
+  callback:  { label:'Перезвонить', color:'#7C3AED', bg:'rgba(124,58,237,0.12)'  },
+};
+const GRADIENTS = [
+  ['#FFD8A8','#FF922B'],['#D0BFFF','#7C3AED'],['#A5D8FF','#1366F0'],
+  ['#B2F2BB','#1E9E5A'],['#FFC9C9','#E0473B'],['#99E9F2','#0CA6C0'],
 ];
-function avIdx(name: string) { return (name?.charCodeAt(0) || 0) % GRADIENTS_AV.length; }
-function avMono(name: string) { return (name || '?').split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase(); }
+const avatarIdx=(n:string)=>n.split('').reduce((a,c)=>a+c.charCodeAt(0),0)%GRADIENTS.length;
+const initials=(name:string)=>{
+  const clean=(name||'').replace(/^(ООО|АО|ОАО|ЗАО|ТД|ИП|ПАО)\s+/i,'').trim();
+  const w=clean.split(/[\s-]+/).filter(Boolean);
+  return ((w[0]?.[0]||'')+(w[1]?.[0]||w[0]?.[1]||'')).toUpperCase();
+};
+const fmtDate=(s:string)=>{ if(!s) return '—'; const p=s.split('-'); return `${p[2]}.${p[1]}`; };
+const today=new Date().toISOString().slice(0,10);
 
-const CARD_SHADOW = { shadowColor: '#0E1726', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 18, elevation: 4 };
-
-const statusStats = [
-  { label: 'Новые',         key: 'new',      color: '#1366F0',  bg: 'rgba(19,102,240,0.12)' },
-  { label: 'Думают',        key: 'thinking', color: '#D97706',  bg: 'rgba(217,119,6,0.12)' },
-  { label: 'КП',            key: 'sent_kp',  color: '#7C3AED',  bg: 'rgba(124,58,237,0.12)' },
-  { label: 'Перезвон',      key: 'callback', color: '#E0473B',  bg: 'rgba(224,71,59,0.12)' },
-  { label: 'Клиенты',       key: 'won',      color: '#1E9E5A',  bg: 'rgba(30,158,90,0.12)' },
-  { label: 'Отказ',         key: 'lost',     color: '#8A93A0',  bg: 'rgba(14,23,38,0.06)' },
+const FILTERS = [
+  {k:'all',label:'Все'},{k:'new',label:'Новые'},{k:'callback',label:'Перезвон'},
+  {k:'sent_kp',label:'КП'},{k:'won',label:'Клиенты'},
 ];
 
 export default function Leads() {
-  const insets = useSafeAreaInsets();
-  const router = useRouter();
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const [industries, setIndustries] = useState<string[]>([]);
-  const [industryFilter, setIndustryFilter] = useState('');
-  const [industryPickerOpen, setIndustryPickerOpen] = useState(false);
-  const industryRef = useRef('');
-  const [clientModalLead, setClientModalLead] = useState<any>(null);
+  const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [noteModal, setNoteModal] = useState<any>(null);
 
   const load = useCallback(async () => {
-    try {
-      const [l, inds] = await Promise.all([
-        api.leads.list(industryRef.current || undefined),
-        api.leads.industries().catch(() => [] as string[]),
-      ]);
-      setLeads(l);
-      setIndustries(inds);
-    } finally {
-      setLoading(false);
-    }
+    setLoading(true);
+    try { setLeads(await api.leads.list()); }
+    catch {} finally { setLoading(false); }
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const handleIndustryChange = useCallback((val: string) => {
-    industryRef.current = val;
-    setIndustryFilter(val);
-    setLoading(true);
-    api.leads.list(val || undefined).then(l => {
-      setLeads(l);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+  const q = search.trim().toLowerCase();
+  const filtered = leads
+    .filter(l => filter==='all' || l.status===filter)
+    .filter(l => !q || (l.name||'').toLowerCase().includes(q) || (l.company||'').toLowerCase().includes(q));
 
-  const syncAndReload = useCallback(async () => {
-    setSyncing(true);
-    try {
-      await api.sync.importFromSheets();
-      await load();
-    } finally {
-      setSyncing(false);
-    }
-  }, [load]);
+  const counts: Record<string,number> = { all: leads.length };
+  FILTERS.slice(1).forEach(f => { counts[f.k] = leads.filter(l=>l.status===f.k).length; });
 
-  const setStatus = async (id: string, status: string) => {
-    if (status === 'won') {
-      const lead = leads.find(l => l.id === id);
-      setClientModalLead(lead);
-      return;
-    }
-    const today = new Date().toISOString().slice(0, 10);
-    const prevLeads = leads;
-    setLeads(prev => prev.map(l => l.id === id ? { ...l, status, last_contact: today } : l));
-    try {
-      const updated = await api.leads.update(id, { status, last_contact: today });
-      setLeads(prev => prev.map(l => l.id === id ? updated : l));
-    } catch (e: any) {
-      setLeads(prevLeads);
-      Alert.alert('Ошибка', e.message);
-    }
+  const updateStatus = async (l: any, status: string) => {
+    try { await api.leads.update(l.id, { ...l, status }); load(); } catch {}
   };
 
-  const q = searchQuery.trim().toLowerCase();
-  const filtered = (filterStatus === null ? leads : leads.filter(l => l.status === filterStatus))
-    .filter(l => !q ||
-      (l.name || '').toLowerCase().includes(q) ||
-      (l.company || '').toLowerCase().includes(q) ||
-      (l.phone || '').toLowerCase().includes(q) ||
-      (l.city || '').toLowerCase().includes(q)
-    );
+  // Stats
+  const callsToday = leads.filter(l=>l.next_call===today||l.nextCall===today).length;
+  const inWork = leads.filter(l=>l.status!=='won'&&l.status!=='lost').length;
+  const wonCount = leads.filter(l=>l.status==='won').length;
+  const convPct = leads.length ? Math.round(wonCount/leads.length*100) : 0;
 
-  const urgentLeads = leads.filter(l => {
-    if (!l.next_call) return false;
-    return new Date(l.next_call).getTime() - Date.now() < 60 * 60 * 1000;
-  }).sort((a, b) => new Date(a.next_call).getTime() - new Date(b.next_call).getTime());
+  return (
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.topbar}>
+        <Text style={styles.topTitle}>Обзвон</Text>
+        <View style={{flex:1}} />
+        <TouchableOpacity style={styles.addBtn} onPress={()=>setShowModal(true)}>
+          <Plus size={16} color="#fff" strokeWidth={2.2} />
+          <Text style={styles.addBtnText}>Новый лид</Text>
+        </TouchableOpacity>
+      </View>
 
-  const totalLeads = leads.length;
-  const funnelSteps = statusStats.map(s => ({ ...s, cnt: leads.filter(l => l.status === s.key).length }));
-  const maxFunnel = Math.max(...funnelSteps.map(f => f.cnt), 1);
-
-  const ListHeader = () => (
-    <View style={{ paddingHorizontal: 14, paddingTop: 8 }}>
-      {/* Stats strip */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingBottom: 12 }}>
-        {funnelSteps.slice(0, 4).map((s) => {
-          const isActive = filterStatus === s.key;
-          return (
-            <TouchableOpacity key={s.key} onPress={() => setFilterStatus(isActive ? null : s.key)} activeOpacity={0.85}
-              style={{ backgroundColor: isActive ? s.bg : '#fff', borderRadius: 20, padding: 16, minWidth: 100, borderWidth: 1, borderColor: isActive ? 'transparent' : 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
-              <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: isActive ? s.color : s.bg, alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
-                <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: isActive ? '#fff' : s.color }} />
-              </View>
-              <Text style={{ fontSize: 22, fontWeight: '700', color: '#0E1726', letterSpacing: -0.5 }}>{s.cnt}</Text>
-              <Text style={{ fontSize: 12, color: '#8A93A0', fontWeight: '500', marginTop: 3 }}>{s.label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-        {/* Funnel card */}
-        <View style={{ backgroundColor: '#fff', borderRadius: 20, padding: 16, minWidth: 180, borderWidth: 1, borderColor: 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
-          <Text style={{ fontSize: 10.5, fontWeight: '700', letterSpacing: 0.08, color: '#A6AEB8', marginBottom: 10 }}>ВОРОНКА</Text>
-          {funnelSteps.slice(0, 5).map(f => (
-            <View key={f.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-              <Text style={{ width: 68, fontSize: 11.5, color: '#5A6573', fontWeight: '500' }}>{f.label}</Text>
-              <View style={{ flex: 1, height: 12, borderRadius: 6, backgroundColor: 'rgba(14,23,38,0.05)', overflow: 'hidden' }}>
-                <View style={{ width: `${(f.cnt / maxFunnel) * 100}%` as any, height: '100%', borderRadius: 6, backgroundColor: f.color }} />
-              </View>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#0E1726', minWidth: 18, textAlign: 'right' }}>{f.cnt}</Text>
+      <View style={styles.page}>
+        {/* KPI strip */}
+        <View style={styles.kpiRow}>
+          {[
+            {label:'Всего лидов', val:String(leads.length), color:'#1366F0', bg:'rgba(19,102,240,0.12)'},
+            {label:'Звонков сегодня', val:String(callsToday), color:'#D97706', bg:'rgba(217,119,6,0.12)'},
+            {label:'В работе', val:String(inWork), color:'#7C3AED', bg:'rgba(124,58,237,0.12)'},
+            {label:'Конверсия', val:convPct+'%', color:'#1E9E5A', bg:'rgba(30,158,90,0.12)'},
+          ].map((kpi,i)=>(
+            <View key={i} style={styles.kpiCard}>
+              <View style={[styles.kpiDot,{backgroundColor:kpi.bg}]}><View style={[styles.kpiDotInner,{backgroundColor:kpi.color}]}/></View>
+              <Text style={[styles.kpiVal,{color:kpi.color}]}>{kpi.val}</Text>
+              <Text style={styles.kpiLabel}>{kpi.label}</Text>
             </View>
           ))}
         </View>
-      </ScrollView>
 
-      {/* Перезвонить сейчас */}
-      {urgentLeads.length > 0 && (
-        <View style={{ marginBottom: 10 }}>
-          <Text style={{ fontSize: 14, fontWeight: '700', color: '#0E1726', marginBottom: 10, letterSpacing: -0.3 }}>Перезвонить сейчас</Text>
-          {urgentLeads.slice(0, 3).map(lead => (
-            <UrgentLeadCard key={lead.id} lead={lead} onPress={() => router.push(`/lead/${lead.id}`)} />
+        {/* Filter chips */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+          {FILTERS.map(f=>(
+            <TouchableOpacity key={f.k} style={[styles.chip,filter===f.k&&styles.chipActive]}
+              onPress={()=>setFilter(f.k)} activeOpacity={0.7}>
+              <Text style={[styles.chipText,filter===f.k&&styles.chipTextActive]}>{f.label}  {counts[f.k]??0}</Text>
+            </TouchableOpacity>
           ))}
-        </View>
-      )}
+        </ScrollView>
 
-      {/* Filter chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 10 }}>
-        <TouchableOpacity onPress={() => setFilterStatus(null)} activeOpacity={0.85}
-          style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11, backgroundColor: filterStatus === null ? '#0E1726' : '#fff', borderWidth: 1, borderColor: filterStatus === null ? 'transparent' : 'rgba(14,23,38,0.08)' }}>
-          <Text style={{ fontSize: 13, fontWeight: '600', color: filterStatus === null ? '#fff' : '#5A6573' }}>Все {totalLeads}</Text>
-        </TouchableOpacity>
-        {funnelSteps.map(s => {
-          const isActive = filterStatus === s.key;
-          return (
-            <TouchableOpacity key={s.key} onPress={() => setFilterStatus(isActive ? null : s.key)} activeOpacity={0.85}
-              style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11, backgroundColor: isActive ? s.bg : '#fff', borderWidth: 1, borderColor: isActive ? 'transparent' : 'rgba(14,23,38,0.08)' }}>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: isActive ? s.color : '#5A6573' }}>{s.label} {s.cnt}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    </View>
-  );
-
-  return (
-    <View style={{ flex: 1, backgroundColor: Platform.OS === 'web' ? 'transparent' : theme.colors.bg }}>
-      {/* Шапка */}
-      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 10, paddingBottom: 14, backgroundColor: theme.colors.bg }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
-          <View>
-            <Text style={{ fontSize: 26, fontWeight: '800', color: '#0E1726', letterSpacing: -0.8 }}>Обзвон</Text>
-            <Text style={{ fontSize: 12.5, color: '#8A93A0', marginTop: 2, fontWeight: '500' }}>
-              Всего: <Text style={{ fontWeight: '700', color: '#0E1726' }}>{leads.length}</Text>
-            </Text>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-            <TouchableOpacity onPress={syncAndReload} disabled={syncing} style={{ width: 42, height: 42, borderRadius: 13, backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', alignItems: 'center', justifyContent: 'center' }} activeOpacity={0.7}>
-              {syncing ? <ActivityIndicator size="small" color="#5A6573" /> : <RefreshCw size={16} color="#5A6573" strokeWidth={1.7} />}
-            </TouchableOpacity>
-            <TouchableOpacity testID="add-lead-btn" onPress={() => router.push('/lead/new')} activeOpacity={0.85}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#0E1726', borderRadius: 13, paddingHorizontal: 14, paddingVertical: 10, shadowColor: '#0E1726', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16 }}>
-              <Plus size={15} color="#fff" strokeWidth={2.2} />
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Добавить</Text>
-            </TouchableOpacity>
-          </View>
+        {/* Search */}
+        <View style={styles.searchBox}>
+          <Phone size={15} color="#8A93A0" strokeWidth={1.9} />
+          <TextInput style={styles.searchInput} value={search} onChangeText={setSearch}
+            placeholder="Поиск по лидам…" placeholderTextColor="#A6AEB8" />
         </View>
 
-        {/* Поиск */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 13, paddingVertical: 11, borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', shadowColor: '#0E1726', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.06, shadowRadius: 12 }}>
-          <Search size={15} color="#8A93A0" strokeWidth={1.6} />
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Поиск компании или контакта..."
-            placeholderTextColor="#8A93A0"
-            style={{ flex: 1, fontSize: 13.5, color: '#0E1726' }}
-            clearButtonMode="while-editing"
-          />
-        </View>
-
-        {/* Фильтр по отрасли */}
-        {Platform.OS === 'web' ? (
-          <View style={{ marginTop: 10 }}>
-            {/* @ts-ignore */}
-            <select
-              value={industryFilter}
-              onChange={(e: any) => handleIndustryChange(e.target.value)}
-              style={{ backgroundColor: 'transparent', color: industryFilter ? theme.colors.accent : theme.colors.textTertiary, border: `1px solid ${industryFilter ? theme.colors.accent : theme.colors.border}`, borderRadius: 12, padding: '9px 14px', fontSize: 14, width: '100%', cursor: 'pointer', outline: 'none' }}
-            >
-              <option value="">Все отрасли</option>
-              {industries.map(i => <option key={i} value={i}>{i}</option>)}
-            </select>
-          </View>
+        {loading ? (
+          <View style={styles.loaderWrap}><ActivityIndicator color="#1366F0" size="large" /></View>
         ) : (
-          <>
-            <TouchableOpacity onPress={() => setIndustryPickerOpen(true)} style={[styles.industryBtn, !!industryFilter && styles.industryBtnActive]} activeOpacity={0.7}>
-              <Text style={[styles.industryBtnText, !!industryFilter && styles.industryBtnTextActive]} numberOfLines={1}>
-                {industryFilter || 'Все отрасли'}
-              </Text>
-              <ChevronDown size={14} color={industryFilter ? theme.colors.accent : theme.colors.textTertiary} strokeWidth={1.8} />
-            </TouchableOpacity>
-
-            <Modal visible={industryPickerOpen} transparent animationType="fade" onRequestClose={() => setIndustryPickerOpen(false)}>
-              <TouchableOpacity style={styles.industryBackdrop} activeOpacity={1} onPress={() => setIndustryPickerOpen(false)}>
-                <TouchableOpacity activeOpacity={1} style={styles.industrySheet} onPress={() => {}}>
-                  <View style={styles.industrySheetHead}>
-                    <Text style={styles.industrySheetTitle}>Отрасль</Text>
-                    <TouchableOpacity onPress={() => setIndustryPickerOpen(false)}>
-                      <X size={20} color={theme.colors.textPrimary} strokeWidth={1.6} />
-                    </TouchableOpacity>
+          <View style={styles.grid}>
+            {filtered.length===0 && <Text style={styles.empty}>Лидов нет</Text>}
+            {filtered.map((l,i)=>{
+              const meta = LEAD_META[l.status] || LEAD_META.new;
+              const [a,b] = GRADIENTS[avatarIdx(l.name||'')];
+              const nextCall = l.next_call||l.nextCall||'';
+              const overdue = nextCall && nextCall<today;
+              const notes = l.notes||l.description||'';
+              const isOpen = l.status!=='won'&&l.status!=='lost';
+              return (
+                <View key={l.id||i} style={styles.card}>
+                  <View style={styles.cardTop}>
+                    <LinearGradient colors={[a,b]} style={styles.avatar}>
+                      <Text style={styles.avatarText}>{initials(l.name||'')}</Text>
+                    </LinearGradient>
+                    <View style={{flex:1,minWidth:0}}>
+                      <Text style={styles.leadName} numberOfLines={1}>{l.name}</Text>
+                      <Text style={styles.leadSub} numberOfLines={1}>{[l.company,l.city].filter(Boolean).join(' · ')}</Text>
+                    </View>
+                    <View style={[styles.badge,{backgroundColor:meta.bg}]}>
+                      <Text style={[styles.badgeText,{color:meta.color}]}>{meta.label}</Text>
+                    </View>
                   </View>
-                  <FlatList
-                    data={[{ id: '', label: 'Все отрасли' }, ...industries.map(i => ({ id: i, label: i }))]}
-                    keyExtractor={(i) => i.id || '__all__'}
-                    renderItem={({ item }) => {
-                      const active = item.id === industryFilter;
-                      return (
-                        <TouchableOpacity
-                          style={[styles.industryItem, active && styles.industryItemActive]}
-                          onPress={() => { handleIndustryChange(item.id); setIndustryPickerOpen(false); }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.industryItemText, active && { color: theme.colors.accent }]}>{item.label}</Text>
-                          {active && <Check size={16} color={theme.colors.accent} strokeWidth={2} />}
-                        </TouchableOpacity>
-                      );
-                    }}
-                  />
-                </TouchableOpacity>
-              </TouchableOpacity>
-            </Modal>
-          </>
-        )}
-      </View>
-
-      {loading ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator color={theme.colors.accent} />
-        </View>
-      ) : (
-        <FlatList
-          testID="leads-list"
-          data={filtered}
-          keyExtractor={(i) => i.id}
-          numColumns={2}
-          columnWrapperStyle={{ paddingHorizontal: 14, gap: 12 }}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 100, gap: 12 }}
-          ListHeaderComponent={<ListHeader />}
-          renderItem={({ item, index }) => (
-            <LeadCard
-              lead={item}
-              onPress={() => router.push(`/lead/${item.id}`)}
-              onAction={(s: string) => setStatus(item.id, s)}
-              testID={`lead-card-${index}`}
-            />
-          )}
-          ListEmptyComponent={<Text style={{ color: '#8A93A0', textAlign: 'center', marginTop: 40, fontSize: 14 }}>Нет контактов для обзвона</Text>}
-        />
-      )}
-
-      {clientModalLead && (
-        <ClientModal
-          visible={!!clientModalLead}
-          lead={clientModalLead}
-          onClose={() => setClientModalLead(null)}
-          onSuccess={() => { setClientModalLead(null); load(); }}
-        />
-      )}
-    </View>
-  );
-}
-
-function UrgentLeadCard({ lead, onPress }: any) {
-  const isOverdue = lead.next_call && new Date(lead.next_call) < new Date();
-  const diff = Math.abs(Date.now() - new Date(lead.next_call).getTime());
-  const timeLabel = isOverdue
-    ? 'Просрочено на ' + Math.round(diff / 3600000) + 'ч'
-    : 'Через ' + Math.round(diff / 60000) + ' мин';
-  const idx = avIdx(lead.name || '');
-  return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.88}
-      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: isOverdue ? 'rgba(224,71,59,0.2)' : 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
-      <LinearGradient colors={GRADIENTS_AV[idx]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-        <Text style={{ fontSize: 13, fontWeight: '800', color: '#fff' }}>{avMono(lead.name)}</Text>
-      </LinearGradient>
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 14, fontWeight: '600', color: '#0E1726' }} numberOfLines={1}>{lead.name}</Text>
-        <Text style={{ fontSize: 11, color: '#8A93A0', marginTop: 1 }} numberOfLines={1}>{lead.phone}{lead.city ? ' · ' + lead.city : ''}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-          <Clock size={11} color={isOverdue ? '#E0473B' : '#D97706'} strokeWidth={2} />
-          <Text style={{ fontSize: 10.5, fontWeight: '600', color: isOverdue ? '#E0473B' : '#D97706' }}>{timeLabel}</Text>
-        </View>
-      </View>
-      <TouchableOpacity onPress={(e) => { (e as any).stopPropagation?.(); Linking.openURL(`tel:${lead.phone}`); }}
-        style={{ width: 38, height: 38, borderRadius: 11, backgroundColor: '#0E1726', alignItems: 'center', justifyContent: 'center' }}>
-        <Phone size={15} color="#fff" strokeWidth={2} />
-      </TouchableOpacity>
-    </TouchableOpacity>
-  );
-}
-
-function LeadCard({ lead, onPress, onAction, testID }: any) {
-  const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-    new:      { label: 'Новый',    color: '#1366F0', bg: 'rgba(19,102,240,0.12)' },
-    thinking: { label: 'Думает',   color: '#D97706', bg: 'rgba(217,119,6,0.12)' },
-    sent_kp:  { label: 'КП',       color: '#7C3AED', bg: 'rgba(124,58,237,0.12)' },
-    callback: { label: 'Перезвон', color: '#E0473B', bg: 'rgba(224,71,59,0.12)' },
-    won:      { label: 'Клиент',   color: '#1E9E5A', bg: 'rgba(30,158,90,0.12)' },
-    lost:     { label: 'Отказ',    color: '#8A93A0', bg: 'rgba(14,23,38,0.06)' },
-  };
-  const s = statusConfig[lead.status] || statusConfig.new;
-  const isOverdue = lead.next_call && new Date(lead.next_call) < new Date();
-  const idx = avIdx(lead.name || '');
-  const mono = avMono(lead.name || '');
-
-  return (
-    <TouchableOpacity testID={testID} onPress={onPress} activeOpacity={0.88}
-      style={{ flex: 1, backgroundColor: '#fff', borderRadius: 22, padding: 18, borderWidth: 1, borderColor: isOverdue ? 'rgba(224,71,59,0.2)' : 'rgba(14,23,38,0.07)', ...CARD_SHADOW }}>
-
-      {/* Avatar + name + status */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <LinearGradient colors={GRADIENTS_AV[idx]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-          style={{ width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ fontSize: 15, fontWeight: '800', color: '#fff' }}>{mono}</Text>
-        </LinearGradient>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0E1726' }} numberOfLines={1}>{lead.name}</Text>
-          <Text style={{ fontSize: 11.5, color: '#8A93A0', marginTop: 2 }} numberOfLines={1}>{lead.company || lead.city || '—'}</Text>
-        </View>
-      </View>
-
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <View style={{ backgroundColor: s.bg, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 4 }}>
-          <Text style={{ fontSize: 11.5, fontWeight: '700', color: s.color }}>{s.label}</Text>
-        </View>
-        {lead.next_call && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-            <Clock size={12} color={isOverdue ? '#E0473B' : '#D97706'} strokeWidth={2} />
-            <Text style={{ fontSize: 11.5, fontWeight: '600', color: isOverdue ? '#E0473B' : '#D97706' }}>
-              {new Date(lead.next_call).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
-            </Text>
+                  {notes ? <Text style={styles.leadNotes} numberOfLines={3}>{notes}</Text> : null}
+                  <View style={styles.cardFooter}>
+                    <View style={styles.nextCallRow}>
+                      <Clock size={13} color={overdue?'#E0473B':'#D97706'} />
+                      <Text style={[styles.nextCallText,overdue&&{color:'#E0473B'}]}>
+                        {nextCall ? `Звонок ${fmtDate(nextCall)}` : 'Нет звонка'}
+                      </Text>
+                    </View>
+                    <View style={styles.cardActions}>
+                      {isOpen && (
+                        <>
+                          <TouchableOpacity style={styles.actionBtnGhost} onPress={()=>updateStatus(l,'thinking')}>
+                            <Text style={styles.actionBtnGhostText}>В работу</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.actionBtnGreen} onPress={()=>updateStatus(l,'won')}>
+                            <Text style={styles.actionBtnGreenText}>Клиент</Text>
+                          </TouchableOpacity>
+                        </>
+                      )}
+                      <TouchableOpacity style={styles.callBtn} onPress={()=>setNoteModal(l)}>
+                        <Phone size={14} color="#fff" fill="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
           </View>
         )}
       </View>
 
-      {lead.last_call_note && (
-        <Text style={{ fontSize: 12, color: '#5A6573', lineHeight: 17, marginBottom: 12 }} numberOfLines={2}>{lead.last_call_note}</Text>
-      )}
+      {showModal && <LeadModal onClose={()=>setShowModal(false)} onSaved={()=>{setShowModal(false);load();}} />}
+      {noteModal && <NoteModal lead={noteModal} onClose={()=>setNoteModal(null)} onSaved={()=>{setNoteModal(null);load();}} />}
+    </ScrollView>
+  );
+}
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(14,23,38,0.06)' }}>
-        <TouchableOpacity onPress={(e) => { (e as any).stopPropagation?.(); Linking.openURL(`tel:${lead.phone}`); }}
-          style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#0E1726', alignItems: 'center', justifyContent: 'center' }}>
-          <Phone size={15} color="#fff" strokeWidth={2} />
-        </TouchableOpacity>
-        {lead.status !== 'won' && lead.status !== 'lost' && (
-          <TouchableOpacity onPress={(e) => { (e as any).stopPropagation?.(); onAction('won'); }}
-            style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: 'rgba(30,158,90,0.12)' }}>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#1E9E5A' }}>Стал клиентом</Text>
-          </TouchableOpacity>
-        )}
+function LeadModal({ onClose, onSaved }: { onClose:()=>void; onSaved:()=>void }) {
+  const [form, setForm] = useState({ name:'', company:'', phone:'', city:'', status:'new', notes:'', next_call:'' });
+  const [saving, setSaving] = useState(false);
+  const set=(k:string,v:string)=>setForm(f=>({...f,[k]:v}));
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { Alert.alert('Ошибка','Введите имя'); return; }
+    setSaving(true);
+    try { await api.leads.create(form); onSaved(); }
+    catch(e:any) { Alert.alert('Ошибка', e.message||'Ошибка'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Новый лид</Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn}><X size={18} color="#5A6573" /></TouchableOpacity>
+          </View>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {[
+              {k:'name',label:'ИМЯ *',ph:'Иванов Иван'},
+              {k:'company',label:'КОМПАНИЯ',ph:'ООО Логистик'},
+              {k:'phone',label:'ТЕЛЕФОН',ph:'+7 (495) 000-00-00'},
+              {k:'city',label:'ГОРОД',ph:'Москва'},
+              {k:'next_call',label:'ДАТА СЛЕДУЮЩЕГО ЗВОНКА',ph:'2026-02-15'},
+              {k:'notes',label:'ЗАМЕТКИ',ph:''},
+            ].map(f=>(
+              <View key={f.k} style={styles.formGroup}>
+                <Text style={styles.formLabel}>{f.label}</Text>
+                <TextInput style={styles.formInput} value={(form as any)[f.k]} onChangeText={v=>set(f.k,v)}
+                  placeholder={f.ph} placeholderTextColor="#A6AEB8" multiline={f.k==='notes'} />
+              </View>
+            ))}
+            <View style={styles.formActions}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={onClose}><Text style={styles.cancelText}>Отмена</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}><Text style={styles.saveText}>{saving?'Сохранение…':'Создать'}</Text></TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
       </View>
-    </TouchableOpacity>
+    </Modal>
+  );
+}
+
+function NoteModal({ lead, onClose, onSaved }: { lead:any; onClose:()=>void; onSaved:()=>void }) {
+  const [note, setNote] = useState('');
+  const [nextCall, setNextCall] = useState(lead.next_call||lead.nextCall||'');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      if (note.trim()) await api.leads.addCallNote(lead.id, note.trim());
+      await api.leads.update(lead.id, { ...lead, next_call: nextCall });
+      onSaved();
+    } catch(e:any) { Alert.alert('Ошибка', e.message||'Ошибка'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Запись звонка</Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn}><X size={18} color="#5A6573" /></TouchableOpacity>
+          </View>
+          <View style={styles.formGroup}>
+            <Text style={styles.formLabel}>ИТОГ РАЗГОВОРА</Text>
+            <TextInput style={[styles.formInput,{minHeight:80}]} value={note} onChangeText={setNote}
+              placeholder="Обсудили условия, клиент думает..." placeholderTextColor="#A6AEB8" multiline />
+          </View>
+          <View style={styles.formGroup}>
+            <Text style={styles.formLabel}>СЛЕДУЮЩИЙ ЗВОНОК</Text>
+            <TextInput style={styles.formInput} value={nextCall} onChangeText={setNextCall}
+              placeholder="2026-02-20" placeholderTextColor="#A6AEB8" />
+          </View>
+          <View style={styles.formActions}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={onClose}><Text style={styles.cancelText}>Отмена</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}><Text style={styles.saveText}>{saving?'Сохранение…':'Сохранить'}</Text></TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  industryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(14,23,38,0.08)', borderRadius: 13, paddingHorizontal: 14, paddingVertical: 10, marginTop: 10 },
-  industryBtnActive: { borderColor: '#1366F0', backgroundColor: 'rgba(19,102,240,0.08)' },
-  industryBtnText: { color: '#8A93A0', fontSize: 14, flex: 1, marginRight: 8 },
-  industryBtnTextActive: { color: '#1366F0' },
-  industryBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-  industrySheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '75%', paddingBottom: 20 },
-  industrySheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: 'rgba(14,23,38,0.07)' },
-  industrySheetTitle: { color: '#0E1726', fontSize: 16, fontWeight: '700' },
-  industryItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(14,23,38,0.06)' },
-  industryItemActive: { backgroundColor: 'rgba(19,102,240,0.07)' },
-  industryItemText: { color: '#0E1726', fontSize: 15, fontWeight: '500' },
+  scroll:{flex:1,backgroundColor:'#EDEFF3'}, content:{},
+  topbar:{flexDirection:'row',alignItems:'center',paddingHorizontal:24,paddingVertical:14,backgroundColor:'rgba(237,239,243,0.9)',borderBottomWidth:1,borderBottomColor:'rgba(255,255,255,0.5)',gap:12},
+  topTitle:{fontFamily:'Onest_700Bold',fontSize:22,color:'#0E1726',letterSpacing:-0.5},
+  addBtn:{flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:18,paddingVertical:11,borderRadius:13,backgroundColor:'#0E1726',shadowColor:'#0E1726',shadowOffset:{width:0,height:8},shadowOpacity:0.5,shadowRadius:16},
+  addBtnText:{fontFamily:'Manrope_600SemiBold',fontSize:13.5,color:'#fff'},
+  page:{padding:24,gap:16},
+  kpiRow:{flexDirection:'row',gap:16},
+  kpiCard:{flex:1,borderRadius:20,padding:18,backgroundColor:'rgba(255,255,255,0.6)',borderWidth:1,borderColor:'rgba(255,255,255,0.7)',shadowColor:'#0E1726',shadowOffset:{width:0,height:8},shadowOpacity:0.1,shadowRadius:20},
+  kpiDot:{width:30,height:30,borderRadius:9,alignItems:'center',justifyContent:'center',marginBottom:10},
+  kpiDotInner:{width:9,height:9,borderRadius:5},
+  kpiVal:{fontFamily:'Onest_800ExtraBold',fontSize:24,letterSpacing:-0.5,marginBottom:4},
+  kpiLabel:{fontFamily:'Manrope_500Medium',fontSize:12,color:'#8A93A0'},
+  chips:{flexDirection:'row',gap:9},
+  chip:{paddingHorizontal:15,paddingVertical:8,borderRadius:11,backgroundColor:'rgba(255,255,255,0.5)',borderWidth:1,borderColor:'rgba(14,23,38,0.08)'},
+  chipActive:{backgroundColor:'#0E1726',borderColor:'transparent'},
+  chipText:{fontFamily:'Manrope_600SemiBold',fontSize:13,color:'#5A6573'},
+  chipTextActive:{color:'#fff'},
+  searchBox:{flexDirection:'row',alignItems:'center',gap:9,paddingHorizontal:14,paddingVertical:10,borderRadius:13,backgroundColor:'rgba(255,255,255,0.6)',borderWidth:1,borderColor:'rgba(14,23,38,0.08)'},
+  searchInput:{flex:1,fontFamily:'Manrope_400Regular',fontSize:13.5,color:'#0E1726'},
+  loaderWrap:{paddingVertical:40,alignItems:'center'},
+  grid:{flexDirection:'row',flexWrap:'wrap',gap:16},
+  card:{width:'48%',borderRadius:22,padding:20,backgroundColor:'rgba(255,255,255,0.6)',borderWidth:1,borderColor:'rgba(255,255,255,0.7)',shadowColor:'#0E1726',shadowOffset:{width:0,height:10},shadowOpacity:0.1,shadowRadius:28},
+  cardTop:{flexDirection:'row',alignItems:'center',gap:12,marginBottom:12},
+  avatar:{width:46,height:46,borderRadius:14,alignItems:'center',justifyContent:'center',flexShrink:0},
+  avatarText:{color:'#fff',fontFamily:'Onest_700Bold',fontSize:15},
+  leadName:{fontFamily:'Onest_700Bold',fontSize:15.5,color:'#0E1726'},
+  leadSub:{fontFamily:'Manrope_400Regular',fontSize:12.5,color:'#8A93A0',marginTop:2},
+  badge:{paddingHorizontal:10,paddingVertical:4,borderRadius:9,flexShrink:0},
+  badgeText:{fontFamily:'Manrope_700Bold',fontSize:11.5,fontWeight:'700'},
+  leadNotes:{fontFamily:'Manrope_400Regular',fontSize:12.5,color:'#5A6573',lineHeight:18,marginBottom:14},
+  cardFooter:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:14,paddingTop:12,borderTopWidth:1,borderTopColor:'rgba(14,23,38,0.06)'},
+  nextCallRow:{flexDirection:'row',alignItems:'center',gap:5},
+  nextCallText:{fontFamily:'Onest_700Bold',fontSize:12,color:'#D97706'},
+  cardActions:{flexDirection:'row',gap:7},
+  actionBtnGhost:{paddingHorizontal:12,paddingVertical:7,borderRadius:10,borderWidth:1,borderColor:'rgba(14,23,38,0.1)',backgroundColor:'rgba(255,255,255,0.6)'},
+  actionBtnGhostText:{fontFamily:'Manrope_600SemiBold',fontSize:12.5,color:'#5A6573'},
+  actionBtnGreen:{paddingHorizontal:12,paddingVertical:7,borderRadius:10,backgroundColor:'#1E9E5A'},
+  actionBtnGreenText:{fontFamily:'Manrope_600SemiBold',fontSize:12.5,color:'#fff'},
+  callBtn:{width:36,height:36,borderRadius:10,backgroundColor:'#0E1726',alignItems:'center',justifyContent:'center'},
+  empty:{fontFamily:'Manrope_400Regular',fontSize:13.5,color:'#A6AEB8',textAlign:'center',padding:40,width:'100%'},
+  overlay:{flex:1,backgroundColor:'rgba(20,28,46,0.34)',alignItems:'center',justifyContent:'center',padding:28},
+  modal:{width:'100%',maxWidth:480,maxHeight:'90%',backgroundColor:'rgba(255,255,255,0.96)',borderRadius:26,borderWidth:1,borderColor:'rgba(255,255,255,0.9)',shadowColor:'#0E1726',shadowOffset:{width:0,height:40},shadowOpacity:0.4,shadowRadius:60,padding:24},
+  modalHeader:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:20,paddingBottom:16,borderBottomWidth:1,borderBottomColor:'rgba(14,23,38,0.07)'},
+  modalTitle:{fontFamily:'Onest_700Bold',fontSize:18,color:'#0E1726'},
+  closeBtn:{width:36,height:36,borderRadius:11,backgroundColor:'rgba(14,23,38,0.04)',alignItems:'center',justifyContent:'center'},
+  formGroup:{marginBottom:14},
+  formLabel:{fontFamily:'Manrope_600SemiBold',fontSize:11.5,letterSpacing:0.6,color:'#8A93A0',marginBottom:7},
+  formInput:{paddingHorizontal:13,paddingVertical:11,borderRadius:12,borderWidth:1,borderColor:'rgba(14,23,38,0.12)',backgroundColor:'rgba(255,255,255,0.75)',fontFamily:'Manrope_400Regular',fontSize:14,color:'#0E1726'},
+  formActions:{flexDirection:'row',gap:12,marginTop:6,paddingTop:18,borderTopWidth:1,borderTopColor:'rgba(14,23,38,0.07)'},
+  cancelBtn:{flex:1,paddingVertical:13,borderRadius:13,borderWidth:1,borderColor:'rgba(14,23,38,0.12)',backgroundColor:'rgba(255,255,255,0.6)',alignItems:'center'},
+  cancelText:{fontFamily:'Manrope_600SemiBold',fontSize:14,color:'#5A6573'},
+  saveBtn:{flex:2,paddingVertical:13,borderRadius:13,backgroundColor:'#1E9E5A',alignItems:'center'},
+  saveText:{fontFamily:'Manrope_600SemiBold',fontSize:14,color:'#fff'},
 });
