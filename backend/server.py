@@ -528,6 +528,7 @@ class Order(BaseModel):
     driver_phone: Optional[str] = ""
     vehicle_type: Optional[str] = ""
     vehicle_plate: Optional[str] = ""
+    vehicle_info: Optional[str] = ""
     client_rate: float = 0
     carrier_rate: float = 0
     status: str = "new"
@@ -578,6 +579,7 @@ class OrderPayload(BaseModel):
     driver_phone: Optional[str] = ""
     vehicle_type: Optional[str] = ""
     vehicle_plate: Optional[str] = ""
+    vehicle_info: Optional[str] = ""
     client_rate: float = 0
     carrier_rate: float = 0
     status: str = "new"
@@ -619,6 +621,7 @@ class OrderUpdate(BaseModel):
     driver_phone: Optional[str] = None
     vehicle_type: Optional[str] = None
     vehicle_plate: Optional[str] = None
+    vehicle_info: Optional[str] = None
     client_rate: Optional[float] = None
     carrier_rate: Optional[float] = None
     status: Optional[str] = None

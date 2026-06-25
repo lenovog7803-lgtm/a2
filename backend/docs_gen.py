@@ -157,7 +157,8 @@ class DocsGenerator:
 
         logger.info(f"[DOC] order_number={order.get('order_number')} route={route_from}->{route_to}")
         logger.info(f"[DOC] addr_load={addr_load} addr_unload={addr_unload}")
-        logger.info(f"[DOC] driver={driver_name} plate={vehicle_plate} cargo={cargo} weight={weight}")
+        logger.info(f"[DOC] driver_name={order.get('driver_name')!r} vehicle_info={order.get('vehicle_info')!r} "
+                    f"→ resolved driver={driver_name!r} plate={vehicle_plate!r} cargo={cargo!r} weight={weight}")
 
         _c = carrier or {}
         logger.info(f"[CARRIER] director={_c.get('director')!r} basis={_c.get('basis')!r} "
