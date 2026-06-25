@@ -244,7 +244,6 @@ async def _purge_old_trash():
 async def _token_refresh_loop():
     """Refresh the stored Google OAuth token every 30 minutes so it never expires."""
     while True:
-        await asyncio.sleep(1800)  # 30 minutes
         try:
             token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
             if not token_doc or not token_doc.get("refresh_token"):
@@ -274,6 +273,7 @@ async def _token_refresh_loop():
             logging.getLogger(__name__).info("Google OAuth token refreshed automatically")
         except Exception as e:
             logging.getLogger(__name__).error(f"_token_refresh_loop: refresh failed: {e}")
+        await asyncio.sleep(1800)  # 30 minutes
 
 
 async def _backup_loop():

@@ -34,9 +34,15 @@ def _build_service(token_doc: Dict[str, Any]):
         token_uri="https://oauth2.googleapis.com/token",
         client_id=os.environ.get("GOOGLE_OAUTH_CLIENT_ID"),
         client_secret=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
-        scopes=["https://www.googleapis.com/auth/calendar"],
+        scopes=[
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/calendar.events",
+            "https://www.googleapis.com/auth/tasks",
+            "https://www.googleapis.com/auth/documents",
+            "https://www.googleapis.com/auth/drive",
+        ],
     )
-    if not creds.valid and creds.refresh_token:
+    if creds.refresh_token:
         creds.refresh(Request())
 
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
