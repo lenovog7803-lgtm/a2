@@ -140,23 +140,50 @@ class DocsGenerator:
         """Все плейсхолдеры под русские теги в шаблонах."""
         price_cl = float(order.get('client_rate') or 0)
         price_car = float(order.get('carrier_rate') or 0)
-        return {
-            '{{НомерЗаявки}}': str(order.get('order_number', '')),
-            '{{ДатаЗаявки}}': _format_date((order.get('created_at') or '')[:10]),
-            '{{Компания}}': str(order.get('client_name', '')),
-            '{{Перевозчик}}': str(order.get('carrier_name', '')),
-            '{{Маршрут}}': f"{order.get('route_from', '')} - {order.get('route_to', '')}".strip(' -'),
-            '{{ДатаЗагрузки}}': _format_date(order.get('load_date', '')),
-            '{{ДатаВыгрузки}}': _format_date(order.get('unload_date', '')),
-            '{{СтавкаКлиента}}': f"{price_cl:.2f}",
-            '{{СтавкаПеревозчика}}': f"{price_car:.2f}",
-            '{{СуммаПрописью}}': number_to_words(price_cl),
+        margin = price_cl - price_car
 
-            '{{Водитель}}': str(order.get('driver_name', '') or '—'),
-            '{{Груз}}': str(order.get('cargo', '') or '—'),
-            '{{АдресЗагрузки}}': str(order.get('route_from_address', '') or '—'),
-            '{{АдресВыгрузки}}': str(order.get('route_to_address', '') or '—'),
-            '{{ДопИнфо}}': str(order.get('notes', '') or '—'),
+        # Canonical MongoDB field names (with fallbacks for legacy data)
+        route_from   = order.get('route_from') or order.get('city_loading') or ''
+        route_to     = order.get('route_to') or order.get('city_unloading') or ''
+        addr_load    = order.get('route_from_address') or order.get('loading_address') or '—'
+        addr_unload  = order.get('route_to_address') or order.get('unloading_address') or '—'
+        driver_name  = order.get('driver_name') or order.get('vehicle_info') or '—'
+        driver_phone = order.get('driver_phone') or '—'
+        vehicle_type = order.get('vehicle_type') or '—'
+        vehicle_plate= order.get('vehicle_plate') or order.get('plate') or '—'
+        cargo        = order.get('cargo') or '—'
+        weight       = str(order.get('weight_tons') or order.get('weight') or '—')
+        payment_days = str(order.get('payment_days') or 20)
+
+        logger.info(f"[DOC] order_number={order.get('order_number')} route={route_from}->{route_to}")
+        logger.info(f"[DOC] addr_load={addr_load} addr_unload={addr_unload}")
+        logger.info(f"[DOC] driver={driver_name} plate={vehicle_plate} cargo={cargo} weight={weight}")
+
+        return {
+            '{{НомерЗаявки}}':      str(order.get('order_number', '')),
+            '{{ДатаЗаявки}}':       _format_date((order.get('created_at') or '')[:10]),
+            '{{Компания}}':         str(order.get('client_name', '')),
+            '{{Перевозчик}}':       str(order.get('carrier_name', '')),
+            '{{Маршрут}}':          f"{route_from} — {route_to}".strip(' —'),
+            '{{Откуда}}':           route_from,
+            '{{Куда}}':             route_to,
+            '{{ДатаЗагрузки}}':    _format_date(order.get('load_date', '')),
+            '{{ДатаВыгрузки}}':    _format_date(order.get('unload_date', '')),
+            '{{СтавкаКлиента}}':   f"{price_cl:.2f}",
+            '{{СтавкаПеревозчика}}': f"{price_car:.2f}",
+            '{{СуммаПрописью}}':   number_to_words(price_cl),
+            '{{Маржа}}':            f"{margin:.2f}",
+            '{{СрокОплаты}}':       payment_days,
+
+            '{{АдресЗагрузки}}':   str(addr_load),
+            '{{АдресВыгрузки}}':   str(addr_unload),
+            '{{Водитель}}':         str(driver_name),
+            '{{ТелефонВодителя}}': str(driver_phone),
+            '{{ТипТС}}':            str(vehicle_type),
+            '{{НомерТС}}':          str(vehicle_plate),
+            '{{Груз}}':             str(cargo),
+            '{{Вес}}':              weight,
+            '{{ДопИнфо}}':         str(order.get('notes', '') or '—'),
 
             # Реквизиты клиента
             '{{УНПИНН}}':  str((client or {}).get('inn', '') or ''),
