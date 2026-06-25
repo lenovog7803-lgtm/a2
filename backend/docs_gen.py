@@ -159,6 +159,12 @@ class DocsGenerator:
         logger.info(f"[DOC] addr_load={addr_load} addr_unload={addr_unload}")
         logger.info(f"[DOC] driver={driver_name} plate={vehicle_plate} cargo={cargo} weight={weight}")
 
+        _c = carrier or {}
+        logger.info(f"[CARRIER] director={_c.get('director')!r} basis={_c.get('basis')!r} "
+                    f"bank={_c.get('bank')!r} bik={_c.get('bik')!r} "
+                    f"unp={_c.get('unp')!r} inn={_c.get('inn')!r} "
+                    f"bank_name={_c.get('bank_name')!r} bank_bik={_c.get('bank_bik')!r}")
+
         return {
             '{{НомерЗаявки}}':      str(order.get('order_number', '')),
             '{{ДатаЗаявки}}':       _format_date((order.get('created_at') or '')[:10]),
@@ -192,14 +198,14 @@ class DocsGenerator:
             '{{Банк}}':    str((client or {}).get('bank_name', '') or ''),
             '{{БИК}}':     str((client or {}).get('bank_bik', '') or ''),
 
-            # Реквизиты перевозчика
-            '{{Директор}}':  _extract_director((carrier or {}).get('notes', '')),
-            '{{Основание}}': _extract_osnovanie((carrier or {}).get('notes', '')),
-            '{{ПерУНП}}':    str((carrier or {}).get('inn', '') or ''),
-            '{{ПерАдрес}}':  str((carrier or {}).get('legal_address', '') or ''),
-            '{{ПерРС}}':     str((carrier or {}).get('bank_account', '') or ''),
-            '{{ПерБанк}}':   str((carrier or {}).get('bank_name', '') or ''),
-            '{{ПерБИК}}':    str((carrier or {}).get('bank_bik', '') or ''),
+            # Реквизиты перевозчика — canonical fields: director, basis, bank, bik, unp
+            '{{Директор}}':  _car(carrier, 'director'),
+            '{{Основание}}': _car(carrier, 'basis', 'свидетельства о гос. регистрации'),
+            '{{ПерУНП}}':    _car(carrier, 'unp', _car(carrier, 'inn')),
+            '{{ПерАдрес}}':  _car(carrier, 'legal_address'),
+            '{{ПерРС}}':     _car(carrier, 'bank_account', _car(carrier, 'rs')),
+            '{{ПерБанк}}':   _car(carrier, 'bank', _car(carrier, 'bank_name')),
+            '{{ПерБИК}}':    _car(carrier, 'bik', _car(carrier, 'bank_bik')),
         }
 
     def generate(
@@ -322,6 +328,14 @@ def _extract_doc_text(content: list) -> str:
                     row_texts.append(cell_text)
                 parts.append(" | ".join(row_texts) + "\n")
     return "".join(parts)
+
+
+def _car(carrier: Optional[Dict], key: str, fallback: str = '—') -> str:
+    """Read a field from carrier dict, return fallback if missing/empty."""
+    if not carrier:
+        return fallback
+    val = carrier.get(key)
+    return str(val) if val else fallback
 
 
 def _extract_director(notes: str) -> str:
