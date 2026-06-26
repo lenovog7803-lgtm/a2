@@ -120,7 +120,7 @@ def _bool_check(v) -> bool:
 
 
 _STATUS_MAP = {
-    "завершён": "delivered", "завершен": "delivered", "доставлен": "delivered", "выполнен": "delivered",
+    "завершён": "done", "завершен": "done", "доставлен": "done", "выполнен": "done", "delivered": "done", "done": "done",
     "в работе": "in_progress", "впроцессе": "in_progress", "в процессе": "in_progress", "загрузк": "in_progress",
     "новая": "new", "новый": "new",
     "отмен": "cancelled",
@@ -416,7 +416,7 @@ async def run_import(db) -> Dict[str, Any]:
         logger.error(f"[Sheets import] failed: {err_msg}", exc_info=True)
         return {"ok": False, "message": err_msg, "imported": {}}
 
-    # Заменяем коллекции (полная синхронизация — Sheet это источник истины)
+    # Клиенты и перевозчики: полная замена из Sheet
     await db.clients.delete_many({})
     if clients:
         await db.clients.insert_many(clients)
@@ -425,9 +425,42 @@ async def run_import(db) -> Dict[str, Any]:
     if carriers:
         await db.carriers.insert_many(carriers)
 
-    await db.orders.delete_many({})
+    # Заявки: upsert по order_number — не перезаписываем статус если в CRM уже done/cancelled
+    _CRM_ONLY_ORDER_FIELDS = {"client_paid", "carrier_paid", "client_paid_date", "carrier_paid_date",
+                               "docs_to_client_sent", "docs_from_client_received",
+                               "docs_to_carrier_sent", "docs_from_carrier_received",
+                               "docs_to_client_sent_date", "docs_from_client_received_date",
+                               "docs_to_carrier_sent_date", "docs_from_carrier_received_date",
+                               "calendar_event_id", "calendar_event_url",
+                               "doc_url_client", "doc_url_carrier", "doc_url_act",
+                               "notes", "deleted", "deleted_at"}
+    existing_orders = {o["order_number"]: o for o in await db.orders.find(
+        {"order_number": {"$exists": True, "$ne": ""}}, {"_id": 0}
+    ).to_list(100000)}
+
+    for order in orders:
+        num = order.get("order_number", "")
+        existing = existing_orders.get(num)
+        if existing:
+            # Keep CRM-managed status if it's a terminal state
+            crm_status = existing.get("status", "")
+            if crm_status in ("done", "cancelled", "in_progress") and order.get("status") == "new":
+                order["status"] = crm_status
+            # Preserve CRM-only fields
+            for field in _CRM_ONLY_ORDER_FIELDS:
+                if field in existing and existing[field]:
+                    order[field] = existing[field]
+            await db.orders.replace_one({"order_number": num}, order, upsert=True)
+        else:
+            await db.orders.insert_one(order)
+
+    # Remove orders that no longer exist in Sheet (soft check — only if sheet has data)
     if orders:
-        await db.orders.insert_many(orders)
+        sheet_numbers = {o["order_number"] for o in orders if o.get("order_number")}
+        await db.orders.delete_many({
+            "order_number": {"$nin": list(sheet_numbers), "$exists": True, "$ne": ""},
+            "deleted": {"$ne": True},
+        })
 
     # Лиды: upsert по имени чтобы не затирать call_notes / last_call из CRM
     _LEADS_MONGO_ONLY = {"call_notes", "last_call", "id"}
