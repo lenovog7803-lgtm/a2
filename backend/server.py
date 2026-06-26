@@ -1325,7 +1325,7 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
     for d in docs:
         unload = (d.get("unload_date") or "")[:10]
         status = d.get("status", "")
-        d["is_overdue"] = bool(unload and unload < today and status not in ("delivered", "cancelled"))
+        d["is_overdue"] = bool(unload and unload < today and status not in ("done", "delivered", "cancelled"))
         result.append(Order(**d))
     return result
 
