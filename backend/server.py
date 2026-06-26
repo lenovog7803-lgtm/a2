@@ -3432,6 +3432,10 @@ async def admin_restore():
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(api_router)
 
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
