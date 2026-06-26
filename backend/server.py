@@ -1492,6 +1492,46 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     return Order(**doc)
 
 
+@api_router.post("/orders/{order_id}/sync_doc_urls")
+async def sync_order_doc_urls(order_id: str):
+    """Read doc URLs for this order from Google Sheet and update MongoDB."""
+    doc = await db.orders.find_one({"id": order_id}, {"_id": 0, "order_number": 1})
+    if not doc:
+        raise HTTPException(404, "Order not found")
+    order_number = doc.get("order_number", "")
+    if not order_number:
+        return {"ok": False, "message": "No order_number"}
+
+    if _sheets_run_import is None:
+        return {"ok": False, "message": "Sheets not configured"}
+
+    try:
+        def _fetch_doc_urls():
+            from sheets_import import SheetsImporter
+            imp = SheetsImporter()
+            rows = imp._read_tab("Заказы")
+            for row in rows[4:]:
+                if len(row) > 0 and row[0].strip() == order_number.strip():
+                    return {
+                        "doc_url_client":  row[34].strip() if len(row) > 34 else "",
+                        "doc_url_carrier": row[35].strip() if len(row) > 35 else "",
+                        "doc_url_act":     row[36].strip() if len(row) > 36 else "",
+                    }
+            return None
+
+        urls = await asyncio.to_thread(_fetch_doc_urls)
+        if not urls:
+            return {"ok": False, "message": f"Order {order_number} not found in sheet"}
+
+        update = {k: v for k, v in urls.items() if v}
+        if update:
+            await db.orders.update_one({"id": order_id}, {"$set": update})
+        return {"ok": True, **urls}
+    except Exception as e:
+        logging.getLogger(__name__).error(f"sync_doc_urls failed: {e}", exc_info=True)
+        raise HTTPException(500, str(e))
+
+
 @api_router.get("/orders/{order_id}/logs")
 async def get_order_logs(order_id: str):
     logs = await db.order_logs.find({"order_id": order_id}, {"_id": 0}).sort("timestamp", -1).to_list(1000)
