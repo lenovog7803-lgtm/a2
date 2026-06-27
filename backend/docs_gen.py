@@ -155,16 +155,41 @@ class DocsGenerator:
         weight       = str(order.get('weight_tons') or order.get('weight') or '—')
         payment_days = str(order.get('payment_days') or 20)
 
-        logger.info(f"[DOC] order_number={order.get('order_number')} route={route_from}->{route_to}")
-        logger.info(f"[DOC] addr_load={addr_load} addr_unload={addr_unload}")
-        logger.info(f"[DOC] driver_name={order.get('driver_name')!r} vehicle_info={order.get('vehicle_info')!r} "
-                    f"→ resolved driver={driver_name!r} plate={vehicle_plate!r} cargo={cargo!r} weight={weight}")
-
+        # Carrier fields — поддерживаем как старые имена (bank_name, bank_bik, bank_account),
+        # так и новые (bank, bik, rs), а также данные из notes ("Директор: ..." / "Основание: ...")
         _c = carrier or {}
-        logger.info(f"[CARRIER] director={_c.get('director')!r} basis={_c.get('basis')!r} "
-                    f"bank={_c.get('bank')!r} bik={_c.get('bik')!r} "
-                    f"unp={_c.get('unp')!r} inn={_c.get('inn')!r} "
-                    f"bank_name={_c.get('bank_name')!r} bank_bik={_c.get('bank_bik')!r}")
+        car_director = _c.get('director') or _extract_director(_c.get('notes', ''))
+        car_basis    = _c.get('basis') or _extract_osnovanie(_c.get('notes', '')) or 'свидетельства о гос. регистрации'
+        car_bank     = _c.get('bank') or _c.get('bank_name') or '—'
+        car_bik      = _c.get('bik') or _c.get('bank_bik') or '—'
+        car_rs       = _c.get('rs') or _c.get('bank_account') or '—'
+        car_unp      = _c.get('unp') or _c.get('inn') or '—'
+        car_address  = _c.get('legal_address') or _c.get('address') or '—'
+        car_postal   = _c.get('postal_address') or car_address
+
+        logger.info(f"[DOC] order_number={order.get('order_number')} route={route_from}->{route_to}")
+        logger.info(f"[CARRIER] director={car_director!r} basis={car_basis!r} bank={car_bank!r} "
+                    f"bik={car_bik!r} unp={car_unp!r} rs={car_rs!r}")
+
+        # Client fields
+        _cl = client or {}
+        cl_unp      = _cl.get('unp') or _cl.get('inn') or ''
+        cl_director = _cl.get('director') or ''
+        cl_basis    = _cl.get('basis') or 'Устава'
+        cl_address  = _cl.get('legal_address') or ''
+        cl_postal   = _cl.get('postal_address') or cl_address
+        cl_bank     = _cl.get('bank_name') or ''
+        cl_rs       = _cl.get('bank_account') or ''
+        cl_bik      = _cl.get('bank_bik') or ''
+
+        # {{Директор}} и {{Основание}} зависят от типа документа:
+        # client/act → директор клиента, carrier → директор перевозчика
+        if kind == 'carrier':
+            doc_director = car_director or '—'
+            doc_basis    = car_basis
+        else:
+            doc_director = cl_director or '—'
+            doc_basis    = cl_basis
 
         return {
             '{{НомерЗаявки}}':      str(order.get('order_number', '')),
@@ -192,33 +217,30 @@ class DocsGenerator:
             '{{Вес}}':              weight,
             '{{ДопИнфо}}':         str(order.get('notes', '') or '—'),
 
+            # Директор и основание — зависит от типа документа
+            '{{Директор}}':         doc_director,
+            '{{Основание}}':        doc_basis,
+
             # Реквизиты клиента
-            '{{УНПИНН}}':       str((client or {}).get('unp', '') or (client or {}).get('inn', '') or ''),
-            '{{УНП}}':          str((client or {}).get('unp', '') or (client or {}).get('inn', '') or ''),
-            '{{ЮрАдрес}}':      str((client or {}).get('legal_address', '') or ''),
-            '{{ПочтАдрес}}':    str((client or {}).get('postal_address', '') or (client or {}).get('legal_address', '') or ''),
-            '{{РС}}':           str((client or {}).get('bank_account', '') or ''),
-            '{{Банк}}':         str((client or {}).get('bank_name', '') or ''),
-            '{{БИК}}':          str((client or {}).get('bank_bik', '') or ''),
+            '{{УНПИНН}}':          cl_unp,
+            '{{УНП}}':             cl_unp,
+            '{{КлДиректор}}':      cl_director,
+            '{{КлОснование}}':     cl_basis,
+            '{{ЮрАдрес}}':         cl_address,
+            '{{ПочтАдрес}}':       cl_postal,
+            '{{РС}}':              cl_rs,
+            '{{Банк}}':            cl_bank,
+            '{{БИК}}':             cl_bik,
 
-            # Директор и основание: для заявки клиенту берётся директор клиента,
-            # для заявки перевозчику — директор перевозчика
-            '{{Директор}}':     str((client or {}).get('director', '') or '') if kind == 'client'
-                                else _car(carrier, 'director'),
-            '{{КлДиректор}}':   str((client or {}).get('director', '') or ''),
-            '{{Основание}}':    str((client or {}).get('basis', '') or 'Устава') if kind == 'client'
-                                else _car(carrier, 'basis', 'свидетельства о гос. регистрации'),
-            '{{КлОснование}}':  str((client or {}).get('basis', '') or 'Устава'),
-
-            # Реквизиты перевозчика — canonical fields: director, basis, bank, bik, unp
-            '{{ПерДиректор}}':  _car(carrier, 'director'),
-            '{{ПерОснование}}': _car(carrier, 'basis', 'свидетельства о гос. регистрации'),
-            '{{ПерУНП}}':       _car(carrier, 'unp', _car(carrier, 'inn')),
-            '{{ПерАдрес}}':     _car(carrier, 'legal_address'),
-            '{{ПерПочтАдрес}}': _car(carrier, 'postal_address', _car(carrier, 'legal_address')),
-            '{{ПерРС}}':        _car(carrier, 'bank_account', _car(carrier, 'rs')),
-            '{{ПерБанк}}':      _car(carrier, 'bank', _car(carrier, 'bank_name')),
-            '{{ПерБИК}}':       _car(carrier, 'bik', _car(carrier, 'bank_bik')),
+            # Реквизиты перевозчика — все варианты плейсхолдеров
+            '{{ПерДиректор}}':     car_director,
+            '{{ПерОснование}}':    car_basis,
+            '{{ПерУНП}}':          car_unp,
+            '{{ПерАдрес}}':        car_address,
+            '{{ПерПочтАдрес}}':    car_postal,
+            '{{ПерРС}}':           car_rs,
+            '{{ПерБанк}}':         car_bank,
+            '{{ПерБИК}}':          car_bik,
         }
 
     def generate(
