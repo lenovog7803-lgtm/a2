@@ -3360,7 +3360,16 @@ async def list_trash(current_user: dict = Depends(_require_user)):
         docs = await db[cname].find({"deleted": True}, {"_id": 0}).sort("deleted_at", -1).to_list(1000)
         print(f"[list_trash] {cname}: found {len(docs)} deleted docs")
         for d in docs:
-            label = d.get("order_number") or d.get("name") or d.get("company_name") or d.get("id", "")
+            if cname == "orders":
+                num = d.get("order_number") or d.get("id", "")
+                parts = [f"№{num}"]
+                if d.get("route_from") and d.get("route_to"):
+                    parts.append(f"{d['route_from']} → {d['route_to']}")
+                if d.get("client_name"):
+                    parts.append(d["client_name"])
+                label = " · ".join(parts)
+            else:
+                label = d.get("name") or d.get("company_name") or d.get("title") or d.get("id", "")
             raw_deleted_at = d.get("deleted_at")
             deleted_at_str = None
             days_left = None
