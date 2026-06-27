@@ -158,18 +158,23 @@ class DocsGenerator:
         # Carrier fields — поддерживаем как старые имена (bank_name, bank_bik, bank_account),
         # так и новые (bank, bik, rs), а также данные из notes ("Директор: ..." / "Основание: ...")
         _c = carrier or {}
-        car_director = _c.get('director') or _extract_director(_c.get('notes', ''))
+        car_name     = _c.get('company_name') or _c.get('name') or str(order.get('carrier_name', '—'))
+        car_director = _c.get('director') or _extract_director(_c.get('notes', '')) or '—'
         car_basis    = _c.get('basis') or _extract_osnovanie(_c.get('notes', '')) or 'свидетельства о гос. регистрации'
         car_bank     = _c.get('bank') or _c.get('bank_name') or '—'
         car_bik      = _c.get('bik') or _c.get('bank_bik') or '—'
-        car_rs       = _c.get('rs') or _c.get('bank_account') or '—'
-        car_unp      = _c.get('unp') or _c.get('inn') or '—'
-        car_address  = _c.get('legal_address') or _c.get('address') or '—'
+        car_rs_raw   = _c.get('rs') or _c.get('bank_account') or '—'
+        car_rs       = car_rs_raw.replace(' ', '') if car_rs_raw != '—' else '—'
+        car_unp      = str(_c.get('unp') or _c.get('inn') or '—')
+        car_address  = _c.get('address') or _c.get('legal_address') or '—'
         car_postal   = _c.get('postal_address') or car_address
 
+        print(f"[CARRIER REPLACEMENTS] name={car_name!r} unp={car_unp!r} rs={car_rs!r} "
+              f"bank={car_bank!r} bik={car_bik!r} director={car_director!r} "
+              f"basis={car_basis!r} address={car_address!r}")
         logger.info(f"[DOC] order_number={order.get('order_number')} route={route_from}->{route_to}")
-        logger.info(f"[CARRIER] director={car_director!r} basis={car_basis!r} bank={car_bank!r} "
-                    f"bik={car_bik!r} unp={car_unp!r} rs={car_rs!r}")
+        logger.info(f"[CARRIER] name={car_name!r} director={car_director!r} basis={car_basis!r} "
+                    f"bank={car_bank!r} bik={car_bik!r} unp={car_unp!r} rs={car_rs!r}")
 
         # Client fields
         _cl = client or {}
@@ -195,7 +200,7 @@ class DocsGenerator:
             '{{НомерЗаявки}}':      str(order.get('order_number', '')),
             '{{ДатаЗаявки}}':       _format_date((order.get('created_at') or '')[:10]),
             '{{Компания}}':         str(order.get('client_name', '')),
-            '{{Перевозчик}}':       str(order.get('carrier_name', '')),
+            '{{Перевозчик}}':       car_name,
             '{{Маршрут}}':          f"{route_from} — {route_to}".strip(' —'),
             '{{Откуда}}':           route_from,
             '{{Куда}}':             route_to,
@@ -232,7 +237,7 @@ class DocsGenerator:
             '{{Банк}}':            cl_bank,
             '{{БИК}}':             cl_bik,
 
-            # Реквизиты перевозчика — все варианты плейсхолдеров
+            # Реквизиты перевозчика
             '{{ПерДиректор}}':     car_director,
             '{{ПерОснование}}':    car_basis,
             '{{ПерУНП}}':          car_unp,
@@ -271,13 +276,15 @@ class DocsGenerator:
             {
                 'replaceAllText': {
                     'containsText': {'text': k, 'matchCase': True},
-                    'replaceText': v,
+                    'replaceText': str(v) if v else '—',
                 }
             }
             for k, v in replacements.items()
         ]
+        print(f"[DOC] Replacing {len(requests)} placeholders in doc {new_id} (kind={kind})")
         if requests:
-            docs.documents().batchUpdate(documentId=new_id, body={'requests': requests}).execute()
+            result = docs.documents().batchUpdate(documentId=new_id, body={'requests': requests}).execute()
+            print(f"[DOC] batchUpdate done, replies={len(result.get('replies', []))}")
 
         # 3. Делаем файл доступным «по ссылке» (чтобы пользователь мог открыть)
         try:
