@@ -136,7 +136,7 @@ class DocsGenerator:
             self._docs = build('docs', 'v1', credentials=creds, cache_discovery=False)
         return self._drive, self._docs
 
-    def _build_replacements(self, order: Dict[str, Any], client: Dict[str, Any], carrier: Dict[str, Any]) -> Dict[str, str]:
+    def _build_replacements(self, order: Dict[str, Any], client: Dict[str, Any], carrier: Dict[str, Any], kind: str = 'client') -> Dict[str, str]:
         """Все плейсхолдеры под русские теги в шаблонах."""
         price_cl = float(order.get('client_rate') or 0)
         price_car = float(order.get('carrier_rate') or 0)
@@ -193,20 +193,32 @@ class DocsGenerator:
             '{{ДопИнфо}}':         str(order.get('notes', '') or '—'),
 
             # Реквизиты клиента
-            '{{УНПИНН}}':  str((client or {}).get('inn', '') or ''),
-            '{{ЮрАдрес}}': str((client or {}).get('legal_address', '') or ''),
-            '{{РС}}':      str((client or {}).get('bank_account', '') or ''),
-            '{{Банк}}':    str((client or {}).get('bank_name', '') or ''),
-            '{{БИК}}':     str((client or {}).get('bank_bik', '') or ''),
+            '{{УНПИНН}}':       str((client or {}).get('unp', '') or (client or {}).get('inn', '') or ''),
+            '{{УНП}}':          str((client or {}).get('unp', '') or (client or {}).get('inn', '') or ''),
+            '{{ЮрАдрес}}':      str((client or {}).get('legal_address', '') or ''),
+            '{{ПочтАдрес}}':    str((client or {}).get('postal_address', '') or (client or {}).get('legal_address', '') or ''),
+            '{{РС}}':           str((client or {}).get('bank_account', '') or ''),
+            '{{Банк}}':         str((client or {}).get('bank_name', '') or ''),
+            '{{БИК}}':          str((client or {}).get('bank_bik', '') or ''),
+
+            # Директор и основание: для заявки клиенту берётся директор клиента,
+            # для заявки перевозчику — директор перевозчика
+            '{{Директор}}':     str((client or {}).get('director', '') or '') if kind == 'client'
+                                else _car(carrier, 'director'),
+            '{{КлДиректор}}':   str((client or {}).get('director', '') or ''),
+            '{{Основание}}':    str((client or {}).get('basis', '') or 'Устава') if kind == 'client'
+                                else _car(carrier, 'basis', 'свидетельства о гос. регистрации'),
+            '{{КлОснование}}':  str((client or {}).get('basis', '') or 'Устава'),
 
             # Реквизиты перевозчика — canonical fields: director, basis, bank, bik, unp
-            '{{Директор}}':  _car(carrier, 'director'),
-            '{{Основание}}': _car(carrier, 'basis', 'свидетельства о гос. регистрации'),
-            '{{ПерУНП}}':    _car(carrier, 'unp', _car(carrier, 'inn')),
-            '{{ПерАдрес}}':  _car(carrier, 'legal_address'),
-            '{{ПерРС}}':     _car(carrier, 'bank_account', _car(carrier, 'rs')),
-            '{{ПерБанк}}':   _car(carrier, 'bank', _car(carrier, 'bank_name')),
-            '{{ПерБИК}}':    _car(carrier, 'bik', _car(carrier, 'bank_bik')),
+            '{{ПерДиректор}}':  _car(carrier, 'director'),
+            '{{ПерОснование}}': _car(carrier, 'basis', 'свидетельства о гос. регистрации'),
+            '{{ПерУНП}}':       _car(carrier, 'unp', _car(carrier, 'inn')),
+            '{{ПерАдрес}}':     _car(carrier, 'legal_address'),
+            '{{ПерПочтАдрес}}': _car(carrier, 'postal_address', _car(carrier, 'legal_address')),
+            '{{ПерРС}}':        _car(carrier, 'bank_account', _car(carrier, 'rs')),
+            '{{ПерБанк}}':      _car(carrier, 'bank', _car(carrier, 'bank_name')),
+            '{{ПерБИК}}':       _car(carrier, 'bik', _car(carrier, 'bank_bik')),
         }
 
     def generate(
@@ -232,7 +244,7 @@ class DocsGenerator:
         new_id = copied['id']
 
         # 2. Подставляем все плейсхолдеры одним batchUpdate
-        replacements = self._build_replacements(order, client, carrier)
+        replacements = self._build_replacements(order, client, carrier, kind=kind)
         requests = [
             {
                 'replaceAllText': {
