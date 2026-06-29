@@ -55,7 +55,7 @@ export default function TopBar({
                 <div className="search-section-label">ЗАЯВКИ</div>
                 {searchResults.orders.map(r => (
                   <div key={r.id} className="search-row" onClick={() => { onNavigate(`/orders/${r.id}`); onCloseSearch(); }}>
-                    <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'#1366F0' }}>{r.number}</span>
+                    <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'#1366F0' }}>{r.order_number}</span>
                     <span style={{ flex:1, fontSize:12.5, color:'#5A6573' }}>{r.client_name} · {r.load_address} → {r.unload_address}</span>
                   </div>
                 ))}

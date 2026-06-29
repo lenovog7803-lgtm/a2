@@ -82,7 +82,7 @@ export default function OrderDetail() {
             <div className="hero-card-content">
               <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:16 }}>
                 <div>
-                  <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'rgba(255,255,255,0.6)' }}>{order.number}</span>
+                  <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'rgba(255,255,255,0.6)' }}>{order.order_number}</span>
                   <div style={{ fontFamily:'Onest', fontWeight:700, fontSize:24, color:'#fff', marginTop:6, letterSpacing:'-0.5px' }}>{route}</div>
                   <div style={{ fontSize:13, color:'rgba(255,255,255,0.6)', marginTop:6 }}>
                     {order.cargo}{order.weight ? ` · ${order.weight} т` : ''} · {loadDateFmt}

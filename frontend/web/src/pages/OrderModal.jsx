@@ -7,7 +7,7 @@ const STATUS_LABELS = { new: 'Новая', in_progress: 'В работе', deliv
 export default function OrderModal({ order, onClose, onSaved }) {
   const isEdit = !!order;
   const [form, setForm] = useState({
-    number: '', client_name: '', carrier_name: '',
+    order_number: '', client_name: '', carrier_name: '',
     load_address: '', unload_address: '',
     load_date: '', unload_date: '',
     client_rate: '', carrier_rate: '',
@@ -31,7 +31,7 @@ export default function OrderModal({ order, onClose, onSaved }) {
         weight: order.weight ?? '',
       }));
     } else {
-      api.orders.nextNumber().then(r => setForm(f => ({ ...f, number: r.number || '' }))).catch(() => {});
+      api.orders.nextNumber().then(r => setForm(f => ({ ...f, order_number: r.order_number || '' }))).catch(() => {});
     }
   }, []);
 
@@ -57,7 +57,7 @@ export default function OrderModal({ order, onClose, onSaved }) {
     <div className="modal-overlay">
       <div className="modal-box modal-box-wide">
         <div className="modal-header">
-          <div className="modal-title">{isEdit ? `Заявка ${order.number}` : 'Новая заявка'}</div>
+          <div className="modal-title">{isEdit ? `Заявка ${order.order_number}` : 'Новая заявка'}</div>
           <button className="modal-close" onClick={handleClose}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -68,7 +68,7 @@ export default function OrderModal({ order, onClose, onSaved }) {
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">Номер</label>
-              <input className="form-input" value={form.number} onChange={e => set('number', e.target.value)} placeholder="А2-001" />
+              <input className="form-input" value={form.order_number} onChange={e => set('order_number', e.target.value)} placeholder="З-001/2026" />
             </div>
             <div className="form-group">
               <label className="form-label">Статус</label>

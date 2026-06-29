@@ -28,7 +28,7 @@ export default function Orders() {
     if (status !== 'all' && o.status !== status) return false;
     if (payFilter === 'client_unpaid' && o.client_paid) return false;
     if (payFilter === 'carrier_unpaid' && o.carrier_paid) return false;
-    if (q && !`${o.number} ${o.client_name} ${o.load_address} ${o.unload_address}`.toLowerCase().includes(q)) return false;
+    if (q && !`${o.order_number} ${o.client_name} ${o.load_address} ${o.unload_address}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -116,7 +116,7 @@ function OrderRow({ o, onClick }) {
   return (
     <div className="orders-table-row" onClick={onClick}>
       <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-        <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'#0E1726' }}>{o.number}</span>
+        <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'#0E1726' }}>{o.order_number}</span>
         <span className="status-badge" style={{ color: sc.color, background: sc.bg }}>{sl}</span>
       </div>
       <div style={{ display:'flex', flexDirection:'column', gap:3, minWidth:0 }}>

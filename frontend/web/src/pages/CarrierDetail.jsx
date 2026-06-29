@@ -88,7 +88,7 @@ export default function CarrierDetail() {
               return (
                 <div key={o.id} style={{ display:'flex', alignItems:'center', gap:14, padding:'13px 22px', borderBottom:'1px solid rgba(14,23,38,0.05)', cursor:'pointer' }}
                   onClick={() => navigate(`/orders/${o.id}`)}>
-                  <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'#0E1726', flexShrink:0 }}>{o.number}</span>
+                  <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'#0E1726', flexShrink:0 }}>{o.order_number}</span>
                   <span className="status-badge" style={{ color: sc.color, background: sc.bg }}>{STATUS_LABELS[o.status]}</span>
                   <span style={{ flex:1, fontSize:13, color:'#5A6573', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                     {(o.load_address || '').split(',')[0]} → {(o.unload_address || '').split(',')[0]}
