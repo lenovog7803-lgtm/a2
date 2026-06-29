@@ -219,7 +219,12 @@ function PaymentsList({ payments, clients, title, colorScheme, onAdd, onDelete }
 function PaymentModal({ title, counterparties, counterpartyLabel, onClose, onSave }) {
   const [form, setForm] = useState({ counterparty_name: '', amount: '', date: new Date().toISOString().slice(0, 10), note: '' });
   const [saving, setSaving] = useState(false);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const [isDirty, setIsDirty] = useState(false);
+  const set = (k, v) => { setIsDirty(true); setForm(f => ({ ...f, [k]: v })); };
+  const handleClose = () => {
+    if (isDirty && !window.confirm('Закрыть без сохранения? Изменения будут потеряны.')) return;
+    onClose();
+  };
 
   async function handleSave(e) {
     e.preventDefault();
@@ -230,11 +235,11 @@ function PaymentModal({ title, counterparties, counterpartyLabel, onClose, onSav
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay">
       <div className="modal-box">
         <div className="modal-header">
           <div className="modal-title">{title}</div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={handleClose}>✕</button>
         </div>
         <form onSubmit={handleSave}>
           <div className="form-group">
@@ -257,7 +262,7 @@ function PaymentModal({ title, counterparties, counterpartyLabel, onClose, onSav
             <input className="form-input" value={form.note} onChange={e => set('note', e.target.value)} placeholder="Необязательно" />
           </div>
           <div style={{ display:'flex', gap:12 }}>
-            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={onClose}>Отмена</button>
+            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={handleClose}>Отмена</button>
             <button type="submit" className="btn-accent" style={{ flex:2, justifyContent:'center' }} disabled={saving}>{saving ? 'Сохранение…' : 'Сохранить'}</button>
           </div>
         </form>

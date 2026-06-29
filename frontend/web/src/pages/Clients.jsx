@@ -93,9 +93,14 @@ function ClientModal({ client, onClose, onSaved }) {
   const isEdit = !!client;
   const [form, setForm] = useState({ name:'', contact_person:'', phone:'', email:'', inn:'', city:'', address:'', payment_terms:'', notes:'' });
   const [saving, setSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => { if (isEdit) setForm(f => ({ ...f, ...client })); }, []);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k, v) => { setIsDirty(true); setForm(f => ({ ...f, [k]: v })); };
+  const handleClose = () => {
+    if (isDirty && !window.confirm('Закрыть без сохранения? Изменения будут потеряны.')) return;
+    onClose();
+  };
 
   async function handleSave(e) {
     e.preventDefault();
@@ -109,11 +114,11 @@ function ClientModal({ client, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay">
       <div className="modal-box">
         <div className="modal-header">
           <div className="modal-title">{isEdit ? 'Редактировать клиента' : 'Новый клиент'}</div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={handleClose}>✕</button>
         </div>
         <form onSubmit={handleSave}>
           <div className="form-group">
@@ -159,7 +164,7 @@ function ClientModal({ client, onClose, onSaved }) {
             <textarea className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} style={{ resize:'vertical' }} />
           </div>
           <div style={{ display:'flex', gap:12 }}>
-            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={onClose}>Отмена</button>
+            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={handleClose}>Отмена</button>
             <button type="submit" className="btn-accent" style={{ flex:2, justifyContent:'center' }} disabled={saving}>{saving ? 'Сохранение…' : isEdit ? 'Сохранить' : 'Создать'}</button>
           </div>
         </form>

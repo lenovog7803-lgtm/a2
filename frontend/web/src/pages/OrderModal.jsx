@@ -17,6 +17,7 @@ export default function OrderModal({ order, onClose, onSaved }) {
     notes: '',
   });
   const [saving, setSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [clients, setClients] = useState([]);
   const [carriers, setCarriers] = useState([]);
 
@@ -34,7 +35,11 @@ export default function OrderModal({ order, onClose, onSaved }) {
     }
   }, []);
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k, v) => { setIsDirty(true); setForm(f => ({ ...f, [k]: v })); };
+  const handleClose = () => {
+    if (isDirty && !window.confirm('Закрыть без сохранения? Изменения будут потеряны.')) return;
+    onClose();
+  };
 
   async function handleSave(e) {
     e.preventDefault();
@@ -49,11 +54,11 @@ export default function OrderModal({ order, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay">
       <div className="modal-box modal-box-wide">
         <div className="modal-header">
           <div className="modal-title">{isEdit ? `Заявка ${order.number}` : 'Новая заявка'}</div>
-          <button className="modal-close" onClick={onClose}>
+          <button className="modal-close" onClick={handleClose}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -159,7 +164,7 @@ export default function OrderModal({ order, onClose, onSaved }) {
             </label>
           </div>
           <div style={{ display:'flex', gap:12 }}>
-            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={onClose}>Отмена</button>
+            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={handleClose}>Отмена</button>
             <button type="submit" className="btn-accent" style={{ flex:2, justifyContent:'center' }} disabled={saving}>
               {saving ? 'Сохранение…' : isEdit ? 'Сохранить изменения' : 'Создать заявку'}
             </button>

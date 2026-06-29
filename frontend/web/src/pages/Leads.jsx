@@ -239,11 +239,16 @@ function LeadModal({ lead, onClose, onSaved }) {
     industry:'', status:'new', next_call:'', source:'', notes:'',
   });
   const [saving, setSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
     if (isEdit) setForm(f => ({ ...f, ...lead, next_call: lead.next_call ? lead.next_call.slice(0,16) : '' }));
   }, []);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k, v) => { setIsDirty(true); setForm(f => ({ ...f, [k]: v })); };
+  const handleClose = () => {
+    if (isDirty && !window.confirm('Закрыть без сохранения? Изменения будут потеряны.')) return;
+    onClose();
+  };
 
   async function handleSave(e) {
     e.preventDefault();
@@ -257,11 +262,11 @@ function LeadModal({ lead, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay">
       <div className="modal-box">
         <div className="modal-header">
           <div className="modal-title">{isEdit ? 'Редактировать лид' : 'Новый лид'}</div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={handleClose}>✕</button>
         </div>
         <form onSubmit={handleSave}>
           <div className="form-group">
@@ -305,7 +310,7 @@ function LeadModal({ lead, onClose, onSaved }) {
             <textarea className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} style={{ resize:'vertical' }} />
           </div>
           <div style={{ display:'flex', gap:12 }}>
-            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={onClose}>Отмена</button>
+            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={handleClose}>Отмена</button>
             <button type="submit" className="btn-accent" style={{ flex:2, justifyContent:'center' }} disabled={saving}>{saving ? 'Сохранение…' : isEdit ? 'Сохранить' : 'Создать'}</button>
           </div>
         </form>
@@ -318,6 +323,11 @@ function NoteModal({ lead, onClose, onSaved }) {
   const [text, setText] = useState('');
   const [nextCall, setNextCall] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const handleClose = () => {
+    if (text.trim() && !window.confirm('Закрыть без сохранения? Текст заметки будет потерян.')) return;
+    onClose();
+  };
 
   async function handleSave(e) {
     e.preventDefault();
@@ -332,11 +342,11 @@ function NoteModal({ lead, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay">
       <div className="modal-box">
         <div className="modal-header">
           <div className="modal-title">Заметка по звонку</div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={handleClose}>✕</button>
         </div>
         <div style={{ fontSize:14, color:'#5A6573', marginBottom:20 }}>{lead.company_name} · {lead.contact_name}</div>
         <form onSubmit={handleSave}>
@@ -349,7 +359,7 @@ function NoteModal({ lead, onClose, onSaved }) {
             <input className="form-input" type="datetime-local" value={nextCall} onChange={e => setNextCall(e.target.value)} />
           </div>
           <div style={{ display:'flex', gap:12 }}>
-            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={onClose}>Отмена</button>
+            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={handleClose}>Отмена</button>
             <button type="submit" className="btn-accent" style={{ flex:2, justifyContent:'center' }} disabled={saving}>{saving ? 'Сохранение…' : 'Сохранить заметку'}</button>
           </div>
         </form>

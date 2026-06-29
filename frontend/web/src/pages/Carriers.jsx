@@ -88,9 +88,14 @@ function CarrierModal({ carrier, onClose, onSaved }) {
   const isEdit = !!carrier;
   const [form, setForm] = useState({ company_name:'', driver_name:'', phone:'', email:'', plate:'', vehicle_type:'', capacity:'', rating:'', notes:'' });
   const [saving, setSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => { if (isEdit) setForm(f => ({ ...f, ...carrier })); }, []);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k, v) => { setIsDirty(true); setForm(f => ({ ...f, [k]: v })); };
+  const handleClose = () => {
+    if (isDirty && !window.confirm('Закрыть без сохранения? Изменения будут потеряны.')) return;
+    onClose();
+  };
 
   async function handleSave(e) {
     e.preventDefault();
@@ -104,11 +109,11 @@ function CarrierModal({ carrier, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay">
       <div className="modal-box">
         <div className="modal-header">
           <div className="modal-title">{isEdit ? 'Редактировать перевозчика' : 'Новый перевозчик'}</div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={handleClose}>✕</button>
         </div>
         <form onSubmit={handleSave}>
           <div className="form-group">
@@ -150,7 +155,7 @@ function CarrierModal({ carrier, onClose, onSaved }) {
             <textarea className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} style={{ resize:'vertical' }} />
           </div>
           <div style={{ display:'flex', gap:12 }}>
-            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={onClose}>Отмена</button>
+            <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={handleClose}>Отмена</button>
             <button type="submit" className="btn-accent" style={{ flex:2, justifyContent:'center' }} disabled={saving}>{saving ? 'Сохранение…' : isEdit ? 'Сохранить' : 'Создать'}</button>
           </div>
         </form>
