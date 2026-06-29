@@ -369,10 +369,15 @@ class SheetsImporter:
         client_idx = {c["name"].lower(): c["id"] for c in clients}
         carrier_idx = {c["company_name"].lower(): c["id"] for c in carriers}
         out = []
+        seen: set = set()
         for r in rows[4:]:
             obj = parse_order(r, client_idx, carrier_idx)
             if not obj:
                 continue
+            num = obj.get("order_number", "")
+            if num in seen:
+                continue
+            seen.add(num)
             out.append(obj)
         return out
 
@@ -449,13 +454,15 @@ async def run_import(db) -> Dict[str, Any]:
             crm_status = existing.get("status", "")
             if crm_status in ("done", "cancelled", "in_progress") and order.get("status") == "new":
                 order["status"] = crm_status
-            # Preserve CRM-only fields
+            # Preserve CRM-only fields and existing id (avoid breaking references)
+            order["id"] = existing.get("id", order["id"])
             for field in _CRM_ONLY_ORDER_FIELDS:
                 if field in existing and existing[field]:
                     order[field] = existing[field]
             await db.orders.replace_one({"order_number": num}, order, upsert=True)
         else:
-            await db.orders.insert_one(order)
+            # Use replace_one+upsert instead of insert_one to be idempotent
+            await db.orders.replace_one({"order_number": num}, order, upsert=True)
 
     # Remove orders that no longer exist in Sheet (soft check — only if sheet has data)
     if orders:

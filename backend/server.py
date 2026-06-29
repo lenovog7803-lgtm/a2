@@ -1361,19 +1361,18 @@ async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks,
     order_data = payload.dict()
     order_data["created_by"] = current_user["id"] if current_user else "admin"
     if not order_data.get("order_number"):
-        last_order = await db.orders.find_one(
-            {"deleted": {"$ne": True}, "order_number": {"$regex": "^З-"}},
-            sort=[("order_number", -1)]
-        )
-        year = datetime.utcnow().year
-        if last_order and last_order.get("order_number"):
-            try:
-                num = int(last_order["order_number"].split("-")[1].split("/")[0])
-                order_data["order_number"] = f"З-{num + 1}/{year}"
-            except Exception:
-                order_data["order_number"] = f"З-1/{year}"
-        else:
-            order_data["order_number"] = f"З-1/{year}"
+        import re as _re
+        year = datetime.now(timezone.utc).year
+        all_nums = await db.orders.find(
+            {"deleted": {"$ne": True}}, {"_id": 0, "order_number": 1}
+        ).to_list(10000)
+        _pat = _re.compile(r"[ЗЗз3]\s*[-–—]\s*(\d+)\s*/\s*(\d{4})", _re.IGNORECASE)
+        max_num = 0
+        for _d in all_nums:
+            _m = _pat.search(_d.get("order_number", "") or "")
+            if _m and int(_m.group(2)) == year and int(_m.group(1)) > max_num:
+                max_num = int(_m.group(1))
+        order_data["order_number"] = f"З-{max_num + 1:03d}/{year}"
     obj = Order(**order_data)
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())
