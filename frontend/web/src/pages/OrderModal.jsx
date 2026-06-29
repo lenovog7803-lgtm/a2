@@ -161,7 +161,7 @@ export default function OrderModal({ order, onClose, onSaved }) {
           <div style={{ display:'flex', gap:12 }}>
             <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={onClose}>Отмена</button>
             <button type="submit" className="btn-accent" style={{ flex:2, justifyContent:'center' }} disabled={saving}>
-              {saving ? 'Сохранение…' : isEdit ? 'Сохранить' : 'Создать заявку'}
+              {saving ? 'Сохранение…' : isEdit ? 'Сохранить изменения' : 'Создать заявку'}
             </button>
           </div>
         </form>
