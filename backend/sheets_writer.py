@@ -135,18 +135,19 @@ def client_cells(c: Dict[str, Any]) -> Dict[int, Any]:
 
 def carrier_cells(cr: Dict[str, Any]) -> Dict[int, Any]:
     return {
-        1:  cr.get('company_name', ''),
-        2:  cr.get('driver_name', ''),
-        3:  cr.get('phone', ''),
-        4:  cr.get('email', ''),
-        5:  cr.get('vehicle_type', ''),
-        6:  cr.get('capacity_tons', '') or '',
-        7:  cr.get('legal_address', ''),
-        8:  cr.get('plate', ''),
-        9:  cr.get('inn', ''),
-        11: cr.get('bank_account', ''),
-        12: cr.get('bank_name', ''),
-        13: cr.get('bank_bik', ''),
+        1:  cr.get('company_name', ''),                                          # A
+        2:  cr.get('driver_name', ''),                                           # B
+        3:  cr.get('vehicle_type', ''),                                          # C
+        4:  str(cr.get('capacity_tons', '') or ''),                              # D
+        5:  cr.get('address') or cr.get('legal_address', ''),                   # E Юр. адрес
+        6:  cr.get('phone', ''),                                                 # F
+        7:  cr.get('unp') or cr.get('inn', ''),                                  # G УНП
+        8:  cr.get('postal_address', ''),                                        # H Почт. адрес
+        9:  cr.get('rs') or cr.get('bank_account', ''),                          # I Р/С
+        10: cr.get('bank') or cr.get('bank_name', ''),                           # J Банк
+        11: cr.get('bik') or cr.get('bank_bik', ''),                             # K БИК
+        12: cr.get('director', ''),                                              # L Директор
+        13: cr.get('basis', ''),                                                 # M Основание
     }
 
 
