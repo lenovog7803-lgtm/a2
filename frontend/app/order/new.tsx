@@ -35,7 +35,8 @@ const TABS = [
 export default function NewOrder() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { duplicateFrom } = useLocalSearchParams<{ duplicateFrom?: string }>();
+  const { duplicateFrom, editFrom } = useLocalSearchParams<{ duplicateFrom?: string; editFrom?: string }>();
+  const isEditMode = !!editFrom;
   const [clients, setClients] = useState<any[]>([]);
   const [carriers, setCarriers] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
@@ -54,6 +55,16 @@ export default function NewOrder() {
       console.log('[NewOrder] getNextNumber response:', nn);
       setClients(c);
       setCarriers(cr);
+
+      if (editFrom) {
+        try {
+          const source = await api.orders.get(editFrom);
+          setData({ ...EMPTY, ...source });
+        } catch (e: any) {
+          Alert.alert('Ошибка', 'Не удалось загрузить заявку: ' + e.message);
+        }
+        return;
+      }
 
       if (duplicateFrom) {
         try {
@@ -138,8 +149,12 @@ export default function NewOrder() {
     }
     setSaving(true);
     try {
-      await api.orders.create(data);
-      await AsyncStorage.removeItem(DRAFT_KEY);
+      if (isEditMode && data.id) {
+        await api.orders.update(data.id, data);
+      } else {
+        await api.orders.create(data);
+        await AsyncStorage.removeItem(DRAFT_KEY);
+      }
       router.back();
     } catch (e: any) {
       Alert.alert('Ошибка', e.message);
@@ -162,7 +177,7 @@ export default function NewOrder() {
           </TouchableOpacity>
           <View>
             <Text style={{ fontSize: 20, fontWeight: '700', color: theme.colors.textPrimary, letterSpacing: -0.4 }}>
-              {duplicateFrom ? 'Дублирование заявки' : 'Создание новой заявки'}
+              {isEditMode ? 'Редактирование заявки' : duplicateFrom ? 'Дублирование заявки' : 'Создание новой заявки'}
             </Text>
             <Text style={{ fontSize: 11, color: theme.colors.textTertiary, marginTop: 1 }}>Заполните детали перевозки</Text>
           </View>
@@ -289,8 +304,10 @@ export default function NewOrder() {
         >
           {saving ? <ActivityIndicator color="#fff" /> : (
             <>
-              <Plus size={16} color="#fff" strokeWidth={2.5} />
-              <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>Создать заявку</Text>
+              {!isEditMode && <Plus size={16} color="#fff" strokeWidth={2.5} />}
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
+                {isEditMode ? 'Сохранить изменения' : 'Создать заявку →'}
+              </Text>
             </>
           )}
         </TouchableOpacity>

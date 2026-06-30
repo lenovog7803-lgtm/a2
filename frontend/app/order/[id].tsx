@@ -664,7 +664,7 @@ export default function OrderDetail() {
             style={{ backgroundColor: theme.colors.accent, borderRadius: 14, paddingVertical: 16, alignItems: 'center', opacity: saving ? 0.6 : 1, shadowColor: theme.colors.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 }}
             activeOpacity={0.8}
           >
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Сохранить</Text>}
+            {saving ? <ActivityIndicator color="#fff" /> : <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Сохранить изменения</Text>}
           </TouchableOpacity>
         </View>
       </ScrollView>
