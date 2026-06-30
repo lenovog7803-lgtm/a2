@@ -156,7 +156,11 @@ function CarrierModal({ carrier, onClose, onSaved }) {
           </div>
           <div style={{ display:'flex', gap:12 }}>
             <button type="button" className="btn-ghost" style={{ flex:1 }} onClick={handleClose}>Отмена</button>
-            <button type="submit" className="btn-accent" style={{ flex:2, justifyContent:'center' }} disabled={saving}>{saving ? 'Сохранение…' : isEdit ? 'Сохранить' : 'Создать'}</button>
+            <button type="submit" className="btn-accent" disabled={saving}
+              style={{ flex:2, justifyContent:'center', transition:'opacity .2s, box-shadow .2s',
+                opacity: isDirty ? 1 : 0.55, boxShadow: isDirty ? '0 4px 16px rgba(19,102,240,0.45)' : 'none' }}>
+              {saving ? 'Сохранение…' : isEdit ? 'Сохранить изменения' : 'Создать'}
+            </button>
           </div>
         </form>
       </div>
