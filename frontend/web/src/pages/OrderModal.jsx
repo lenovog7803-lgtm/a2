@@ -169,7 +169,7 @@ export default function OrderModal({ order, onClose, onSaved }) {
               style={{ flex:2, justifyContent:'center', transition:'opacity .2s, box-shadow .2s',
                 opacity: isDirty ? 1 : 0.55,
                 boxShadow: isDirty ? '0 4px 16px rgba(19,102,240,0.45)' : 'none' }}>
-              {saving ? 'Сохранение…' : isEdit ? 'Сохранить изменения' : 'Создать заявку'}
+              {saving ? 'Сохранение…' : isEdit ? 'Сохранить' : 'Создать заявку'}
             </button>
           </div>
         </form>
