@@ -13,6 +13,7 @@ export default function Orders() {
   const [status, setStatus] = useState('all');
   const [payFilter, setPayFilter] = useState('all');
   const [showModal, setShowModal] = useState(false);
+  const [editOrder, setEditOrder] = useState(null);
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -55,7 +56,7 @@ export default function Orders() {
             Перевозчик не оплачен
           </div>
         </div>
-        <button className="btn-dark" onClick={() => setShowModal(true)}>
+        <button className="btn-dark" onClick={() => { setEditOrder(null); setShowModal(true); }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
@@ -85,18 +86,23 @@ export default function Orders() {
             <span />
           </div>
           {filtered.length === 0 && <div className="empty-state">Заявок нет</div>}
-          {filtered.map(o => <OrderRow key={o.id} o={o} onClick={() => navigate(`/orders/${o.id}`)} />)}
+          {filtered.map(o => <OrderRow key={o.id} o={o}
+            onClick={() => navigate(`/orders/${o.id}`)}
+            onEdit={e => { e.stopPropagation(); setEditOrder(o); setShowModal(true); }} />)}
         </div>
       )}
 
       {showModal && (
-        <OrderModal onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); load(); }} />
+        <OrderModal
+          order={editOrder}
+          onClose={() => { setShowModal(false); setEditOrder(null); }}
+          onSaved={() => { setShowModal(false); setEditOrder(null); load(); }} />
       )}
     </div>
   );
 }
 
-function OrderRow({ o, onClick }) {
+function OrderRow({ o, onClick, onEdit }) {
   const sc = STATUS_COLORS[o.status] || STATUS_COLORS.new;
   const sl = STATUS_LABELS[o.status] || o.status;
   const margin = Number(o.margin ?? 0);
@@ -137,7 +143,14 @@ function OrderRow({ o, onClick }) {
         <span className={`pay-pill ${o.client_paid ? 'paid' : 'unpaid'}`}>К</span>
         <span className={`pay-pill ${o.carrier_paid ? 'paid' : 'unpaid'}`}>П</span>
       </div>
-      <div style={{ display:'flex', justifyContent:'flex-end' }}>
+      <div style={{ display:'flex', justifyContent:'flex-end', alignItems:'center', gap:4 }}>
+        <button onClick={onEdit} style={{ background:'none', border:'none', cursor:'pointer', color:'#A6AEB8', padding:'4px 6px', borderRadius:8 }}
+          title="Редактировать" onMouseEnter={e => e.currentTarget.style.color='#1366F0'} onMouseLeave={e => e.currentTarget.style.color='#A6AEB8'}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#C4CAD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="9 18 15 12 9 6"/>
         </svg>
