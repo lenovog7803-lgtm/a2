@@ -52,8 +52,8 @@ export default function OrderDetail() {
   const margin = Number(order.margin ?? (Number(order.client_rate) - Number(order.carrier_rate)));
   const cr = Number(order.client_rate ?? 0);
   const pct = cr > 0 ? ((margin / cr) * 100).toFixed(1) + '%' : '—';
-  const loadCity = (order.load_address || '').split(',')[0];
-  const unloadCity = (order.unload_address || '').split(',')[0];
+  const loadCity = (order.route_from_address || '').split(',')[0];
+  const unloadCity = (order.route_to_address || '').split(',')[0];
   const route = `${loadCity} — ${unloadCity}`;
   const loadDateFmt = order.load_date ? new Date(order.load_date).toLocaleDateString('ru-RU', { day:'numeric', month:'long' }) : '—';
   const unloadDateFmt = order.unload_date ? new Date(order.unload_date).toLocaleDateString('ru-RU', { day:'numeric', month:'long' }) : '—';
@@ -169,11 +169,11 @@ export default function OrderDetail() {
               <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'space-between', gap:14 }}>
                 <div>
                   <div style={{ fontSize:11, color:'#8A93A0', fontWeight:500 }}>Загрузка · {loadDateFmt}</div>
-                  <div style={{ fontSize:14, fontWeight:600, color:'#0E1726', marginTop:2 }}>{order.load_address || '—'}</div>
+                  <div style={{ fontSize:14, fontWeight:600, color:'#0E1726', marginTop:2 }}>{order.route_from_address || '—'}</div>
                 </div>
                 <div>
                   <div style={{ fontSize:11, color:'#8A93A0', fontWeight:500 }}>Выгрузка · {unloadDateFmt}</div>
-                  <div style={{ fontSize:14, fontWeight:600, color:'#0E1726', marginTop:2 }}>{order.unload_address || '—'}</div>
+                  <div style={{ fontSize:14, fontWeight:600, color:'#0E1726', marginTop:2 }}>{order.route_to_address || '—'}</div>
                 </div>
               </div>
             </div>

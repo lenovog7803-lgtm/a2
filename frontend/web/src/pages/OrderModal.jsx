@@ -8,7 +8,7 @@ export default function OrderModal({ order, onClose, onSaved }) {
   const isEdit = !!order;
   const [form, setForm] = useState({
     order_number: '', client_name: '', carrier_name: '',
-    load_address: '', unload_address: '',
+    route_from_address: '', route_to_address: '',
     load_date: '', unload_date: '',
     client_rate: '', carrier_rate: '',
     cargo: '', weight: '',
@@ -92,11 +92,11 @@ export default function OrderModal({ order, onClose, onSaved }) {
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">Адрес загрузки</label>
-              <input className="form-input" value={form.load_address} onChange={e => set('load_address', e.target.value)} placeholder="Город, улица" />
+              <input className="form-input" value={form.route_from_address} onChange={e => set('route_from_address', e.target.value)} placeholder="Город, улица" />
             </div>
             <div className="form-group">
               <label className="form-label">Адрес выгрузки</label>
-              <input className="form-input" value={form.unload_address} onChange={e => set('unload_address', e.target.value)} placeholder="Город, улица" />
+              <input className="form-input" value={form.route_to_address} onChange={e => set('route_to_address', e.target.value)} placeholder="Город, улица" />
             </div>
           </div>
           <div className="form-row">

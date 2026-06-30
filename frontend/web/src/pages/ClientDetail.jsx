@@ -94,7 +94,7 @@ export default function ClientDetail() {
                   <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'#0E1726', flexShrink:0 }}>{o.order_number}</span>
                   <span className="status-badge" style={{ color: sc.color, background: sc.bg }}>{STATUS_LABELS[o.status]}</span>
                   <span style={{ flex:1, fontSize:13, color:'#5A6573', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                    {(o.load_address || '').split(',')[0]} → {(o.unload_address || '').split(',')[0]}
+                    {(o.route_from_address || '').split(',')[0]} → {(o.route_to_address || '').split(',')[0]}
                   </span>
                   <span style={{ fontFamily:'JetBrains Mono', fontSize:13, fontWeight:600, color:'#1E9E5A', flexShrink:0 }}>{fmtMoney(margin)} Br</span>
                   <span className={`pay-pill ${o.client_paid ? 'paid' : 'unpaid'}`} style={{ flexShrink:0 }}>К</span>

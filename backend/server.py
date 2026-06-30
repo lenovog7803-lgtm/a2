@@ -432,6 +432,10 @@ class Client(BaseModel):
     cargo_types: Optional[str] = ""
     directions: Optional[str] = ""
     notes: Optional[str] = ""
+    city: Optional[str] = ""
+    address: Optional[str] = ""
+    total_revenue: Optional[float] = 0
+    orders_count: Optional[int] = 0
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -455,6 +459,8 @@ class ClientPayload(BaseModel):
     cargo_types: Optional[str] = ""
     directions: Optional[str] = ""
     notes: Optional[str] = ""
+    city: Optional[str] = ""
+    address: Optional[str] = ""
 
 
 class Carrier(BaseModel):
@@ -810,6 +816,20 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
         await db[collection].delete_one({"id": item_id})
         return {"ok": True}
 
+
+@api_router.get("/clients", response_model=List[Client])
+async def list_clients(_: Optional[dict] = Depends(_get_user_from_token)):
+    docs = await db.clients.find({"deleted": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(50000)
+    agg = await db.orders.aggregate([
+        {"$match": {"deleted": {"$ne": True}}},
+        {"$group": {"_id": "$client_name", "total_revenue": {"$sum": "$client_rate"}, "orders_count": {"$sum": 1}}}
+    ]).to_list(10000)
+    stats = {s["_id"]: s for s in agg if s["_id"]}
+    for doc in docs:
+        s = stats.get(doc.get("name", ""), {})
+        doc["total_revenue"] = s.get("total_revenue", 0)
+        doc["orders_count"] = s.get("orders_count", 0)
+    return [Client(**d) for d in docs]
 
 make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True, soft_delete=True)
 make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True, soft_delete=True)

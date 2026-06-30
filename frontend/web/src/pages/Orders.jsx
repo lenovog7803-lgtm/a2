@@ -28,7 +28,7 @@ export default function Orders() {
     if (status !== 'all' && o.status !== status) return false;
     if (payFilter === 'client_unpaid' && o.client_paid) return false;
     if (payFilter === 'carrier_unpaid' && o.carrier_paid) return false;
-    if (q && !`${o.order_number} ${o.client_name} ${o.load_address} ${o.unload_address}`.toLowerCase().includes(q)) return false;
+    if (q && !`${o.order_number} ${o.client_name} ${o.route_from_address} ${o.route_to_address}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -105,8 +105,8 @@ function OrderRow({ o, onClick }) {
   const idx = avatarIdx(o.client_name || '');
   const [a, b] = GRADIENTS[idx];
 
-  const loadCity = (o.load_address || '').split(',')[0];
-  const unloadCity = (o.unload_address || '').split(',')[0];
+  const loadCity = (o.route_from_address || '').split(',')[0];
+  const unloadCity = (o.route_to_address || '').split(',')[0];
   const route = `${loadCity} → ${unloadCity}`;
 
   const loadDate = o.load_date ? new Date(o.load_date).toLocaleDateString('ru-RU', { day:'numeric', month:'short' }) : '';
