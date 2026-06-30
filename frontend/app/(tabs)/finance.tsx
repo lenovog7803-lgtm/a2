@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput, Alert, Linking } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from 'expo-router';
 import { Plus, X, TrendingUp, TrendingDown } from 'lucide-react-native';
@@ -19,7 +19,7 @@ const initials=(name:string)=>{
   return ((w[0]?.[0]||'')+(w[1]?.[0]||w[0]?.[1]||'')).toUpperCase();
 };
 
-const TABS = ['Движение средств','Поступления','Выплаты'];
+const TABS = ['Движение средств','Поступления','Выплаты','Акт сверки'];
 
 export default function Finance() {
   const [loading, setLoading] = useState(true);
@@ -29,20 +29,42 @@ export default function Finance() {
   const [tab, setTab] = useState(0);
   const [showInModal, setShowInModal] = useState(false);
   const [showOutModal, setShowOutModal] = useState(false);
+  const [clients, setClients] = useState<any[]>([]);
+  const [recClientId, setRecClientId] = useState('');
+  const [generating, setGenerating] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ords, pIn, pOut] = await Promise.all([
+      const [ords, pIn, pOut, cList] = await Promise.all([
         api.orders.list().catch(()=>[]),
         api.paymentsIn.list().catch(()=>[]),
         api.paymentsOut.list().catch(()=>[]),
+        api.clients.list().catch(()=>[]),
       ]);
-      setOrders(ords); setPaymentsIn(pIn); setPaymentsOut(pOut);
+      setOrders(ords); setPaymentsIn(pIn); setPaymentsOut(pOut); setClients(cList);
     } catch {} finally { setLoading(false); }
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const handleGenerateAct = async () => {
+    if (!recClientId) { Alert.alert('Выберите клиента'); return; }
+    setGenerating(true);
+    try {
+      const result = await api.clients.generateActs(recClientId);
+      if (result?.url) {
+        await Linking.openURL(result.url);
+        Alert.alert('Готово', `${result.created ?? ''} актов объединены в один документ.`);
+      } else {
+        Alert.alert('Готово', 'Документ создан');
+      }
+    } catch (e: any) {
+      Alert.alert('Ошибка', e.message || 'Не удалось создать акт');
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const nonCancelled = orders.filter((o:any)=>o.status!=='cancelled');
   const sum=(arr:any[],f:(o:any)=>number)=>arr.reduce((a,o)=>a+f(o),0);
@@ -112,8 +134,29 @@ export default function Finance() {
           <LedgerList ledger={ledger} />
         ) : tab===1 ? (
           <PaymentsList items={paymentsIn} sign={1} onDelete={async(id)=>{try{await api.paymentsIn.remove(id);load();}catch{}}} />
-        ) : (
+        ) : tab===2 ? (
           <PaymentsList items={paymentsOut} sign={-1} onDelete={async(id)=>{try{await api.paymentsOut.remove(id);load();}catch{}}} />
+        ) : (
+          <View style={styles.glassCard}>
+            <Text style={styles.sectionTitle}>Акт сверки</Text>
+            <Text style={styles.sectionSub}>Объединяет все акты клиента в один Google Документ</Text>
+            <Text style={[styles.formLabel,{marginTop:16,marginBottom:8}]}>КЛИЕНТ</Text>
+            <View style={styles.pickerWrap}>
+              {clients.map(c=>(
+                <TouchableOpacity key={c.id} onPress={()=>setRecClientId(c.id)}
+                  style={[styles.pickerItem, recClientId===c.id && styles.pickerItemActive]}>
+                  <Text style={[styles.pickerItemText, recClientId===c.id && styles.pickerItemTextActive]} numberOfLines={1}>{c.name}</Text>
+                </TouchableOpacity>
+              ))}
+              {clients.length===0 && <Text style={styles.empty}>Нет клиентов</Text>}
+            </View>
+            <TouchableOpacity onPress={handleGenerateAct} disabled={generating || !recClientId}
+              style={[styles.saveBtn,{marginTop:20,opacity:recClientId&&!generating?1:0.5}]}>
+              {generating
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={styles.saveText}>Сформировать акт сверки</Text>}
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -252,6 +295,11 @@ const styles = StyleSheet.create({
   ledgerAmt:{fontFamily:'Onest_700Bold',fontSize:14,flexShrink:0,minWidth:110,textAlign:'right'},
   delBtn:{width:30,height:30,borderRadius:8,backgroundColor:'rgba(224,71,59,0.08)',alignItems:'center',justifyContent:'center',flexShrink:0},
   empty:{fontFamily:'Manrope_400Regular',fontSize:13.5,color:'#A6AEB8',textAlign:'center',padding:40},
+  pickerWrap:{gap:8},
+  pickerItem:{paddingHorizontal:14,paddingVertical:11,borderRadius:12,borderWidth:1,borderColor:'rgba(14,23,38,0.12)',backgroundColor:'rgba(255,255,255,0.6)'},
+  pickerItemActive:{borderColor:'#1366F0',backgroundColor:'rgba(19,102,240,0.08)'},
+  pickerItemText:{fontFamily:'Manrope_500Medium',fontSize:13.5,color:'#5A6573'},
+  pickerItemTextActive:{color:'#1366F0',fontWeight:'700' as any},
   overlay:{flex:1,backgroundColor:'rgba(20,28,46,0.34)',alignItems:'center',justifyContent:'center',padding:28},
   modal:{width:'100%',maxWidth:480,backgroundColor:'rgba(255,255,255,0.96)',borderRadius:26,borderWidth:1,borderColor:'rgba(255,255,255,0.9)',shadowColor:'#0E1726',shadowOffset:{width:0,height:40},shadowOpacity:0.4,shadowRadius:60,padding:24},
   modalHeader:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:20,paddingBottom:16,borderBottomWidth:1,borderBottomColor:'rgba(14,23,38,0.07)'},
