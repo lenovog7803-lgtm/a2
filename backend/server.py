@@ -2959,13 +2959,17 @@ def _fill_table_rows(docs_svc, doc_id: str, left_rows: list, right_rows: list):
         if i < len(left_rows):
             lr = left_rows[i]
             if ncols > 0: vals[0] = lr.get("date", "")
-            if ncols > 1: vals[1] = lr.get("pp_number", "") or lr.get("doc_number", "")
-            if ncols > 2: vals[2] = f"{lr.get('amount', 0):.2f}".replace(".", ",")
+            if ncols > 1: vals[1] = lr.get("doc", "") or lr.get("pp_number", "") or lr.get("doc_number", "")
+            if ncols > 2:
+                raw = lr.get("sum") if "sum" in lr else lr.get("amount", 0)
+                vals[2] = raw if isinstance(raw, str) else f"{raw:.2f}".replace(".", ",")
         if i < len(right_rows):
             rr = right_rows[i]
             if ncols > 4: vals[4] = rr.get("date", "")
-            if ncols > 5: vals[5] = rr.get("doc_number", "") or rr.get("pp_number", "")
-            if ncols > 6: vals[6] = f"{rr.get('amount', 0):.2f}".replace(".", ",")
+            if ncols > 5: vals[5] = rr.get("doc", "") or rr.get("doc_number", "") or rr.get("pp_number", "")
+            if ncols > 6:
+                raw = rr.get("sum") if "sum" in rr else rr.get("amount", 0)
+                vals[6] = raw if isinstance(raw, str) else f"{raw:.2f}".replace(".", ",")
 
         for ci, cell in enumerate(cells):
             text = vals[ci] if ci < len(vals) else ""
@@ -3017,6 +3021,11 @@ def _fill_table_rows(docs_svc, doc_id: str, left_rows: list, right_rows: list):
         ]}).execute()
 
 
+async def _insert_reconciliation_table_rows(docs_svc, doc_id: str, left_rows: list, right_rows: list):
+    """Async wrapper around _fill_table_rows for reconciliation template."""
+    await asyncio.to_thread(_fill_table_rows, docs_svc, doc_id, left_rows, right_rows)
+
+
 def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> tuple:
     from googleapiclient.discovery import build
     from oauth_google import make_user_credentials
@@ -3037,56 +3046,29 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> tuple:
     ).execute()
     doc_id = copied["id"]
 
-    ob      = data.get("opening_balance", 0.0)
-    ob_side = data.get("opening_balance_side", "none")
-    cb      = data.get("closing_balance", 0.0)
-    cb_side = data.get("closing_balance_side", "none")
+    ob         = data.get("opening_balance", 0.0)
+    cb         = data.get("closing_balance", 0.0)
+    left_total = data.get("left_total", 0)
+    right_total= data.get("right_total", 0)
 
-    cur_year            = str(datetime.now(timezone.utc).year)
-    date_from_str       = data.get("date_from", "")
-    date_to_str         = data.get("date_to", "")
-    opening_balance_str = _balance_str(ob, ob_side, cp_name)
-    closing_balance_str = _balance_str(cb, cb_side, cp_name)
-    left_total          = data.get("left_total", 0)
-    right_total         = data.get("right_total", 0)
+    cur_year      = str(datetime.now(timezone.utc).year)
+    date_from_str = data.get("date_from", "")
+    date_to_str   = data.get("date_to", "")
+
+    ob_str         = f"{abs(ob):.2f} BYN" if abs(ob) >= 0.005 else "0,00 BYN"
+    cb_str         = f"{abs(cb):.2f} BYN" if abs(cb) >= 0.005 else "0,00 BYN"
+    balance_side   = data.get("balance_side_text", "")
 
     requests = [
-        {"replaceAllText": {
-            "containsText": {"text": "{{КонтрагентНазвание}}", "matchCase": True},
-            "replaceText": cp_name,
-        }},
-        {"replaceAllText": {
-            "containsText": {"text": "{{ДатаНачало}}", "matchCase": True},
-            "replaceText": date_from_str,
-        }},
-        {"replaceAllText": {
-            "containsText": {"text": "{{ДатаКонец}}", "matchCase": True},
-            "replaceText": date_to_str,
-        }},
-        {"replaceAllText": {
-            "containsText": {"text": "{{СальдоНачало}}", "matchCase": True},
-            "replaceText": opening_balance_str,
-        }},
-        {"replaceAllText": {
-            "containsText": {"text": "{{ИтогоЛевые}}", "matchCase": True},
-            "replaceText": f"{left_total:.2f}".replace(".", ","),
-        }},
-        {"replaceAllText": {
-            "containsText": {"text": "{{ИтогоПравые}}", "matchCase": True},
-            "replaceText": f"{right_total:.2f}".replace(".", ","),
-        }},
-        {"replaceAllText": {
-            "containsText": {"text": "{{СальдоКонец}}", "matchCase": True},
-            "replaceText": closing_balance_str,
-        }},
-        {"replaceAllText": {
-            "containsText": {"text": "{{СальдоСторона}}", "matchCase": True},
-            "replaceText": "",
-        }},
-        {"replaceAllText": {
-            "containsText": {"text": "{{ГодДок}}", "matchCase": True},
-            "replaceText": cur_year,
-        }},
+        {"replaceAllText": {"containsText": {"text": "{{КонтрагентНазвание}}", "matchCase": True}, "replaceText": cp_name}},
+        {"replaceAllText": {"containsText": {"text": "{{ДатаНачало}}",          "matchCase": True}, "replaceText": date_from_str}},
+        {"replaceAllText": {"containsText": {"text": "{{ДатаКонец}}",           "matchCase": True}, "replaceText": date_to_str}},
+        {"replaceAllText": {"containsText": {"text": "{{СальдоНачало}}",        "matchCase": True}, "replaceText": ob_str}},
+        {"replaceAllText": {"containsText": {"text": "{{ИтогоЛевые}}",          "matchCase": True}, "replaceText": f"{left_total:.2f}".replace(".", ",")}},
+        {"replaceAllText": {"containsText": {"text": "{{ИтогоПравые}}",         "matchCase": True}, "replaceText": f"{right_total:.2f}".replace(".", ",")}},
+        {"replaceAllText": {"containsText": {"text": "{{СальдоКонец}}",         "matchCase": True}, "replaceText": cb_str}},
+        {"replaceAllText": {"containsText": {"text": "{{СальдоСторона}}",       "matchCase": True}, "replaceText": balance_side}},
+        {"replaceAllText": {"containsText": {"text": "{{ГодДок}}",              "matchCase": True}, "replaceText": cur_year}},
     ]
 
     docs_svc.documents().batchUpdate(
@@ -3102,174 +3084,149 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> tuple:
 
 @api_router.post("/reconciliation/generate")
 async def generate_reconciliation(payload: ReconciliationRequest):
-    print(f"[reconciliation] START type={payload.type} cid={payload.counterparty_id} period={payload.period} year={payload.year}")
-    now_dt = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
 
-    if payload.period == "year":
-        year = payload.year or now_dt.year
-        date_from    = f"{year}-01-01"
-        date_to      = f"{year}-12-31"
-        period_label = f"за {year} год"
+    # Period → date_from / date_to
+    if payload.period == "month":
+        start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_dt   = now
+    elif payload.period == "last_month":
+        first_this = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_dt     = first_this - timedelta(days=1)
+        start_dt   = end_dt.replace(day=1)
     elif payload.period == "quarter":
-        year    = payload.year    or now_dt.year
-        quarter = payload.quarter or 1
-        date_from, date_to = _quarter_dates(year, quarter)
-        period_label = f"за Q{quarter} {year}"
-    else:
-        date_from    = payload.date_from or ""
-        date_to      = payload.date_to   or ""
-        period_label = f"с {_fmt_date(date_from)} по {_fmt_date(date_to)}"
+        q_month  = (now.month - 1) // 3 * 3 + 1
+        start_dt = now.replace(month=q_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_dt   = now
+    elif payload.period == "year":
+        start_dt = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_dt   = now
+    else:  # "all"
+        start_dt = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        end_dt   = now
 
-    cid = payload.counterparty_id
+    date_from = start_dt.strftime("%Y-%m-%d")
+    date_to   = end_dt.strftime("%Y-%m-%d")
+    cid       = payload.counterparty_id
 
-    from bson import ObjectId
-
-    def _norm_date(v) -> str:
-        if isinstance(v, str): return v[:10]
-        if hasattr(v, 'strftime'): return v.strftime('%Y-%m-%d')
-        return ''
-
-    def _client_side(b: float) -> str:
-        if b > 0.005:  return "them"
-        if b < -0.005: return "us"
-        return "none"
-
-    def _carrier_side(b: float) -> str:
-        if b > 0.005:  return "us"
-        if b < -0.005: return "them"
-        return "none"
+    def _fmt(d):
+        try:
+            s = str(d).split("T")[0][:10]
+            y, m, day = s.split("-")
+            return f"{day}.{m}.{y}"
+        except Exception:
+            return str(d)[:10] if d else ""
 
     if payload.type == "client":
-        _client_q: dict = {"deleted": {"$ne": True}}
-        if payload.counterparty_name:
-            _client_q["$or"] = [{"id": cid}, {"name": payload.counterparty_name}]
-        else:
-            _client_q["id"] = cid
-        cp_doc = await db.clients.find_one(_client_q, {"_id": 0})
+        cp_doc = await db.clients.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
         if not cp_doc:
             raise HTTPException(404, "Клиент не найден")
         cp_name = payload.counterparty_name or cp_doc.get("name", "")
 
-        all_client_orders = await db.orders.find(
-            {"$or": [{"client_id": cid}, {"client_name": cp_name}],
-             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"}},
-            {"_id": 0, "order_number": 1, "unload_date": 1, "client_rate": 1},
-        ).to_list(10000)
-        print(f"[rec_debug] Всего заявок клиента: {len(all_client_orders)} (client_id={cid!r} OR client_name={cp_name!r})")
+        orders = await db.orders.find({
+            "$or": [{"client_id": cid}, {"client_name": cp_name}],
+            "load_date": {"$gte": date_from, "$lte": date_to},
+            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+        }).sort("load_date", 1).to_list(10000)
 
-        prior_orders = [o for o in all_client_orders if _norm_date(o.get("unload_date", "")) < date_from]
-        period_orders = sorted(
-            [o for o in all_client_orders
-             if date_from <= _norm_date(o.get("unload_date", "")) <= date_to],
-            key=lambda o: _norm_date(o.get("unload_date", "")),
+        payments = await db.payments_in.find({
+            "$or": [{"client_id": cid}, {"client_name": cp_name}],
+            "date": {"$gte": date_from, "$lte": date_to},
+        }).sort("date", 1).to_list(10000)
+
+        orders_before = await db.orders.find({
+            "$or": [{"client_id": cid}, {"client_name": cp_name}],
+            "load_date": {"$lt": date_from},
+            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+        }, {"_id": 0, "client_rate": 1}).to_list(10000)
+        pmts_before = await db.payments_in.find({
+            "$or": [{"client_id": cid}, {"client_name": cp_name}],
+            "date": {"$lt": date_from},
+        }, {"_id": 0, "amount": 1}).to_list(10000)
+
+        opening_balance = (
+            sum(float(o.get("client_rate") or 0) for o in orders_before)
+            - sum(float(p.get("amount") or 0) for p in pmts_before)
         )
-        print(f"[rec_debug] До периода: {len(prior_orders)}, в периоде: {len(period_orders)}")
 
-        all_client_pmts = await db.payments_in.find(
-            {"$or": [{"client_id": cid}, {"client_name": cp_name}]}
-        ).sort("date", 1).to_list(1000)
-        print(f"[rec_debug] Найдено поступлений: {len(all_client_pmts)} (client_id={cid!r} OR client_name={cp_name!r})")
-
-        prior_pmts_amt = sum(p.get("amount", 0) for p in all_client_pmts if _norm_date(p.get("date", "")) < date_from)
-        opening_balance = sum(o.get("client_rate", 0) for o in prior_orders) - prior_pmts_amt
-
-        period_pmts = [p for p in all_client_pmts if date_from <= _norm_date(p.get("date", "")) <= date_to]
-        print(f"[rec_debug] Поступления за период: {len(period_pmts)}")
-
-        right_rows = [
-            {"date": _fmt_date(o.get("unload_date", "")),
-             "doc_number": f"Акт {o.get('order_number','')} от {_fmt_date(o.get('unload_date',''))}",
-             "amount": o.get("client_rate", 0)}
-            for o in period_orders
-        ]
+        # Left = наши документы (заявки / отгрузки), Right = оплаты контрагента
         left_rows = [
-            {"date": _fmt_date(_norm_date(p.get("date", ""))),
-             "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(_norm_date(p.get('date','')))}",
-             "amount": p.get("amount", 0)}
-            for p in period_pmts
+            {"date": _fmt(o.get("load_date")), "doc": o.get("order_number", ""),
+             "sum": f"{float(o.get('client_rate') or 0):.2f}"}
+            for o in orders
         ]
-        ob_side = _client_side(opening_balance)
-        _side   = _client_side
+        right_rows = [
+            {"date": _fmt(p.get("date")), "doc": f"ПП {p.get('pp_number', '')} от {_fmt(p.get('date', ''))}",
+             "sum": f"{float(p.get('amount') or 0):.2f}"}
+            for p in payments
+        ]
+        total_charged = sum(float(o.get("client_rate") or 0) for o in orders)
+        total_paid    = sum(float(p.get("amount") or 0)    for p in payments)
 
     else:  # carrier
-        _carrier_q: dict = {"deleted": {"$ne": True}}
-        if payload.counterparty_name:
-            _carrier_q["$or"] = [{"id": cid}, {"company_name": payload.counterparty_name}]
-        else:
-            _carrier_q["id"] = cid
-        cp_doc = await db.carriers.find_one(_carrier_q, {"_id": 0})
+        cp_doc = await db.carriers.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
         if not cp_doc:
             raise HTTPException(404, "Перевозчик не найден")
-        cp_name = payload.counterparty_name or cp_doc.get("company_name", "")
+        cp_name = payload.counterparty_name or cp_doc.get("company_name", cp_doc.get("name", ""))
 
-        all_carrier_orders = await db.orders.find(
-            {"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
-             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"}},
-            {"_id": 0, "order_number": 1, "unload_date": 1, "carrier_rate": 1},
-        ).to_list(10000)
-        print(f"[rec_debug] Всего заявок перевозчика: {len(all_carrier_orders)} (carrier_id={cid!r} OR carrier_name={cp_name!r})")
+        orders = await db.orders.find({
+            "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
+            "load_date": {"$gte": date_from, "$lte": date_to},
+            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+        }).sort("load_date", 1).to_list(10000)
 
-        prior_orders = [o for o in all_carrier_orders if _norm_date(o.get("unload_date", "")) < date_from]
-        period_orders = sorted(
-            [o for o in all_carrier_orders
-             if date_from <= _norm_date(o.get("unload_date", "")) <= date_to],
-            key=lambda o: _norm_date(o.get("unload_date", "")),
+        payments = await db.payments_out.find({
+            "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
+            "date": {"$gte": date_from, "$lte": date_to},
+        }).sort("date", 1).to_list(10000)
+
+        orders_before = await db.orders.find({
+            "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
+            "load_date": {"$lt": date_from},
+            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+        }, {"_id": 0, "carrier_rate": 1}).to_list(10000)
+        pmts_before = await db.payments_out.find({
+            "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
+            "date": {"$lt": date_from},
+        }, {"_id": 0, "amount": 1}).to_list(10000)
+
+        opening_balance = (
+            sum(float(o.get("carrier_rate") or 0) for o in orders_before)
+            - sum(float(p.get("amount") or 0) for p in pmts_before)
         )
-        print(f"[rec_debug] До периода: {len(prior_orders)}, в периоде: {len(period_orders)}")
 
-        all_carrier_pmts = await db.payments_out.find(
-            {"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}]}
-        ).sort("date", 1).to_list(1000)
-        print(f"[rec_debug] Найдено списаний: {len(all_carrier_pmts)} (carrier_id={cid!r} OR carrier_name={cp_name!r})")
-
-        prior_pmts_amt = sum(p.get("amount", 0) for p in all_carrier_pmts if _norm_date(p.get("date", "")) < date_from)
-        opening_balance = sum(o.get("carrier_rate", 0) for o in prior_orders) - prior_pmts_amt
-
-        period_pmts = [p for p in all_carrier_pmts if date_from <= _norm_date(p.get("date", "")) <= date_to]
-        print(f"[rec_debug] Списания за период: {len(period_pmts)}")
-
-        right_rows = [
-            {"date": _fmt_date(o.get("unload_date", "")),
-             "doc_number": f"Акт {o.get('order_number','')} от {_fmt_date(o.get('unload_date',''))}",
-             "amount": o.get("carrier_rate", 0)}
-            for o in period_orders
-        ]
         left_rows = [
-            {"date": _fmt_date(_norm_date(p.get("date", ""))),
-             "pp_number": f"ПП {p.get('pp_number','')} от {_fmt_date(_norm_date(p.get('date','')))}",
-             "amount": p.get("amount", 0)}
-            for p in period_pmts
+            {"date": _fmt(o.get("load_date")), "doc": o.get("order_number", ""),
+             "sum": f"{float(o.get('carrier_rate') or 0):.2f}"}
+            for o in orders
         ]
-        ob_side = _carrier_side(opening_balance)
-        _side   = _carrier_side
+        right_rows = [
+            {"date": _fmt(p.get("date")), "doc": f"ПП {p.get('pp_number', '')} от {_fmt(p.get('date', ''))}",
+             "sum": f"{float(p.get('amount') or 0):.2f}"}
+            for p in payments
+        ]
+        total_charged = sum(float(o.get("carrier_rate") or 0) for o in orders)
+        total_paid    = sum(float(p.get("amount") or 0)    for p in payments)
 
-    print(f"=== ACT SVERKI DEBUG ===")
-    print(f"type={payload.type}, name={cp_name}, period={date_from} - {date_to}")
-    print(f"left_rows count: {len(left_rows)}")
-    print(f"right_rows count: {len(right_rows)}")
-    for r in right_rows[:3]:
-        print(f"  right: doc={r.get('doc_number')} amount={r.get('amount')}")
-    for r in left_rows[:3]:
-        print(f"  left: pp={r.get('pp_number')} amount={r.get('amount')}")
+    closing_balance = opening_balance + total_charged - total_paid
+    balance_side    = cp_name if closing_balance > 0 else "ИП Александрович Е.А."
+    period_label    = f"с {_fmt(date_from)} по {_fmt(date_to)}"
 
-    left_total      = sum(r["amount"] for r in left_rows)
-    right_total     = sum(r["amount"] for r in right_rows)
-    closing_balance = opening_balance + right_total - left_total
-    cb_side         = _side(closing_balance)
+    print(f"[rec] type={payload.type} name={cp_name} period={date_from}–{date_to} "
+          f"left={len(left_rows)} right={len(right_rows)} ob={opening_balance:.2f} cb={closing_balance:.2f}")
 
     result = {
-        "counterparty_name":     cp_name,
-        "period_label":          period_label,
-        "date_from":             _fmt_date(date_from),
-        "date_to":               _fmt_date(date_to),
-        "opening_balance":       round(opening_balance, 2),
-        "opening_balance_side":  ob_side,
-        "left_rows":             left_rows,
-        "right_rows":            right_rows,
-        "left_total":            round(left_total, 2),
-        "right_total":           round(right_total, 2),
-        "closing_balance":       round(closing_balance, 2),
-        "closing_balance_side":  cb_side,
+        "counterparty_name":  cp_name,
+        "period_label":       period_label,
+        "date_from":          _fmt(date_from),
+        "date_to":            _fmt(date_to),
+        "opening_balance":    round(opening_balance, 2),
+        "left_rows":          left_rows,
+        "right_rows":         right_rows,
+        "left_total":         round(total_charged, 2),
+        "right_total":        round(total_paid, 2),
+        "closing_balance":    round(closing_balance, 2),
+        "balance_side_text":  f"в пользу {balance_side}",
     }
 
     doc_url = None
@@ -3278,11 +3235,8 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
         if not token_doc:
             doc_error = "Google OAuth не подключён — перейдите в Настройки и авторизуйте Google"
-            print(f"[reconciliation] no oauth token")
         else:
-            print(f"[reconciliation] calling _create_reconciliation_doc_sync")
             doc_url, new_token = await asyncio.to_thread(_create_reconciliation_doc_sync, result, token_doc)
-            print(f"[reconciliation] doc_url={doc_url}")
             if new_token:
                 await db.oauth_tokens.update_one(
                     {"_id": "google"},
@@ -3291,7 +3245,6 @@ async def generate_reconciliation(payload: ReconciliationRequest):
     except Exception as _de:
         doc_error = str(_de)
         logging.getLogger(__name__).error(f"reconciliation doc failed: {_de}", exc_info=True)
-        print(f"[reconciliation] ERROR: {_de}")
 
     if doc_url:
         await db.reconciliation_history.insert_one({
@@ -3300,10 +3253,11 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             "type":              payload.type,
             "period_label":      period_label,
             "doc_url":           doc_url,
+            "url":               doc_url,
             "created_at":        datetime.now(timezone.utc),
         })
 
-    return {**result, "doc_url": doc_url, "doc_error": doc_error}
+    return {**result, "doc_url": doc_url, "url": doc_url, "doc_error": doc_error}
 
 
 @api_router.get("/reconciliation/history")
