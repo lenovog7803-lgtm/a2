@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api, fmtMoney, fmtShort } from '../api.js';
 import { ProfitChart } from '../components/Chart.jsx';
 
-const TABS = ['По заявкам', 'Поступления', 'Списания'];
+const TABS = ['По заявкам', 'Поступления', 'Списания', 'Акт сверки'];
 
 export default function Finance({ period }) {
   const [tab, setTab] = useState(0);
@@ -14,6 +14,8 @@ export default function Finance({ period }) {
   const [carriers, setCarriers] = useState([]);
   const [showInModal, setShowInModal] = useState(false);
   const [showOutModal, setShowOutModal] = useState(false);
+  const [recClientId, setRecClientId] = useState('');
+  const [generating, setGenerating] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -36,6 +38,24 @@ export default function Finance({ period }) {
   }, [period]);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleGenerateAct = async () => {
+    if (!recClientId) { alert('Выберите клиента'); return; }
+    setGenerating(true);
+    try {
+      const result = await api.clients.generateActs(recClientId);
+      if (result?.url) {
+        window.open(result.url, '_blank');
+        alert(`Готово! ${result.created ?? ''} актов объединены в один документ.`);
+      } else {
+        alert('Документ создан, но ссылка не получена');
+      }
+    } catch (e) {
+      alert('Ошибка: ' + e.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const role = localStorage.getItem('user_role');
   if (role === 'manager') return <div className="empty-state" style={{ marginTop:80 }}>Нет доступа к финансам</div>;
@@ -157,6 +177,27 @@ export default function Finance({ period }) {
           onRefresh={load}
           onDelete={async (id) => { await api.paymentsOut.remove(id); load(); }}
         />
+      )}
+
+      {tab === 3 && (
+        <div className="glass-card" style={{ maxWidth:540 }}>
+          <div style={{ fontFamily:'Onest', fontWeight:700, fontSize:16, color:'#0E1726', marginBottom:4 }}>Акт сверки</div>
+          <div style={{ fontSize:12.5, color:'#8A93A0', marginBottom:20 }}>Объединяет все акты клиента в один Google Документ</div>
+          <div className="form-group">
+            <label className="form-label">Клиент</label>
+            <select className="form-input form-select" value={recClientId} onChange={e => setRecClientId(e.target.value)}>
+              <option value="">Выберите клиента…</option>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <button className="btn-accent" onClick={handleGenerateAct} disabled={generating || !recClientId}
+            style={{ width:'100%', justifyContent:'center', marginTop:8,
+              transition:'opacity .2s, box-shadow .2s',
+              opacity: recClientId && !generating ? 1 : 0.55,
+              boxShadow: recClientId && !generating ? '0 4px 16px rgba(19,102,240,0.35)' : 'none' }}>
+            {generating ? 'Создаю документ…' : 'Сформировать акт сверки'}
+          </button>
+        </div>
       )}
 
       {showInModal && (
