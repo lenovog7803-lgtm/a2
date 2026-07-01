@@ -1347,7 +1347,8 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
         perms = current_user.get("permissions") or {}
         if not perms.get("can_view_all_orders"):
             filter_q["assigned_to"] = current_user["id"]
-    docs = await db.orders.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    import re as _re
+    docs = await db.orders.find(filter_q, {"_id": 0}).to_list(2000)
 
     seen: set = set()
     unique_docs = []
@@ -1356,7 +1357,13 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
         if key not in seen:
             seen.add(key)
             unique_docs.append(d)
-    docs = unique_docs
+
+    _num_pat = _re.compile(r"\d+")
+    def _order_sort_key(d):
+        m = _num_pat.search(d.get("order_number") or "")
+        return int(m.group()) if m else 0
+
+    docs = sorted(unique_docs, key=_order_sort_key, reverse=True)
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     result = []
