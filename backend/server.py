@@ -1348,6 +1348,16 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
         if not perms.get("can_view_all_orders"):
             filter_q["assigned_to"] = current_user["id"]
     docs = await db.orders.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+
+    seen: set = set()
+    unique_docs = []
+    for d in docs:
+        key = d.get("order_number") or str(d.get("_id", ""))
+        if key not in seen:
+            seen.add(key)
+            unique_docs.append(d)
+    docs = unique_docs
+
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     result = []
     for d in docs:
