@@ -129,7 +129,7 @@ class DocsGenerator:
                     raise RuntimeError(
                         "Сначала авторизуйтесь через Google: откройте /api/auth/google/start"
                     )
-                creds = make_user_credentials(token_doc)
+                creds, _ = make_user_credentials(token_doc)
             else:
                 creds = Credentials.from_service_account_file(self.creds_path, scopes=SCOPES)
             self._drive = build('drive', 'v3', credentials=creds, cache_discovery=False)
