@@ -1686,10 +1686,14 @@ async def auth_google_callback(code: str = "", state: str = "", error: str = "")
 
     try:
         token = _oauth_fetch_token(code=code, state=state)
+        # Google omits refresh_token on repeat consent (unless prompt=consent forced it);
+        # keep the previously stored one instead of nulling it out on upsert.
+        existing = await db.oauth_tokens.find_one({"_id": "google"})
+        refresh_token = token.get("refresh_token") or (existing.get("refresh_token") if existing else None)
         token_doc = {
             "_id": "google",
             "access_token": token.get("access_token"),
-            "refresh_token": token.get("refresh_token"),
+            "refresh_token": refresh_token,
             "expiry": token.get("expires_at"),
             "scopes": _OAUTH_SCOPES,
             "saved_at": now_iso(),
@@ -1703,10 +1707,22 @@ async def auth_google_callback(code: str = "", state: str = "", error: str = "")
                 _docs_get_generator()._docs = None
             except Exception:
                 pass
-        return HTMLResponse(_callback_html("Авторизация успешна! Можно закрыть это окно и вернуться в приложение.", success=True))
+        # Redirect away from the code-bearing URL so a page refresh / back-forward
+        # replay can't resend the already-consumed authorization code to Google
+        # (that resend is what produces invalid_grant).
+        return RedirectResponse(url="/api/auth/google/callback/done?ok=1")
     except Exception as e:
         logging.getLogger(__name__).error(f"OAuth callback failed: {e}", exc_info=True)
-        return HTMLResponse(_callback_html(f"Ошибка обмена кода: {e}", success=False))
+        from urllib.parse import quote
+        return RedirectResponse(url=f"/api/auth/google/callback/done?ok=0&msg={quote(str(e))}")
+
+
+@api_router.get("/auth/google/callback/done")
+async def auth_google_callback_done(ok: int = 1, msg: str = ""):
+    """Статическая страница результата — не трогает code/state, безопасна для перезагрузки."""
+    if ok:
+        return HTMLResponse(_callback_html("Авторизация успешна! Можно закрыть это окно и вернуться в приложение.", success=True))
+    return HTMLResponse(_callback_html(msg or "Ошибка авторизации", success=False))
 
 
 @api_router.get("/auth/google/status")
