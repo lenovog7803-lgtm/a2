@@ -154,11 +154,14 @@ def carrier_cells(cr: Dict[str, Any]) -> Dict[int, Any]:
 def _lead_status_label(s: str) -> str:
     return {
         'new': 'Новый',
-        'thinking': 'Думают',
-        'sent_kp': 'Выслал КП',
+        'reached': 'Дозвонился',
+        'interested': 'Заинтересован',
+        'thinking': 'Думает',
+        'kp_sent': 'КП отправлено',
+        'negotiation': 'Переговоры',
         'won': 'Клиент',
-        'lost': 'Потерян',
-        'callback': 'Перезвонить',
+        'no_contact': 'Нет контакта',
+        'lost': 'Отказ',
     }.get(s or '', s or '')
 
 
@@ -168,7 +171,7 @@ def lead_cells(l: Dict[str, Any]) -> Dict[int, Any]:
         2: l.get('company', ''),
         3: l.get('phone', ''),
         4: l.get('city', ''),
-        5: _lead_status_label(l.get('status', '')),
+        5: _lead_status_label(l.get('stage', '')),
         6: l.get('next_call', ''),
         7: l.get('notes', ''),
         8: l.get('directions', ''),

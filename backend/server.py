@@ -325,6 +325,7 @@ async def lifespan(app: FastAPI):
         }
         await db.users.insert_one(admin)
         logging.getLogger(__name__).info("Created default admin user (login=admin, password=admin123)")
+    await _migrate_leads_stage()
     # Debug: print last 30 carriers to inspect field names
     try:
         _debug_carriers = await db.carriers.find({"deleted": {"$ne": True}}).sort("created_at", -1).to_list(30)
@@ -670,31 +671,47 @@ class Lead(BaseModel):
     name: str
     company: Optional[str] = ""
     phone: str
-    city: Optional[str] = ""
+    contact_person: Optional[str] = ""
+    contact_position: Optional[str] = ""
     email: Optional[str] = ""
+    website: Optional[str] = ""
     industry: Optional[str] = ""
-    status: str = "new"
+    city: Optional[str] = ""
+    region: Optional[str] = ""
+    stage: str = "new"
     last_contact: Optional[str] = ""
     last_call: Optional[str] = ""
-    next_call: Optional[str] = ""
+    next_call: Optional[str] = None
     notes: Optional[str] = ""
     directions: Optional[str] = ""
     call_notes: Optional[List] = Field(default_factory=list)
     call_attempts: Optional[int] = 0
+    total_calls: Optional[int] = 0
+    cadence_step: Optional[int] = 0
+    first_call_at: Optional[str] = None
+    last_call_at: Optional[str] = None
+    won_at: Optional[str] = None
+    lost_reason: Optional[str] = None
+    client_id: Optional[str] = None
     assigned_to: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
+    updated_at: Optional[str] = None
 
 
 class LeadPayload(BaseModel):
     name: str
     company: Optional[str] = ""
     phone: str
-    city: Optional[str] = ""
+    contact_person: Optional[str] = ""
+    contact_position: Optional[str] = ""
     email: Optional[str] = ""
+    website: Optional[str] = ""
     industry: Optional[str] = ""
-    status: str = "new"
+    city: Optional[str] = ""
+    region: Optional[str] = ""
+    stage: str = "new"
     last_contact: Optional[str] = ""
-    next_call: Optional[str] = ""
+    next_call: Optional[str] = None
     notes: Optional[str] = ""
     directions: Optional[str] = ""
     call_notes: Optional[List] = Field(default_factory=list)
@@ -705,16 +722,94 @@ class LeadUpdate(BaseModel):
     name: Optional[str] = None
     company: Optional[str] = None
     phone: Optional[str] = None
-    city: Optional[str] = None
+    contact_person: Optional[str] = None
+    contact_position: Optional[str] = None
     email: Optional[str] = None
+    website: Optional[str] = None
     industry: Optional[str] = None
-    status: Optional[str] = None
+    city: Optional[str] = None
+    region: Optional[str] = None
+    stage: Optional[str] = None
     last_contact: Optional[str] = None
     next_call: Optional[str] = None
     notes: Optional[str] = None
     directions: Optional[str] = None
     call_notes: Optional[List] = None
+    lost_reason: Optional[str] = None
     assigned_to: Optional[str] = None
+
+
+# ====== Lead call module: stages, cadence, scripts ======
+LEAD_STAGES = [
+    {"id": "new",         "label": "Новый",         "order": 1, "color": "#8A93A0", "active": True},
+    {"id": "reached",     "label": "Дозвонился",    "order": 2, "color": "#1366F0", "active": True},
+    {"id": "interested",  "label": "Заинтересован", "order": 3, "color": "#1366F0", "active": True},
+    {"id": "thinking",    "label": "Думает",        "order": 4, "color": "#D97706", "active": True},
+    {"id": "kp_sent",     "label": "КП отправлено", "order": 5, "color": "#7C3AED", "active": True},
+    {"id": "negotiation", "label": "Переговоры",    "order": 6, "color": "#7C3AED", "active": True},
+    {"id": "won",         "label": "Клиент",        "order": 7, "color": "#1E9E5A", "active": False},
+    {"id": "no_contact",  "label": "Нет контакта",  "order": 8, "color": "#8A93A0", "active": False},
+    {"id": "lost",        "label": "Отказ",         "order": 9, "color": "#E0473B", "active": False},
+]
+LEAD_STAGE_BY_ID = {s["id"]: s for s in LEAD_STAGES}
+
+CADENCE = [
+    {"step": 1, "action": "call",  "delay_days": 0, "label": "Первый звонок"},
+    {"step": 2, "action": "call",  "delay_days": 2, "label": "Второй звонок"},
+    {"step": 3, "action": "kp",    "delay_days": 1, "label": "Отправить КП"},
+    {"step": 4, "action": "call",  "delay_days": 3, "label": "Звонок после КП"},
+    {"step": 5, "action": "close", "delay_days": 5, "label": "Закрытие — решение"},
+]
+
+
+def next_cadence_touch(current_step: int):
+    """Вернуть следующий шаг каденции и дату."""
+    nxt = current_step + 1
+    step_cfg = next((s for s in CADENCE if s["step"] == nxt), None)
+    if not step_cfg:
+        return None, None
+    d = datetime.now(timezone.utc) + timedelta(days=step_cfg["delay_days"])
+    d = d.replace(hour=10, minute=0, second=0, microsecond=0)
+    return nxt, d.isoformat()
+
+
+LOST_REASONS = [
+    "Дорого",
+    "Есть свой перевозчик",
+    "Не занимаемся логистикой",
+    "Не тот профиль груза",
+    "Не наши направления",
+    "Просят не звонить",
+    "Компания не работает",
+    "Другое",
+]
+
+DEFAULT_SCRIPTS = {
+    "new": "Добрый день! Меня зовут [имя], компания А2 Групп, занимаемся грузоперевозками Беларусь–Россия.\n\nПодскажите, с кем можно поговорить по вопросам логистики?\n\n— Вы отправляете грузы в Россию или из России?\n— Кто сейчас возит?\n— Какие направления чаще всего?",
+    "reached": "Спасибо что уделили время.\n\n— Какие объёмы отправляете в месяц?\n— Какой тип груза?\n— Что не устраивает в текущем перевозчике?\n\nМы работаем по маршрутам Москва–Минск и обратно, свои проверенные перевозчики, документы в порядке, оплата по факту доставки.",
+    "interested": "Давайте я подготовлю расчёт под ваши направления.\n\n— На какие маршруты посчитать?\n— Какой средний вес отправки?\n— Тент, реф или изотерм?\n\nПришлю КП сегодня-завтра на почту.",
+    "thinking": "Звоню уточнить, посмотрели наше предложение?\n\n— Что смущает по цене или условиям?\n— С чем сравниваете?\n\nГотов обсудить условия, если по цене не проходим — скажите ориентир.",
+    "kp_sent": "Отправлял вам КП [дата], хотел уточнить — дошло?\n\n— Успели посмотреть цифры?\n— Есть вопросы по условиям оплаты или срокам?\n\nЕсли по каким-то направлениям цена не подходит — скажите, посмотрю что можно сделать.",
+    "negotiation": "По условиям договорились, давайте закрепим.\n\n— Когда планируете первую отправку?\n— Пришлю договор на согласование, нужны реквизиты.\n— Кто будет контактным лицом по заявкам?",
+}
+
+LEAD_STAGE_MIGRATION = {
+    "new": "new", "thinking": "thinking", "sent_kp": "kp_sent", "callback": "reached",
+    "won": "won", "lost": "lost", "no_contact": "no_contact",
+}
+
+
+async def _migrate_leads_stage():
+    """Одноразовая (идемпотентная) миграция поля status -> stage у лидов."""
+    try:
+        docs = await db.leads.find({"status": {"$exists": True}}, {"_id": 1, "status": 1}).to_list(100000)
+        for d in docs:
+            new_stage = LEAD_STAGE_MIGRATION.get(d.get("status"), d.get("status") or "new")
+            await db.leads.update_one({"_id": d["_id"]}, {"$set": {"stage": new_stage}, "$unset": {"status": ""}})
+        if docs:
+            logging.getLogger(__name__).info(f"_migrate_leads_stage: migrated {len(docs)} leads")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_migrate_leads_stage failed: {e}")
 
 
 # ===== CRUD helper =====
@@ -760,13 +855,13 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
         old_status = None
         if collection == "leads":
             old_doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
-            old_status = (old_doc or {}).get("status")
+            old_status = (old_doc or {}).get("stage")
         await db[collection].update_one({"id": item_id}, {"$set": payload.dict(exclude_none=True)})
         doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
         if not doc:
             raise HTTPException(404, "Not found")
         if collection == "leads":
-            new_status = doc.get("status")
+            new_status = doc.get("stage")
             p_dict = payload.dict(exclude_none=True)
             if new_status != old_status:
                 action = "status_change"
@@ -927,10 +1022,15 @@ async def leads_activity_stats():
     return [{"date": k, "count": v} for k, v in sorted(counts.items())]
 
 
-@api_router.get("/leads/industries", response_model=List[str])
+@api_router.get("/leads/industries")
 async def leads_industries():
-    docs = await db.leads.distinct("industry", {"deleted": {"$ne": True}, "industry": {"$nin": [None, ""]}})
-    return sorted([d for d in docs if d], key=lambda x: x.lower())
+    pipeline = [
+        {"$match": {"deleted": {"$ne": True}, "industry": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$industry", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    rows = await db.leads.aggregate(pipeline).to_list(200)
+    return {"industries": [{"name": r["_id"], "count": r["count"]} for r in rows]}
 
 
 @api_router.get("/leads", response_model=List[Lead])
@@ -946,7 +1046,65 @@ async def list_leads_filtered(industry: Optional[str] = None, current_user: Opti
     return [Lead(**d) for d in docs]
 
 
-STATUSES_WITH_CALLBACK = {"callback", "sent_kp", "thinking"}
+def _leads_manager_filter(current_user: Optional[dict]) -> dict:
+    base: dict = {"deleted": {"$ne": True}}
+    if current_user and current_user.get("role") == "manager":
+        perms = current_user.get("permissions") or {}
+        if not perms.get("can_view_all_leads"):
+            base["assigned_to"] = current_user["id"]
+    return base
+
+
+@api_router.get("/leads/queue")
+async def get_call_queue(industry: Optional[str] = None, limit: int = 50,
+                         current_user: Optional[dict] = Depends(_get_user_from_token)):
+    now = datetime.now(timezone.utc).isoformat()
+    today_end = datetime.now(timezone.utc).replace(hour=23, minute=59, second=59).isoformat()
+
+    active_stages = [s["id"] for s in LEAD_STAGES if s["active"]]
+    base = {**_leads_manager_filter(current_user), "stage": {"$in": active_stages}}
+    if industry:
+        base["industry"] = industry
+
+    overdue = await db.leads.find(
+        {**base, "next_call": {"$ne": None, "$lt": now}}, {"_id": 0}
+    ).sort("next_call", 1).to_list(limit)
+
+    today = await db.leads.find(
+        {**base, "next_call": {"$gte": now, "$lte": today_end}}, {"_id": 0}
+    ).sort("next_call", 1).to_list(limit)
+
+    hot_stages = ["interested", "thinking", "kp_sent", "negotiation"]
+    hot = await db.leads.find(
+        {**base, "stage": {"$in": hot_stages}, "next_call": None}, {"_id": 0}
+    ).sort("last_call_at", 1).to_list(limit)
+
+    fresh = await db.leads.find(
+        {**base, "stage": "new", "next_call": None}, {"_id": 0}
+    ).sort("created_at", 1).to_list(limit)
+
+    seen, queue = set(), []
+    for bucket, tag in [(overdue, "overdue"), (today, "today"), (hot, "hot"), (fresh, "new")]:
+        for l in bucket:
+            if l["id"] in seen:
+                continue
+            seen.add(l["id"])
+            l["queue_reason"] = tag
+            queue.append(l)
+            if len(queue) >= limit:
+                break
+        if len(queue) >= limit:
+            break
+
+    return {
+        "queue": queue,
+        "counts": {
+            "overdue": len(overdue),
+            "today": len(today),
+            "hot": len(hot),
+            "new": len(fresh),
+        },
+    }
 
 
 @api_router.put("/leads/{item_id}", response_model=Lead)
@@ -955,71 +1113,13 @@ async def update_lead(item_id: str, payload: LeadUpdate, background_tasks: Backg
     old_doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
     if not old_doc:
         raise HTTPException(404, "Not found")
-    old_status = old_doc.get("status")
 
     p_dict = payload.dict(exclude_none=True)
-    p_dict.pop("last_call", None)
     p_dict.pop("call_notes", None)  # never overwrite notes via general PUT; use POST /call_notes
+    p_dict["updated_at"] = now_iso()
 
     await db.leads.update_one({"id": item_id}, {"$set": p_dict})
     doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
-
-    new_status = doc.get("status")
-    status_changed = new_status != old_status
-    old_notes_count = len(old_doc.get("call_notes") or [])
-    new_call_notes = p_dict.get("call_notes")
-    notes_added = new_call_notes is not None and len(new_call_notes) > old_notes_count
-
-    auto_set: dict = {}
-    if status_changed or notes_added:
-        now = datetime.now(timezone.utc)
-        auto_set["last_call"] = now.strftime("%Y-%m-%d")
-
-        if new_status in STATUSES_WITH_CALLBACK:
-            next_call_dt = now + timedelta(hours=24)
-            next_call_str = next_call_dt.strftime("%Y-%m-%d")
-            next_time_str = next_call_dt.strftime("%H:%M")
-            auto_set["next_call"] = next_call_str
-
-            label = doc.get("company") or doc.get("name") or ""
-            task_title = f"Перезвонить: {label}"
-            existing = await db.tasks.find_one({"title": task_title, "due_date": next_call_str})
-            if not existing:
-                task_obj = {
-                    "id": str(uuid.uuid4()),
-                    "title": task_title,
-                    "task_type": "call",
-                    "due_date": next_call_str,
-                    "due_time": next_time_str,
-                    "status": "pending",
-                    "description": f"Лид: {doc.get('name', '')}, {doc.get('phone', '')}",
-                    "created_by": (current_user or {}).get("id", ""),
-                    "created_at": now_iso(),
-                    "google_task_id": None,
-                }
-                await db.tasks.insert_one(task_obj)
-                background_tasks.add_task(_bg_gt_create, task_obj)
-
-    if auto_set:
-        await db.leads.update_one({"id": item_id}, {"$set": auto_set})
-        doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
-
-    if status_changed:
-        action = "status_change"
-    elif notes_added or any(k in p_dict for k in ("last_contact", "next_call", "call_notes")):
-        action = "call"
-    else:
-        action = "update"
-    await db.lead_activity.insert_one({
-        "id": str(uuid.uuid4()),
-        "lead_id": item_id,
-        "user_id": (current_user or {}).get("id", ""),
-        "action": action,
-        "old_status": old_status,
-        "new_status": new_status,
-        "timestamp": datetime.now(timezone.utc),
-        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-    })
 
     background_tasks.add_task(_bg_push_lead, doc)
     return Lead(**doc)
@@ -1067,16 +1167,6 @@ async def delete_call_note(item_id: str, note_index: int,
     return Lead(**doc)
 
 
-CALL_OUTCOME_STATUS = {
-    "callback": "callback",
-    "thinking": "thinking",
-    "kp_sent": "sent_kp",
-    "won": "won",
-    "lost": "lost",
-}
-MAX_NO_ANSWER_ATTEMPTS = 5
-
-
 async def _bg_call_calendar(title: str, date_str: str, description: str):
     if _gc_simple is None:
         return
@@ -1090,99 +1180,276 @@ async def _bg_call_calendar(title: str, date_str: str, description: str):
         logging.getLogger(__name__).error(f"_bg_call_calendar failed: {e}")
 
 
-class CallLogPayload(BaseModel):
-    outcome: str
-    comment: Optional[str] = ""
-    next_call: Optional[str] = None
-
-
-@api_router.post("/leads/{item_id}/call", response_model=Lead)
-async def log_call(item_id: str, payload: CallLogPayload, background_tasks: BackgroundTasks,
+@api_router.post("/leads/{item_id}/call")
+async def log_call(item_id: str, payload: dict, background_tasks: BackgroundTasks,
                    current_user: Optional[dict] = Depends(_get_user_from_token)):
-    doc = await db.leads.find_one({"id": item_id, "deleted": {"$ne": True}}, {"_id": 0})
-    if not doc:
-        raise HTTPException(404, "Not found")
+    lead = await db.leads.find_one({"id": item_id, "deleted": {"$ne": True}}, {"_id": 0})
+    if not lead:
+        raise HTTPException(404, "Лид не найден")
 
+    outcome = payload.get("outcome")
+    comment = (payload.get("comment") or "").strip()
+    lost_reason = payload.get("lost_reason")
+    manual_next = payload.get("next_call")
     now = datetime.now(timezone.utc)
-    old_status = doc.get("status")
 
-    await db.calls.insert_one({
+    if outcome != "no_answer" and not comment:
+        raise HTTPException(400, "Комментарий обязателен")
+    if outcome == "lost" and not lost_reason:
+        raise HTTPException(400, "Укажите причину отказа")
+
+    attempts = int(lead.get("call_attempts") or 0)
+    cadence_step = int(lead.get("cadence_step") or 0)
+    upd: dict = {
+        "last_call_at": now.isoformat(),
+        "last_call": now.strftime("%Y-%m-%d"),
+        "total_calls": int(lead.get("total_calls") or 0) + 1,
+        "updated_at": now.isoformat(),
+    }
+    if not lead.get("first_call_at"):
+        upd["first_call_at"] = now.isoformat()
+
+    next_call = None
+
+    if outcome == "no_answer":
+        attempts += 1
+        upd["call_attempts"] = attempts
+        if attempts >= 5:
+            upd["stage"] = "no_contact"
+            upd["next_call"] = None
+        else:
+            d = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+            next_call = d.isoformat()
+            upd["next_call"] = next_call
+    else:
+        upd["call_attempts"] = 0
+        upd["stage"] = outcome
+        upd["last_call_note"] = comment
+
+        if outcome in ("won", "lost"):
+            upd["next_call"] = None
+            if outcome == "won":
+                upd["won_at"] = now.isoformat()
+            if outcome == "lost":
+                upd["lost_reason"] = lost_reason
+        else:
+            if manual_next:
+                next_call = manual_next
+                upd["next_call"] = next_call
+            else:
+                new_step, auto_date = next_cadence_touch(cadence_step)
+                if new_step:
+                    upd["cadence_step"] = new_step
+                    next_call = auto_date
+                    upd["next_call"] = next_call
+
+    await db.leads.update_one({"id": item_id}, {"$set": upd})
+
+    log = {
         "id": str(uuid.uuid4()),
         "lead_id": item_id,
-        "outcome": payload.outcome,
-        "comment": payload.comment or "",
-        "next_call": payload.next_call,
-        "user_id": (current_user or {}).get("id", ""),
+        "lead_name": lead.get("name", ""),
+        "outcome": outcome,
+        "comment": comment,
+        "lost_reason": lost_reason,
+        "next_call": next_call,
+        "attempt_no": attempts,
+        "cadence_step": upd.get("cadence_step", cadence_step),
+        "duration_sec": payload.get("duration_sec"),
+        "created_by": (current_user or {}).get("id", ""),
         "created_at": now.isoformat(),
-    })
-
-    attempts = (doc.get("call_attempts") or 0) + 1 if payload.outcome == "no_answer" else 0
-
-    auto_set: dict = {
-        "call_attempts": attempts,
-        "last_call": now.strftime("%Y-%m-%d"),
     }
-    new_status = CALL_OUTCOME_STATUS.get(payload.outcome)
-    if new_status:
-        auto_set["status"] = new_status
-    elif payload.outcome == "no_answer" and attempts >= MAX_NO_ANSWER_ATTEMPTS:
-        auto_set["status"] = "no_contact"
-
-    next_call_dt = None
-    if payload.next_call:
-        next_call_dt = datetime.fromisoformat(payload.next_call.replace("Z", "+00:00"))
-        auto_set["next_call"] = next_call_dt.strftime("%Y-%m-%d")
-
-    await db.leads.update_one({"id": item_id}, {"$set": auto_set})
-    doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
-
+    await db.call_logs.insert_one(dict(log))
+    # Keep legacy per-user activity feed (admin stats/leaderboards) alive.
     await db.lead_activity.insert_one({
         "id": str(uuid.uuid4()),
         "lead_id": item_id,
         "user_id": (current_user or {}).get("id", ""),
         "action": "call",
-        "old_status": old_status,
-        "new_status": auto_set.get("status", old_status),
+        "old_status": lead.get("stage"),
+        "new_status": upd.get("stage", lead.get("stage")),
         "timestamp": now,
         "date": now.strftime("%Y-%m-%d"),
     })
 
-    if next_call_dt:
-        next_call_date = next_call_dt.strftime("%Y-%m-%d")
-        next_call_time = next_call_dt.strftime("%H:%M")
-        label = doc.get("company") or doc.get("name") or ""
-        task_title = f"Перезвонить: {label}"
-        existing = await db.tasks.find_one({"title": task_title, "due_date": next_call_date})
-        if not existing:
-            task_obj = {
-                "id": str(uuid.uuid4()),
-                "title": task_title,
-                "task_type": "call",
-                "due_date": next_call_date,
-                "due_time": next_call_time,
-                "status": "pending",
-                "description": f"Лид: {doc.get('name', '')}, {doc.get('phone', '')}. {payload.comment or ''}".strip(),
-                "created_by": (current_user or {}).get("id", ""),
-                "created_at": now_iso(),
-                "google_task_id": None,
-            }
-            await db.tasks.insert_one(task_obj)
-            background_tasks.add_task(_bg_gt_create, task_obj)
-            background_tasks.add_task(
-                _bg_call_calendar,
-                task_title,
-                next_call_date,
-                f"{doc.get('phone', '')} в {next_call_time} · {payload.comment or ''}".strip(" ·"),
-            )
+    if next_call:
+        task_obj = {
+            "id": str(uuid.uuid4()),
+            "title": f"Перезвонить: {lead.get('name', '')}",
+            "task_type": "call",
+            "due_date": next_call[:10],
+            "due_time": next_call[11:16],
+            "status": "pending",
+            "description": f"{lead.get('phone', '')}. {comment}".strip(". "),
+            "created_by": (current_user or {}).get("id", ""),
+            "created_at": now_iso(),
+            "google_task_id": None,
+        }
+        await db.tasks.insert_one(task_obj)
+        background_tasks.add_task(_bg_gt_create, task_obj)
+        background_tasks.add_task(_bg_call_calendar, task_obj["title"], task_obj["due_date"], task_obj["description"])
 
+    doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
     background_tasks.add_task(_bg_push_lead, doc)
-    return Lead(**doc)
+
+    return {
+        "ok": True,
+        "log": log,
+        "stage": upd.get("stage", lead.get("stage")),
+        "attempts": upd.get("call_attempts"),
+        "next_call": next_call,
+        "ask_create_client": outcome == "won" and not lead.get("client_id"),
+        "lead": doc,
+    }
 
 
 @api_router.get("/leads/{item_id}/calls")
-async def get_call_history(item_id: str):
-    docs = await db.calls.find({"lead_id": item_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return {"calls": docs}
+async def call_history(item_id: str):
+    logs = await db.call_logs.find({"lead_id": item_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return {"calls": logs}
+
+
+@api_router.post("/leads/{item_id}/convert")
+async def convert_lead_to_client(item_id: str, current_user: Optional[dict] = Depends(_get_user_from_token)):
+    lead = await db.leads.find_one({"id": item_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(404, "Лид не найден")
+    if lead.get("client_id"):
+        return {"client_id": lead["client_id"], "already": True}
+
+    client = {
+        "id": str(uuid.uuid4()),
+        "name": lead.get("company") or lead.get("name", ""),
+        "phone": lead.get("phone", ""),
+        "email": lead.get("email", ""),
+        "contact_person": lead.get("contact_person", ""),
+        "city": lead.get("city", ""),
+        "created_at": now_iso(),
+    }
+    await db.clients.insert_one(dict(client))
+    await db.leads.update_one({"id": item_id}, {"$set": {"client_id": client["id"]}})
+    return {"client_id": client["id"], "client": client}
+
+
+@api_router.get("/leads/scripts")
+async def get_scripts(current_user: Optional[dict] = Depends(_get_user_from_token)):
+    doc = await db.settings.find_one({"key": "call_scripts"}, {"_id": 0})
+    return {"scripts": (doc or {}).get("value") or DEFAULT_SCRIPTS}
+
+
+@api_router.put("/leads/scripts")
+async def save_scripts(payload: dict, current_user: Optional[dict] = Depends(_get_user_from_token)):
+    await db.settings.update_one(
+        {"key": "call_scripts"},
+        {"$set": {"key": "call_scripts", "value": payload.get("scripts", {})}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api_router.get("/leads/analytics")
+async def leads_analytics(period: str = "month", current_user: Optional[dict] = Depends(_get_user_from_token)):
+    now = datetime.now(timezone.utc)
+    if period == "week":
+        start = now - timedelta(days=7)
+    elif period == "month":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif period == "quarter":
+        qm = (now.month - 1) // 3 * 3 + 1
+        start = now.replace(month=qm, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    start_str = start.isoformat()
+
+    logs = await db.call_logs.find({"created_at": {"$gte": start_str}}, {"_id": 0}).to_list(100000)
+    leads = await db.leads.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(100000)
+
+    DAILY_GOAL = 45
+    by_day: dict = {}
+    for l in logs:
+        d = l["created_at"][:10]
+        by_day[d] = by_day.get(d, 0) + 1
+    calls_by_day = [{"date": d, "calls": c, "goal": DAILY_GOAL} for d, c in sorted(by_day.items())]
+
+    stage_counts: dict = {}
+    for l in leads:
+        s = l.get("stage", "new")
+        stage_counts[s] = stage_counts.get(s, 0) + 1
+
+    funnel = []
+    prev = None
+    for st in LEAD_STAGES:
+        if st["id"] in ("no_contact", "lost"):
+            continue
+        cnt = stage_counts.get(st["id"], 0)
+        reached_or_further = sum(
+            stage_counts.get(s["id"], 0) for s in LEAD_STAGES
+            if s["order"] >= st["order"] and s["id"] not in ("no_contact", "lost")
+        )
+        conv = round(reached_or_further / prev * 100, 1) if prev else 100.0
+        funnel.append({
+            "stage": st["id"], "label": st["label"], "color": st["color"],
+            "count": cnt, "cumulative": reached_or_further, "conversion": conv,
+        })
+        prev = reached_or_further or prev
+
+    reasons: dict = {}
+    for l in leads:
+        if l.get("stage") == "lost" and l.get("lost_reason"):
+            reasons[l["lost_reason"]] = reasons.get(l["lost_reason"], 0) + 1
+    lost_reasons = sorted(
+        [{"reason": k, "count": v} for k, v in reasons.items()],
+        key=lambda x: -x["count"]
+    )
+
+    ind: dict = {}
+    for l in leads:
+        i = l.get("industry") or "Не указана"
+        ind.setdefault(i, {"total": 0, "won": 0, "lost": 0, "called": 0})
+        ind[i]["total"] += 1
+        if l.get("stage") == "won":
+            ind[i]["won"] += 1
+        if l.get("stage") == "lost":
+            ind[i]["lost"] += 1
+        if (l.get("total_calls") or 0) > 0:
+            ind[i]["called"] += 1
+    by_industry = sorted([
+        {
+            "industry": k,
+            "total": v["total"],
+            "called": v["called"],
+            "won": v["won"],
+            "lost": v["lost"],
+            "conversion": round(v["won"] / v["called"] * 100, 1) if v["called"] else 0.0,
+        }
+        for k, v in ind.items()
+    ], key=lambda x: -x["conversion"])
+
+    converted = [l for l in leads if l.get("client_id")]
+    cold_client_ids = [l["client_id"] for l in converted]
+    cold_orders = await db.orders.find(
+        {"client_id": {"$in": cold_client_ids}, "deleted": {"$ne": True}}, {"_id": 0}
+    ).to_list(100000) if cold_client_ids else []
+    cold_revenue = sum(float(o.get("client_rate") or 0) for o in cold_orders)
+    cold_margin = sum(
+        float(o.get("client_rate") or 0) - float(o.get("carrier_rate") or 0)
+        for o in cold_orders
+    )
+
+    return {
+        "calls_by_day": calls_by_day,
+        "daily_goal": DAILY_GOAL,
+        "total_calls": len(logs),
+        "funnel": funnel,
+        "lost_reasons": lost_reasons,
+        "by_industry": by_industry,
+        "cold_leads": {
+            "converted_count": len(converted),
+            "orders_count": len(cold_orders),
+            "revenue": cold_revenue,
+            "margin": cold_margin,
+        },
+    }
 
 
 make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)
@@ -2072,9 +2339,9 @@ async def get_user_activity(user_id: str, current_user: dict = Depends(_require_
         "created_by": user_id,
         "created_at": {"$gte": month_start},
     })
-    leads = await db.leads.find({"assigned_to": user_id}, {"_id": 0, "id": 1, "status": 1}).to_list(10000)
+    leads = await db.leads.find({"assigned_to": user_id}, {"_id": 0, "id": 1, "stage": 1}).to_list(10000)
     lead_ids = [l["id"] for l in leads]
-    won_leads = sum(1 for l in leads if l.get("status") == "won")
+    won_leads = sum(1 for l in leads if l.get("stage") == "won")
     total_leads = len(leads)
     conversion = round(won_leads / total_leads * 100) if total_leads else 0
     start_30 = (now_dt - timedelta(days=29)).strftime("%Y-%m-%d")
@@ -2125,8 +2392,8 @@ async def get_user_stats(user_id: str, month: Optional[str] = None, current_user
     calls_made = await db.lead_activity.count_documents(
         {"user_id": user_id, "date": {"$gte": month_start, "$lt": month_end}}
     )
-    leads = await db.leads.find({"assigned_to": user_id, "deleted": {"$ne": True}}, {"_id": 0, "status": 1}).to_list(10000)
-    won = sum(1 for l in leads if l.get("status") == "won")
+    leads = await db.leads.find({"assigned_to": user_id, "deleted": {"$ne": True}}, {"_id": 0, "stage": 1}).to_list(10000)
+    won = sum(1 for l in leads if l.get("stage") == "won")
     total = len(leads)
     conversion = round(won / total * 100) if total else 0
     return {
@@ -2169,7 +2436,7 @@ async def get_user_leads(user_id: str, current_user: dict = Depends(_require_use
         raise HTTPException(403, "Только для администратора")
     leads = await db.leads.find(
         {"assigned_to": user_id, "deleted": {"$ne": True}},
-        {"_id": 0, "id": 1, "name": 1, "company": 1, "status": 1, "last_contact": 1, "phone": 1},
+        {"_id": 0, "id": 1, "name": 1, "company": 1, "stage": 1, "last_contact": 1, "phone": 1},
     ).sort("last_contact", -1).to_list(10000)
     return leads
 
@@ -2712,7 +2979,7 @@ async def global_search(q: str = "", current_user: dict = Depends(_require_user)
     async def _search_leads():
         return await db.leads.find(
             {"deleted": {"$ne": True}, "$or": [{"name": regex}, {"company": regex}, {"phone": regex}]},
-            {"_id": 0, "id": 1, "name": 1, "company": 1, "phone": 1, "status": 1},
+            {"_id": 0, "id": 1, "name": 1, "company": 1, "phone": 1, "stage": 1},
         ).to_list(5)
 
     orders_r, clients_r, carriers_r, leads_r = await asyncio.gather(
@@ -2803,11 +3070,11 @@ async def seed_data():
         ).dict())
 
     leads = [
-        Lead(name="Орлов Михаил", company="ООО Восток-Логистик", phone="+7 (495) 700-10-20", city="Москва", status="new", next_call="2026-02-12", notes="Интерес — еженедельные перевозки МСК-СПб"),
-        Lead(name="Захарова Анна", company="ТД Полюс", phone="+7 (812) 700-20-30", city="СПб", status="sent_kp", last_contact="2026-02-08", next_call="2026-02-13", notes="Просили КП на реф направление"),
-        Lead(name="Николаев Пётр", company="АО Стройка-Сервис", phone="+7 (343) 700-30-40", city="Екатеринбург", status="thinking", last_contact="2026-02-09", next_call="2026-02-11", notes="Готовы к тестовому рейсу"),
-        Lead(name="Григорьев Олег", company="ИП Григорьев", phone="+7 (961) 700-40-50", city="Краснодар", status="won", last_contact="2026-02-07", notes="Стал клиентом"),
-        Lead(name="Соколова Мария", company="ООО АгроТранс", phone="+7 (902) 700-50-60", city="Воронеж", status="new", next_call="2026-02-14", notes="Сезон — март-октябрь"),
+        Lead(name="Орлов Михаил", company="ООО Восток-Логистик", phone="+7 (495) 700-10-20", city="Москва", stage="new", next_call="2026-02-12", notes="Интерес — еженедельные перевозки МСК-СПб"),
+        Lead(name="Захарова Анна", company="ТД Полюс", phone="+7 (812) 700-20-30", city="СПб", stage="kp_sent", last_contact="2026-02-08", next_call="2026-02-13", notes="Просили КП на реф направление"),
+        Lead(name="Николаев Пётр", company="АО Стройка-Сервис", phone="+7 (343) 700-30-40", city="Екатеринбург", stage="thinking", last_contact="2026-02-09", next_call="2026-02-11", notes="Готовы к тестовому рейсу"),
+        Lead(name="Григорьев Олег", company="ИП Григорьев", phone="+7 (961) 700-40-50", city="Краснодар", stage="won", last_contact="2026-02-07", notes="Стал клиентом"),
+        Lead(name="Соколова Мария", company="ООО АгроТранс", phone="+7 (902) 700-50-60", city="Воронеж", stage="new", next_call="2026-02-14", notes="Сезон — март-октябрь"),
     ]
     for l in leads: await db.leads.insert_one(l.dict())
 
