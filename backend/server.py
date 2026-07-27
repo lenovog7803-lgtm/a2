@@ -680,6 +680,7 @@ class Lead(BaseModel):
     notes: Optional[str] = ""
     directions: Optional[str] = ""
     call_notes: Optional[List] = Field(default_factory=list)
+    call_attempts: Optional[int] = 0
     assigned_to: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
@@ -1064,6 +1065,124 @@ async def delete_call_note(item_id: str, note_index: int,
     await db.leads.update_one({"id": item_id}, {"$set": {"call_notes": notes}})
     doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
     return Lead(**doc)
+
+
+CALL_OUTCOME_STATUS = {
+    "callback": "callback",
+    "thinking": "thinking",
+    "kp_sent": "sent_kp",
+    "won": "won",
+    "lost": "lost",
+}
+MAX_NO_ANSWER_ATTEMPTS = 5
+
+
+async def _bg_call_calendar(title: str, date_str: str, description: str):
+    if _gc_simple is None:
+        return
+    try:
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        if not token_doc:
+            logging.getLogger(__name__).warning("_bg_call_calendar: no Google token in DB")
+            return
+        await asyncio.to_thread(_gc_simple, title, date_str, description, token_doc)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_bg_call_calendar failed: {e}")
+
+
+class CallLogPayload(BaseModel):
+    outcome: str
+    comment: Optional[str] = ""
+    next_call: Optional[str] = None
+
+
+@api_router.post("/leads/{item_id}/call", response_model=Lead)
+async def log_call(item_id: str, payload: CallLogPayload, background_tasks: BackgroundTasks,
+                   current_user: Optional[dict] = Depends(_get_user_from_token)):
+    doc = await db.leads.find_one({"id": item_id, "deleted": {"$ne": True}}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+
+    now = datetime.now(timezone.utc)
+    old_status = doc.get("status")
+
+    await db.calls.insert_one({
+        "id": str(uuid.uuid4()),
+        "lead_id": item_id,
+        "outcome": payload.outcome,
+        "comment": payload.comment or "",
+        "next_call": payload.next_call,
+        "user_id": (current_user or {}).get("id", ""),
+        "created_at": now.isoformat(),
+    })
+
+    attempts = (doc.get("call_attempts") or 0) + 1 if payload.outcome == "no_answer" else 0
+
+    auto_set: dict = {
+        "call_attempts": attempts,
+        "last_call": now.strftime("%Y-%m-%d"),
+    }
+    new_status = CALL_OUTCOME_STATUS.get(payload.outcome)
+    if new_status:
+        auto_set["status"] = new_status
+    elif payload.outcome == "no_answer" and attempts >= MAX_NO_ANSWER_ATTEMPTS:
+        auto_set["status"] = "no_contact"
+
+    next_call_dt = None
+    if payload.next_call:
+        next_call_dt = datetime.fromisoformat(payload.next_call.replace("Z", "+00:00"))
+        auto_set["next_call"] = next_call_dt.strftime("%Y-%m-%d")
+
+    await db.leads.update_one({"id": item_id}, {"$set": auto_set})
+    doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
+
+    await db.lead_activity.insert_one({
+        "id": str(uuid.uuid4()),
+        "lead_id": item_id,
+        "user_id": (current_user or {}).get("id", ""),
+        "action": "call",
+        "old_status": old_status,
+        "new_status": auto_set.get("status", old_status),
+        "timestamp": now,
+        "date": now.strftime("%Y-%m-%d"),
+    })
+
+    if next_call_dt:
+        next_call_date = next_call_dt.strftime("%Y-%m-%d")
+        next_call_time = next_call_dt.strftime("%H:%M")
+        label = doc.get("company") or doc.get("name") or ""
+        task_title = f"Перезвонить: {label}"
+        existing = await db.tasks.find_one({"title": task_title, "due_date": next_call_date})
+        if not existing:
+            task_obj = {
+                "id": str(uuid.uuid4()),
+                "title": task_title,
+                "task_type": "call",
+                "due_date": next_call_date,
+                "due_time": next_call_time,
+                "status": "pending",
+                "description": f"Лид: {doc.get('name', '')}, {doc.get('phone', '')}. {payload.comment or ''}".strip(),
+                "created_by": (current_user or {}).get("id", ""),
+                "created_at": now_iso(),
+                "google_task_id": None,
+            }
+            await db.tasks.insert_one(task_obj)
+            background_tasks.add_task(_bg_gt_create, task_obj)
+            background_tasks.add_task(
+                _bg_call_calendar,
+                task_title,
+                next_call_date,
+                f"{doc.get('phone', '')} в {next_call_time} · {payload.comment or ''}".strip(" ·"),
+            )
+
+    background_tasks.add_task(_bg_push_lead, doc)
+    return Lead(**doc)
+
+
+@api_router.get("/leads/{item_id}/calls")
+async def get_call_history(item_id: str):
+    docs = await db.calls.find({"lead_id": item_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"calls": docs}
 
 
 make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)
