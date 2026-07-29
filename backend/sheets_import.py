@@ -62,8 +62,21 @@ SCOPES = [
 
 
 # ===== helpers =====
+_GARBAGE_VALUES = {"#ERROR!", "#N/A", "#REF!", "#VALUE!", "null", "undefined"}
+
+
+def clean(value) -> str:
+    """Убрать мусорные формулы-ошибки Google Sheets и неразрывные пробелы."""
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if s in _GARBAGE_VALUES:
+        return ""
+    return s.replace("\xa0", " ")
+
+
 def _s(v) -> str:
-    return (str(v) if v is not None else "").strip()
+    return clean(v)
 
 
 def _money(v) -> float:
@@ -310,6 +323,47 @@ def parse_lead(row: List[str]) -> Optional[Dict[str, Any]]:
     }
 
 
+async def upsert_record(db, collection: str, key_field: str, key_value: str, data: Dict[str, Any], mode: str = "merge") -> str:
+    """Записать данные из Sheet в Mongo не затирая уже заполненные в CRM поля.
+
+    mode='merge' (по умолчанию): у существующей записи обновляются только те поля,
+      которые сейчас пусты в CRM — так реквизиты/правки, сделанные вручную в CRM,
+      не пропадают при повторном импорте из таблицы.
+    mode='replace': полная перезапись — только для явного ручного форс-ресинка.
+    """
+    key_value = _s(key_value)
+    if not key_value:
+        return "skipped"
+
+    existing = await db[collection].find_one({key_field: key_value})
+
+    if not existing:
+        data = dict(data)
+        data.setdefault("created_at", _now_iso())
+        await db[collection].insert_one(data)
+        return "created"
+
+    if mode == "replace":
+        patch = {k: v for k, v in data.items() if k not in ("id", "_id", "created_at")}
+        if patch:
+            await db[collection].update_one({"_id": existing["_id"]}, {"$set": patch})
+        return "replaced"
+
+    patch = {}
+    for k, v in data.items():
+        if k in ("created_at", "id", "_id"):
+            continue
+        if v in (None, "", 0):
+            continue
+        if existing.get(k) in (None, "", 0):
+            patch[k] = v
+
+    if patch:
+        await db[collection].update_one({"_id": existing["_id"]}, {"$set": patch})
+        return "merged"
+    return "skipped"
+
+
 # ===== main importer =====
 class SheetsImporter:
     def __init__(self):
@@ -398,17 +452,33 @@ class SheetsImporter:
         return out
 
 
-async def run_import(db) -> Dict[str, Any]:
-    """Полный импорт: читаем 3 листа -> заменяем коллекции в Mongo.
-    Sheet остаётся неизменной.
+_ALL_TARGETS = ("clients", "carriers", "orders", "leads")
+_CRM_ONLY_ORDER_FIELDS = {"client_paid", "carrier_paid", "client_paid_date", "carrier_paid_date",
+                           "docs_to_client_sent", "docs_from_client_received",
+                           "docs_to_carrier_sent", "docs_from_carrier_received",
+                           "docs_to_client_sent_date", "docs_from_client_received_date",
+                           "docs_to_carrier_sent_date", "docs_from_carrier_received_date",
+                           "calendar_event_id", "calendar_event_url",
+                           "doc_url_client", "doc_url_carrier", "doc_url_act",
+                           "notes", "deleted", "deleted_at"}
+
+
+async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge") -> Dict[str, Any]:
+    """Импорт из Google Sheets в Mongo.
+
+    targets: какие коллекции синхронизировать (по умолчанию — все 4).
+    mode: 'merge' (по умолчанию) — не затирать уже заполненные в CRM поля;
+          'replace' — принудительная полная перезапись (ручной форс-ресинк).
+    Sheet остаётся неизменной (импорт однонаправленный: Sheets -> CRM).
     """
+    want = set(targets) if targets else set(_ALL_TARGETS)
     importer = SheetsImporter()
 
     def _fetch():
-        clients = importer.import_clients()
-        carriers = importer.import_carriers()
-        orders = importer.import_orders(clients, carriers)
-        leads = importer.import_leads()
+        clients = importer.import_clients() if ("clients" in want or "orders" in want) else []
+        carriers = importer.import_carriers() if ("carriers" in want or "orders" in want) else []
+        orders = importer.import_orders(clients, carriers) if "orders" in want else []
+        leads = importer.import_leads() if "leads" in want else []
         return clients, carriers, orders, leads
 
     try:
@@ -424,70 +494,69 @@ async def run_import(db) -> Dict[str, Any]:
         logger.error(f"[Sheets import] failed: {err_msg}", exc_info=True)
         return {"ok": False, "message": err_msg, "imported": {}}
 
-    # Клиенты и перевозчики: полная замена из Sheet
-    await db.clients.delete_many({})
-    if clients:
-        await db.clients.insert_many(clients)
+    counts: Dict[str, Dict[str, int]] = {}
 
-    await db.carriers.delete_many({})
-    if carriers:
-        await db.carriers.insert_many(carriers)
+    # Клиенты: merge-upsert по названию — не затирать заполненные в CRM реквизиты
+    if "clients" in want:
+        c_counts = {"created": 0, "merged": 0, "replaced": 0, "skipped": 0}
+        for c in clients:
+            r = await upsert_record(db, "clients", "name", c.get("name", ""), c, mode=mode)
+            c_counts[r] += 1
+        counts["clients"] = c_counts
 
-    # Заявки: upsert по order_number — не перезаписываем статус если в CRM уже done/cancelled
-    _CRM_ONLY_ORDER_FIELDS = {"client_paid", "carrier_paid", "client_paid_date", "carrier_paid_date",
-                               "docs_to_client_sent", "docs_from_client_received",
-                               "docs_to_carrier_sent", "docs_from_carrier_received",
-                               "docs_to_client_sent_date", "docs_from_client_received_date",
-                               "docs_to_carrier_sent_date", "docs_from_carrier_received_date",
-                               "calendar_event_id", "calendar_event_url",
-                               "doc_url_client", "doc_url_carrier", "doc_url_act",
-                               "notes", "deleted", "deleted_at"}
-    existing_orders = {o["order_number"]: o for o in await db.orders.find(
-        {"order_number": {"$exists": True, "$ne": ""}}, {"_id": 0}
-    ).to_list(100000)}
+    # Перевозчики: merge-upsert по названию компании — чинит пропадающие реквизиты
+    if "carriers" in want:
+        cr_counts = {"created": 0, "merged": 0, "replaced": 0, "skipped": 0}
+        for c in carriers:
+            r = await upsert_record(db, "carriers", "company_name", c.get("company_name", ""), c, mode=mode)
+            cr_counts[r] += 1
+        counts["carriers"] = cr_counts
 
-    for order in orders:
-        num = order.get("order_number", "")
-        existing = existing_orders.get(num)
-        if existing:
-            # Keep CRM-managed status if it's a terminal state
-            crm_status = existing.get("status", "")
-            if crm_status in ("done", "cancelled", "in_progress") and order.get("status") == "new":
-                order["status"] = crm_status
-            # Preserve CRM-only fields and existing id (avoid breaking references)
-            order["id"] = existing.get("id", order["id"])
-            for field in _CRM_ONLY_ORDER_FIELDS:
-                if field in existing and existing[field]:
-                    order[field] = existing[field]
-            await db.orders.replace_one({"order_number": num}, order, upsert=True)
-        else:
-            # Use replace_one+upsert instead of insert_one to be idempotent
-            await db.orders.replace_one({"order_number": num}, order, upsert=True)
+    # Заявки: upsert по order_number — не перезаписываем статус если в CRM уже done/cancelled,
+    # и не трогаем CRM-only поля (оплаты, документы, заметки)
+    if "orders" in want:
+        existing_orders = {o["order_number"]: o for o in await db.orders.find(
+            {"order_number": {"$exists": True, "$ne": ""}}, {"_id": 0}
+        ).to_list(100000)}
 
-    # Remove orders that no longer exist in Sheet (soft check — only if sheet has data)
-    if orders:
-        sheet_numbers = {o["order_number"] for o in orders if o.get("order_number")}
-        await db.orders.delete_many({
-            "order_number": {"$nin": list(sheet_numbers), "$exists": True, "$ne": ""},
-            "deleted": {"$ne": True},
-        })
+        for order in orders:
+            num = order.get("order_number", "")
+            existing = existing_orders.get(num)
+            if existing and mode != "replace":
+                # Keep CRM-managed status if it's a terminal state
+                crm_status = existing.get("status", "")
+                if crm_status in ("done", "cancelled", "in_progress") and order.get("status") == "new":
+                    order["status"] = crm_status
+                # Preserve CRM-only fields and existing id (avoid breaking references)
+                order["id"] = existing.get("id", order["id"])
+                for field in _CRM_ONLY_ORDER_FIELDS:
+                    if field in existing and existing[field]:
+                        order[field] = existing[field]
+                await db.orders.replace_one({"order_number": num}, order, upsert=True)
+            else:
+                # Use replace_one+upsert instead of insert_one to be idempotent
+                await db.orders.replace_one({"order_number": num}, order, upsert=True)
 
-    # Лиды: upsert по имени чтобы не затирать call_notes / last_call из CRM
-    _LEADS_MONGO_ONLY = {"call_notes", "last_call", "id"}
-    for lead in leads:
-        sheet_fields = {k: v for k, v in lead.items() if k not in _LEADS_MONGO_ONLY}
-        await db.leads.update_one(
-            {"name": lead["name"]},
-            {
-                "$set": sheet_fields,
-                "$setOnInsert": {
-                    "id": lead["id"],
-                    "call_notes": [],
-                    "last_call": "",
-                },
-            },
-            upsert=True,
-        )
+        # Remove orders that no longer exist in Sheet (soft check — only if sheet has data)
+        if orders:
+            sheet_numbers = {o["order_number"] for o in orders if o.get("order_number")}
+            await db.orders.delete_many({
+                "order_number": {"$nin": list(sheet_numbers), "$exists": True, "$ne": ""},
+                "deleted": {"$ne": True},
+            })
+
+    # Лиды: merge-upsert по телефону (с fallback на имя) — не затирать call_notes,
+    # стадию и правки, сделанные в CRM во время звонков.
+    # upsert_record сам не трогает id/created_at при обновлении, а call_notes/last_call
+    # никогда не попадают в данные из Sheet (их нет в parse_lead), поэтому остаются нетронутыми.
+    if "leads" in want:
+        l_counts = {"created": 0, "merged": 0, "replaced": 0, "skipped": 0}
+        for lead in leads:
+            phone = _s(lead.get("phone"))
+            key_field, key_value = ("phone", phone) if phone else ("name", lead.get("name", ""))
+            r = await upsert_record(db, "leads", key_field, key_value, lead, mode=mode)
+            l_counts[r] += 1
+        counts["leads"] = l_counts
 
     # Кэшируем последний статус
     last = {
@@ -499,10 +568,11 @@ async def run_import(db) -> Dict[str, Any]:
             "orders": len(orders),
             "leads": len(leads),
         },
+        "counts": counts,
         "at": _now_iso(),
     }
     _last_import_status.update(last)
-    logger.info(f"[Sheets import] {last['imported']}")
+    logger.info(f"[Sheets import] {last['imported']} counts={counts}")
     return last
 
 

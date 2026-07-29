@@ -4,7 +4,7 @@ logger = logging.getLogger(__name__)
 logger.info("Starting server...")
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Request, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Request, Depends, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -205,9 +205,51 @@ async def _auto_sync_loop():
         if _sheets_run_import is None:
             continue
         try:
-            await _sheets_run_import(db)
+            await _sheets_run_import(db, mode="merge")
         except Exception as e:
             logging.getLogger(__name__).error(f"auto sync failed: {e}")
+
+
+async def _background_sheets_sync():
+    """Первая синхронизация после старта — не блокирует ответ health-check'у.
+    Даём Render/uvicorn несколько секунд, чтобы принять первые запросы, до похода в Google Sheets.
+    """
+    await asyncio.sleep(15)
+    if _sheets_run_import is None:
+        return
+    try:
+        result = await _sheets_run_import(db, mode="merge")
+        logging.getLogger(__name__).info(f"[Sheets background sync] {result.get('imported')}")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"[Sheets background sync] failed: {e}")
+
+
+async def ensure_indexes():
+    await db.orders.create_index("id")
+    await db.orders.create_index("order_number")
+    await db.orders.create_index([("created_at", -1)])
+    await db.orders.create_index("client_id")
+    await db.orders.create_index("carrier_id")
+    await db.orders.create_index([("deleted", 1), ("status", 1)])
+    await db.orders.create_index("load_date")
+
+    await db.clients.create_index("id")
+    await db.clients.create_index("name")
+
+    await db.carriers.create_index("id")
+    await db.carriers.create_index("company_name")
+
+    await db.leads.create_index("id")
+    await db.leads.create_index("phone")
+    await db.leads.create_index([("stage", 1), ("next_call", 1)])
+    await db.leads.create_index("industry")
+
+    await db.tasks.create_index([("status", 1), ("deadline", 1)])
+    await db.call_logs.create_index([("lead_id", 1), ("created_at", -1)])
+    await db.payments_in.create_index("date")
+    await db.payments_out.create_index("date")
+
+    logging.getLogger(__name__).info("Indexes ensured")
 
 
 # ====== Backup helpers ======
@@ -309,6 +351,8 @@ async def lifespan(app: FastAPI):
             _docs_get_generator().set_user_credentials_provider(_sync_user_creds_provider)
         except Exception as _e:
             logging.getLogger(__name__).warning(f"docs_gen user creds wiring failed: {_e}")
+    await ensure_indexes()
+    asyncio.create_task(_background_sheets_sync())
     asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_trash_purge_loop())
@@ -2523,14 +2567,20 @@ async def sync_sheets_status():
 
 
 @api_router.post("/sync/import_from_sheets")
-async def import_from_sheets():
-    """Импорт всех клиентов / перевозчиков / заказов из Google Таблицы в CRM.
+async def import_from_sheets(
+    collections: str = Query(""),
+    mode: str = Query("merge"),
+    current_user: dict = Depends(_require_user),
+):
+    """Импорт клиентов / перевозчиков / заказов / лидов из Google Таблицы в CRM.
     ОДНОСТОРОННЕ: только Sheets -> CRM. Таблица не изменяется.
-    Полностью заменяет данные в коллекциях clients/carriers/orders в MongoDB.
+    mode='merge' (по умолчанию) — не затирает уже заполненные в CRM поля.
+    collections — через запятую (clients,carriers,orders,leads), пусто = все.
     """
     if _sheets_run_import is None:
         raise HTTPException(500, "Импорт недоступен")
-    return await _sheets_run_import(db)
+    targets = [c.strip() for c in collections.split(",") if c.strip()] or None
+    return await _sheets_run_import(db, targets=targets, mode=mode)
 
 
 @api_router.get("/sync/import_status")
