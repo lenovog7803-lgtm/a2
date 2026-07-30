@@ -225,30 +225,42 @@ async def _background_sheets_sync():
 
 
 async def ensure_indexes():
-    await db.orders.create_index("id")
-    await db.orders.create_index("order_number")
-    await db.orders.create_index([("created_at", -1)])
-    await db.orders.create_index("client_id")
-    await db.orders.create_index("carrier_id")
-    await db.orders.create_index([("deleted", 1), ("status", 1)])
-    await db.orders.create_index("load_date")
+    marker = await db.app_settings.find_one({"key": "indexes_ensured_at"})
+    if marker:
+        last = datetime.fromisoformat(marker["value"])
+        if datetime.now(timezone.utc) - last < timedelta(hours=24):
+            logging.getLogger(__name__).info("Indexes checked recently, skipping")
+            return
 
-    await db.clients.create_index("id")
-    await db.clients.create_index("name")
+    await db.orders.create_index("id", background=True)
+    await db.orders.create_index("order_number", background=True)
+    await db.orders.create_index([("created_at", -1)], background=True)
+    await db.orders.create_index("client_id", background=True)
+    await db.orders.create_index("carrier_id", background=True)
+    await db.orders.create_index([("deleted", 1), ("status", 1)], background=True)
+    await db.orders.create_index("load_date", background=True)
 
-    await db.carriers.create_index("id")
-    await db.carriers.create_index("company_name")
+    await db.clients.create_index("id", background=True)
+    await db.clients.create_index("name", background=True)
 
-    await db.leads.create_index("id")
-    await db.leads.create_index("phone")
-    await db.leads.create_index([("stage", 1), ("next_call", 1)])
-    await db.leads.create_index("industry")
+    await db.carriers.create_index("id", background=True)
+    await db.carriers.create_index("company_name", background=True)
 
-    await db.tasks.create_index([("status", 1), ("deadline", 1)])
-    await db.call_logs.create_index([("lead_id", 1), ("created_at", -1)])
-    await db.payments_in.create_index("date")
-    await db.payments_out.create_index("date")
+    await db.leads.create_index("id", background=True)
+    await db.leads.create_index("phone", background=True)
+    await db.leads.create_index([("stage", 1), ("next_call", 1)], background=True)
+    await db.leads.create_index("industry", background=True)
 
+    await db.tasks.create_index([("status", 1), ("deadline", 1)], background=True)
+    await db.call_logs.create_index([("lead_id", 1), ("created_at", -1)], background=True)
+    await db.payments_in.create_index("date", background=True)
+    await db.payments_out.create_index("date", background=True)
+
+    await db.app_settings.update_one(
+        {"key": "indexes_ensured_at"},
+        {"$set": {"key": "indexes_ensured_at", "value": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
     logging.getLogger(__name__).info("Indexes ensured")
 
 
@@ -344,32 +356,41 @@ async def _trash_purge_loop():
         await asyncio.sleep(60)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    if _docs_get_generator is not None:
-        try:
-            _docs_get_generator().set_user_credentials_provider(_sync_user_creds_provider)
-        except Exception as _e:
-            logging.getLogger(__name__).warning(f"docs_gen user creds wiring failed: {_e}")
-    await ensure_indexes()
+async def _deferred_init():
+    """Всё, что трогает базу, уезжает сюда — health-check не должен ждать ни строчки из этого."""
+    try:
+        count = await db.users.count_documents({"role": "admin"})
+        if count == 0:
+            admin = {
+                "id": str(uuid.uuid4()),
+                "name": "Администратор",
+                "login": "admin",
+                "password_hash": _hash_password("admin123"),
+                "role": "admin",
+                "created_at": now_iso(),
+            }
+            await db.users.insert_one(admin)
+            logging.getLogger(__name__).info("Created default admin user (login=admin, password=admin123)")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"admin user init failed: {e}")
+
+    try:
+        await _migrate_leads_stage()
+    except Exception as e:
+        logging.getLogger(__name__).error(f"_migrate_leads_stage failed: {e}")
+
+    await asyncio.sleep(5)
+    try:
+        await ensure_indexes()
+    except Exception as e:
+        logging.getLogger(__name__).error(f"ensure_indexes failed: {e}")
+
     asyncio.create_task(_background_sheets_sync())
     asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_trash_purge_loop())
     asyncio.create_task(_token_refresh_loop())
-    count = await db.users.count_documents({"role": "admin"})
-    if count == 0:
-        admin = {
-            "id": str(uuid.uuid4()),
-            "name": "Администратор",
-            "login": "admin",
-            "password_hash": _hash_password("admin123"),
-            "role": "admin",
-            "created_at": now_iso(),
-        }
-        await db.users.insert_one(admin)
-        logging.getLogger(__name__).info("Created default admin user (login=admin, password=admin123)")
-    await _migrate_leads_stage()
+
     # Debug: print last 30 carriers to inspect field names
     try:
         _debug_carriers = await db.carriers.find({"deleted": {"$ne": True}}).sort("created_at", -1).to_list(30)
@@ -378,6 +399,17 @@ async def lifespan(app: FastAPI):
             print({k: v for k, v in _c.items() if k not in ['_id']})
     except Exception as _ce:
         print(f"[startup] carriers debug error: {_ce}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if _docs_get_generator is not None:
+        try:
+            _docs_get_generator().set_user_credentials_provider(_sync_user_creds_provider)
+        except Exception as _e:
+            logging.getLogger(__name__).warning(f"docs_gen user creds wiring failed: {_e}")
+    logger.info("Starting server...")
+    asyncio.create_task(_deferred_init())
     yield
     client.close()
 
