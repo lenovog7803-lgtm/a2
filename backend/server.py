@@ -922,6 +922,15 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
             q["deleted"] = {"$ne": True}
         doc = await db[collection].find_one(q, {"_id": 0})
         if not doc:
+            try:
+                from bson import ObjectId
+                q2: dict = {"_id": ObjectId(item_id)}
+                if soft_delete:
+                    q2["deleted"] = {"$ne": True}
+                doc = await db[collection].find_one(q2, {"_id": 0})
+            except Exception:
+                pass
+        if not doc:
             raise HTTPException(404, "Not found")
         return ModelCls(**doc)
 
@@ -1894,7 +1903,7 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     old_doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not old_doc:
         raise HTTPException(404, "Order not found")
-    update_data = {k: v for k, v in payload.dict().items() if v is not None}
+    update_data = payload.dict(exclude_unset=True)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if update_data.get("client_paid") is True and "client_paid_date" not in update_data:
         if not old_doc.get("client_paid"):
