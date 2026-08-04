@@ -772,6 +772,7 @@ class Lead(BaseModel):
     assigned_to: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
     updated_at: Optional[str] = None
+    stage_changed_at: Optional[str] = None
 
 
 class LeadPayload(BaseModel):
@@ -941,16 +942,18 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
         if collection == "leads":
             old_doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
             old_status = (old_doc or {}).get("stage")
-        await db[collection].update_one({"id": item_id}, {"$set": payload.dict(exclude_none=True)})
+        upd = payload.dict(exclude_none=True)
+        if collection == "leads" and "stage" in upd and upd["stage"] != old_status:
+            upd["stage_changed_at"] = datetime.now(timezone.utc).isoformat()
+        await db[collection].update_one({"id": item_id}, {"$set": upd})
         doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
         if not doc:
             raise HTTPException(404, "Not found")
         if collection == "leads":
             new_status = doc.get("stage")
-            p_dict = payload.dict(exclude_none=True)
             if new_status != old_status:
                 action = "status_change"
-            elif any(k in p_dict for k in ("call_notes", "last_contact", "next_call")):
+            elif any(k in upd for k in ("call_notes", "last_contact", "next_call")):
                 action = "call"
             else:
                 action = "update"
@@ -1327,6 +1330,9 @@ async def log_call(item_id: str, payload: dict, background_tasks: BackgroundTask
                     upd["cadence_step"] = new_step
                     next_call = auto_date
                     upd["next_call"] = next_call
+
+    if "stage" in upd and upd["stage"] != lead.get("stage"):
+        upd["stage_changed_at"] = now.isoformat()
 
     await db.leads.update_one({"id": item_id}, {"$set": upd})
 
