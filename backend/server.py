@@ -2126,6 +2126,8 @@ async def mark_payment(order_id: str, side: str, payload: PaymentMark, backgroun
             "pp_number": payload.pp_number or "",
             "date": pay_date,
             "amount": amount or 0,
+            "order_id": order_id,
+            "order_number": order.get("order_number") or "",
             "notes": f"Заявка {order.get('order_number') or order_id}",
             "created_at": now_iso(),
         }
@@ -3380,6 +3382,8 @@ class PaymentIn(BaseModel):
     amount: float
     client_id: Optional[str] = ""
     client_name: Optional[str] = ""
+    order_id: Optional[str] = ""
+    order_number: Optional[str] = ""
     notes: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
@@ -3390,6 +3394,8 @@ class PaymentInPayload(BaseModel):
     amount: float
     client_id: Optional[str] = ""
     client_name: Optional[str] = ""
+    order_id: Optional[str] = ""
+    order_number: Optional[str] = ""
     notes: Optional[str] = ""
 
 
@@ -3443,6 +3449,8 @@ class PaymentOut(BaseModel):
     amount: float
     carrier_id: Optional[str] = ""
     carrier_name: Optional[str] = ""
+    order_id: Optional[str] = ""
+    order_number: Optional[str] = ""
     notes: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
 
@@ -3453,6 +3461,8 @@ class PaymentOutPayload(BaseModel):
     amount: float
     carrier_id: Optional[str] = ""
     carrier_name: Optional[str] = ""
+    order_id: Optional[str] = ""
+    order_number: Optional[str] = ""
     notes: Optional[str] = ""
 
 
@@ -3796,7 +3806,8 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             for o in orders
         ]
         right_rows = [
-            {"date": _fmt(p.get("date")), "doc": f"ПП {p.get('pp_number', '')} от {_fmt(p.get('date', ''))}",
+            {"date": _fmt(p.get("date")),
+             "doc": f"ПП {p.get('pp_number', '')} от {_fmt(p.get('date', ''))}" + (f" ({p['order_number']})" if p.get("order_number") else ""),
              "sum": f"{float(p.get('amount') or 0):.2f}"}
             for p in payments
         ]
@@ -3841,7 +3852,8 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             for o in orders
         ]
         right_rows = [
-            {"date": _fmt(p.get("date")), "doc": f"ПП {p.get('pp_number', '')} от {_fmt(p.get('date', ''))}",
+            {"date": _fmt(p.get("date")),
+             "doc": f"ПП {p.get('pp_number', '')} от {_fmt(p.get('date', ''))}" + (f" ({p['order_number']})" if p.get("order_number") else ""),
              "sum": f"{float(p.get('amount') or 0):.2f}"}
             for p in payments
         ]
