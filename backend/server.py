@@ -3117,41 +3117,31 @@ async def analytics(month: Optional[str] = None, current_user: dict = Depends(_r
     }
 
 
-# ====== Global Search ======
+# ====== Global Search (Cmd+K palette) ======
 @api_router.get("/search")
-async def global_search(q: str = "", current_user: dict = Depends(_require_user)):
-    if len(q) < 2:
-        return {"orders": [], "clients": [], "carriers": [], "leads": []}
-    regex = {"$regex": q, "$options": "i"}
+async def global_search(q: str = "", current_user: Optional[dict] = Depends(_get_user_from_token)):
+    if not q or len(q.strip()) < 2:
+        return {"results": []}
+    rx = {"$regex": q.strip(), "$options": "i"}
 
-    async def _search_orders():
-        return await db.orders.find(
-            {"deleted": {"$ne": True}, "$or": [{"order_number": regex}, {"client_name": regex}, {"carrier_name": regex}]},
-            {"_id": 0, "id": 1, "order_number": 1, "client_name": 1, "carrier_name": 1, "status": 1},
-        ).to_list(5)
+    orders = await db.orders.find({
+        "deleted": {"$ne": True},
+        "$or": [{"order_number": rx}, {"client_name": rx}, {"carrier_name": rx}, {"route_from": rx}, {"route_to": rx}],
+    }, {"_id": 0}).limit(8).to_list(8)
 
-    async def _search_clients():
-        return await db.clients.find(
-            {"deleted": {"$ne": True}, "$or": [{"name": regex}, {"phone": regex}, {"city": regex}]},
-            {"_id": 0, "id": 1, "name": 1, "phone": 1, "city": 1},
-        ).to_list(5)
+    clients = await db.clients.find({"deleted": {"$ne": True}, "name": rx}, {"_id": 0}).limit(8).to_list(8)
+    carriers = await db.carriers.find({"deleted": {"$ne": True}, "company_name": rx}, {"_id": 0}).limit(8).to_list(8)
+    leads = await db.leads.find({"deleted": {"$ne": True}, "$or": [{"name": rx}, {"phone": rx}]}, {"_id": 0}).limit(8).to_list(8)
+    tasks = await db.tasks.find({"title": rx, "status": {"$ne": "done"}}, {"_id": 0}).limit(8).to_list(8)
 
-    async def _search_carriers():
-        return await db.carriers.find(
-            {"deleted": {"$ne": True}, "$or": [{"company_name": regex}, {"phone": regex}, {"city": regex}]},
-            {"_id": 0, "id": 1, "company_name": 1, "phone": 1, "city": 1},
-        ).to_list(5)
-
-    async def _search_leads():
-        return await db.leads.find(
-            {"deleted": {"$ne": True}, "$or": [{"name": regex}, {"company": regex}, {"phone": regex}]},
-            {"_id": 0, "id": 1, "name": 1, "company": 1, "phone": 1, "stage": 1},
-        ).to_list(5)
-
-    orders_r, clients_r, carriers_r, leads_r = await asyncio.gather(
-        _search_orders(), _search_clients(), _search_carriers(), _search_leads()
+    results = (
+        [{"type": "order", "id": o["id"], "title": o.get("order_number", ""), "subtitle": f"{o.get('client_name','')} · {o.get('route_from','')} → {o.get('route_to','')}"} for o in orders] +
+        [{"type": "client", "id": c["id"], "title": c.get("name", ""), "subtitle": c.get("phone", "") or "Клиент"} for c in clients] +
+        [{"type": "carrier", "id": c["id"], "title": c.get("company_name", ""), "subtitle": c.get("phone", "") or "Перевозчик"} for c in carriers] +
+        [{"type": "lead", "id": l["id"], "title": l.get("name", ""), "subtitle": l.get("phone", "") or "Лид"} for l in leads] +
+        [{"type": "task", "id": t["id"], "title": t.get("title", ""), "subtitle": "Задача"} for t in tasks]
     )
-    return {"orders": orders_r, "clients": clients_r, "carriers": carriers_r, "leads": leads_r}
+    return {"results": results}
 
 
 # ====== Seed ======
@@ -4023,32 +4013,6 @@ async def root():
 @api_router.get("/ping")
 async def ping():
     return {"ok": True}
-
-
-@api_router.get("/search")
-async def global_search(q: str, current_user: Optional[dict] = Depends(_get_user_from_token)):
-    if not q or len(q.strip()) < 2:
-        return {"results": []}
-    rx = {"$regex": q.strip(), "$options": "i"}
-
-    orders = await db.orders.find({
-        "deleted": {"$ne": True},
-        "$or": [{"order_number": rx}, {"client_name": rx}, {"carrier_name": rx}, {"route_from": rx}, {"route_to": rx}],
-    }, {"_id": 0}).limit(8).to_list(8)
-
-    clients = await db.clients.find({"deleted": {"$ne": True}, "name": rx}, {"_id": 0}).limit(8).to_list(8)
-    carriers = await db.carriers.find({"deleted": {"$ne": True}, "company_name": rx}, {"_id": 0}).limit(8).to_list(8)
-    leads = await db.leads.find({"deleted": {"$ne": True}, "$or": [{"name": rx}, {"phone": rx}]}, {"_id": 0}).limit(8).to_list(8)
-    tasks = await db.tasks.find({"title": rx, "status": {"$ne": "done"}}, {"_id": 0}).limit(8).to_list(8)
-
-    results = (
-        [{"type": "order", "id": o["id"], "title": o.get("order_number", ""), "subtitle": f"{o.get('client_name','')} · {o.get('route_from','')} → {o.get('route_to','')}"} for o in orders] +
-        [{"type": "client", "id": c["id"], "title": c.get("name", ""), "subtitle": c.get("phone", "") or "Клиент"} for c in clients] +
-        [{"type": "carrier", "id": c["id"], "title": c.get("company_name", ""), "subtitle": c.get("phone", "") or "Перевозчик"} for c in carriers] +
-        [{"type": "lead", "id": l["id"], "title": l.get("name", ""), "subtitle": l.get("phone", "") or "Лид"} for l in leads] +
-        [{"type": "task", "id": t["id"], "title": t.get("title", ""), "subtitle": "Задача"} for t in tasks]
-    )
-    return {"results": results}
 
 
 @api_router.post("/admin/restore")
