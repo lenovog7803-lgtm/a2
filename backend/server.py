@@ -313,29 +313,14 @@ async def _token_refresh_loop():
             token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
             if not token_doc or not token_doc.get("refresh_token"):
                 continue
-            from google.oauth2.credentials import Credentials
-            from google.auth.transport.requests import Request
-            import os as _os
-            creds = Credentials(
-                token=token_doc.get("access_token"),
-                refresh_token=token_doc.get("refresh_token"),
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=_os.environ.get("GOOGLE_OAUTH_CLIENT_ID"),
-                client_secret=_os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
-                scopes=[
-                    "https://www.googleapis.com/auth/documents",
-                    "https://www.googleapis.com/auth/drive",
-                    "https://www.googleapis.com/auth/tasks",
-                    "https://www.googleapis.com/auth/calendar",
-                    "https://www.googleapis.com/auth/calendar.events",
-                ],
-            )
-            await asyncio.to_thread(creds.refresh, Request())
-            await db.oauth_tokens.update_one(
-                {"_id": "google"},
-                {"$set": {"access_token": creds.token, "updated_at": datetime.now(timezone.utc).isoformat()}},
-            )
-            logging.getLogger(__name__).info("Google OAuth token refreshed automatically")
+            from oauth_google import make_user_credentials
+            _creds, new_token = await asyncio.to_thread(make_user_credentials, token_doc)
+            if new_token:
+                await db.oauth_tokens.update_one(
+                    {"_id": "google"},
+                    {"$set": {"access_token": new_token, "updated_at": datetime.now(timezone.utc).isoformat()}},
+                )
+                logging.getLogger(__name__).info("Google OAuth token refreshed automatically")
         except Exception as e:
             logging.getLogger(__name__).error(f"_token_refresh_loop: refresh failed: {e}")
         await asyncio.sleep(1800)  # 30 minutes

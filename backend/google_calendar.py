@@ -4,7 +4,6 @@ Token doc is fetched by the async caller (server.py) and passed in directly —
 no async calls happen inside these sync functions.
 """
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -21,30 +20,13 @@ _STATUS_COLOR: Dict[str, str] = {
 
 
 def _build_service(token_doc: Dict[str, Any]):
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
+    from oauth_google import make_user_credentials
 
     if not token_doc:
         raise ValueError("No Google OAuth token stored — user must authorize first")
 
-    creds = Credentials(
-        token=token_doc.get("access_token"),
-        refresh_token=token_doc.get("refresh_token"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.environ.get("GOOGLE_OAUTH_CLIENT_ID"),
-        client_secret=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
-        scopes=[
-            "https://www.googleapis.com/auth/calendar",
-            "https://www.googleapis.com/auth/calendar.events",
-            "https://www.googleapis.com/auth/tasks",
-            "https://www.googleapis.com/auth/documents",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-    if creds.refresh_token:
-        creds.refresh(Request())
-
+    creds, _new_token = make_user_credentials(token_doc)
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 

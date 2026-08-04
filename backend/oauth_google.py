@@ -108,7 +108,17 @@ def make_user_credentials(token_doc: Dict[str, Any]) -> Tuple[UserCredentials, O
             creds.refresh(Request())
             new_token = creds.token
         except Exception as e:
-            logger.warning(f"Token refresh failed: {e}")
+            # Surface refresh failures immediately with an actionable message —
+            # swallowing them here used to let a stale access_token pass through,
+            # so the real error only ever showed up later as a cryptic failure
+            # deep inside a Drive/Docs API call.
+            logger.error(f"Token refresh failed: {e}")
+            raise RuntimeError(
+                f"Не удалось обновить Google-токен: {e}. Пройдите авторизацию заново через /api/auth/google/start"
+            ) from e
     elif not creds.valid:
-        logger.warning("No refresh_token and credentials are invalid")
+        raise RuntimeError(
+            "Google OAuth токен недействителен и не может быть обновлён (нет refresh_token). "
+            "Пройдите авторизацию через /api/auth/google/start"
+        )
     return creds, new_token
