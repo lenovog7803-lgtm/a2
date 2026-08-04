@@ -3773,31 +3773,68 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             "$or": [{"client_id": cid}, {"client_name": cp_name}],
             "load_date": {"$lt": date_from},
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
-        }, {"_id": 0, "client_rate": 1}).to_list(10000)
+        }, {"_id": 0, "id": 1, "client_rate": 1, "client_paid": 1}).to_list(10000)
         pmts_before = await db.payments_in.find({
             "$or": [{"client_id": cid}, {"client_name": cp_name}],
             "date": {"$lt": date_from},
-        }, {"_id": 0, "amount": 1}).to_list(10000)
+        }, {"_id": 0, "amount": 1, "order_id": 1}).to_list(10000)
 
-        opening_balance = (
-            sum(float(o.get("client_rate") or 0) for o in orders_before)
-            - sum(float(p.get("amount") or 0) for p in pmts_before)
+        # Некоторые старые заявки помечены оплаченными (client_paid) без
+        # отдельной записи в payments_in — платёж вручную добавляли до того,
+        # как mark_payment стал создавать эти записи автоматически. Чтобы
+        # такие оплаты не пропадали из акта, доверяем прежде всего флагу
+        # оплаты на самой заявке, а payments_in используем только для
+        # платежей, не привязанных ни к какой заявке (order_id пуст).
+        paid_before_order_ids = {p.get("order_id") for p in pmts_before if p.get("order_id")}
+        paid_before = (
+            sum(float(o.get("client_rate") or 0) for o in orders_before
+                if o.get("client_paid") and o.get("id") not in paid_before_order_ids)
+            + sum(float(p.get("amount") or 0) for p in pmts_before if not p.get("order_id"))
         )
+        opening_balance = sum(float(o.get("client_rate") or 0) for o in orders_before) - paid_before
 
-        # Left = наши документы (заявки / отгрузки), Right = оплаты контрагента
-        left_rows = [
+        # Табличная шапка в шаблоне: левая колонка — под именем контрагента
+        # (его платежи, ПП и своя дата), правая — под нашим ИП (наши заявки).
+        paid_order_ids = {p.get("order_id") for p in payments if p.get("order_id")}
+        raw_entries = []
+        for o in orders:
+            if not o.get("client_paid") or o.get("id") in paid_order_ids:
+                continue
+            raw_entries.append({
+                "pp": (o.get("client_pp_number") or "").strip(),
+                "date": o.get("client_pp_date") or o.get("client_paid_date") or o.get("load_date") or "",
+                "sum": float(o.get("client_rate") or 0),
+                "order_number": o.get("order_number", ""),
+            })
+        for p in payments:
+            if p.get("order_id"):
+                continue  # уже учтён выше через флаг заявки
+            raw_entries.append({"pp": (p.get("pp_number") or "").strip(), "date": p.get("date") or "", "sum": float(p.get("amount") or 0), "order_number": ""})
+
+        # Одна платёжка может закрывать несколько заявок сразу (клиент прислал
+        # 1 перевод за 5 заявок) — если номер ПП и дата совпадают, это один и
+        # тот же платёж, схлопываем в одну строку с суммарной суммой.
+        merged: dict = {}
+        loose = []
+        for e in raw_entries:
+            if e["pp"]:
+                key = (e["pp"], e["date"])
+                merged.setdefault(key, {"pp": e["pp"], "date": e["date"], "sum": 0.0})
+                merged[key]["sum"] += e["sum"]
+            else:
+                loose.append(e)
+        left_entries = [{"date": v["date"], "doc": f"ПП {v['pp']} от {_fmt(v['date'])}", "sum": v["sum"]} for v in merged.values()]
+        left_entries += [{"date": e["date"], "doc": (f"Оплата (заявка {e['order_number']})" if e["order_number"] else "Оплата"), "sum": e["sum"]} for e in loose]
+        left_entries.sort(key=lambda e: e["date"])
+        left_rows = [{"date": _fmt(e["date"]), "doc": e["doc"], "sum": f"{e['sum']:.2f}"} for e in left_entries]
+
+        right_rows = [
             {"date": _fmt(o.get("load_date")), "doc": o.get("order_number", ""),
              "sum": f"{float(o.get('client_rate') or 0):.2f}"}
             for o in orders
         ]
-        right_rows = [
-            {"date": _fmt(p.get("date")),
-             "doc": f"ПП {p.get('pp_number', '')} от {_fmt(p.get('date', ''))}" + (f" ({p['order_number']})" if p.get("order_number") else ""),
-             "sum": f"{float(p.get('amount') or 0):.2f}"}
-            for p in payments
-        ]
         total_charged = sum(float(o.get("client_rate") or 0) for o in orders)
-        total_paid    = sum(float(p.get("amount") or 0)    for p in payments)
+        total_paid    = sum(e["sum"] for e in left_entries)
 
     else:  # carrier
         cp_doc = await db.carriers.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
@@ -3820,33 +3857,71 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
             "load_date": {"$lt": date_from},
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
-        }, {"_id": 0, "carrier_rate": 1}).to_list(10000)
+        }, {"_id": 0, "id": 1, "carrier_rate": 1, "carrier_paid": 1}).to_list(10000)
         pmts_before = await db.payments_out.find({
             "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
             "date": {"$lt": date_from},
-        }, {"_id": 0, "amount": 1}).to_list(10000)
+        }, {"_id": 0, "amount": 1, "order_id": 1}).to_list(10000)
 
-        opening_balance = (
-            sum(float(o.get("carrier_rate") or 0) for o in orders_before)
-            - sum(float(p.get("amount") or 0) for p in pmts_before)
+        paid_before_order_ids = {p.get("order_id") for p in pmts_before if p.get("order_id")}
+        paid_before = (
+            sum(float(o.get("carrier_rate") or 0) for o in orders_before
+                if o.get("carrier_paid") and o.get("id") not in paid_before_order_ids)
+            + sum(float(p.get("amount") or 0) for p in pmts_before if not p.get("order_id"))
         )
+        opening_balance = sum(float(o.get("carrier_rate") or 0) for o in orders_before) - paid_before
 
-        left_rows = [
+        # Табличная шапка в шаблоне: левая колонка — под именем контрагента
+        # (его платежи, ПП и своя дата), правая — под нашим ИП (наши заявки).
+        paid_order_ids = {p.get("order_id") for p in payments if p.get("order_id")}
+        raw_entries = []
+        for o in orders:
+            if not o.get("carrier_paid") or o.get("id") in paid_order_ids:
+                continue
+            raw_entries.append({
+                "pp": (o.get("carrier_pp_number") or "").strip(),
+                "date": o.get("carrier_pp_date") or o.get("carrier_paid_date") or o.get("load_date") or "",
+                "sum": float(o.get("carrier_rate") or 0),
+                "order_number": o.get("order_number", ""),
+            })
+        for p in payments:
+            if p.get("order_id"):
+                continue  # уже учтён выше через флаг заявки
+            raw_entries.append({"pp": (p.get("pp_number") or "").strip(), "date": p.get("date") or "", "sum": float(p.get("amount") or 0), "order_number": ""})
+
+        # Одна платёжка может закрывать несколько заявок сразу — если номер
+        # ПП и дата совпадают, схлопываем в одну строку с суммарной суммой.
+        merged: dict = {}
+        loose = []
+        for e in raw_entries:
+            if e["pp"]:
+                key = (e["pp"], e["date"])
+                merged.setdefault(key, {"pp": e["pp"], "date": e["date"], "sum": 0.0})
+                merged[key]["sum"] += e["sum"]
+            else:
+                loose.append(e)
+        left_entries = [{"date": v["date"], "doc": f"ПП {v['pp']} от {_fmt(v['date'])}", "sum": v["sum"]} for v in merged.values()]
+        left_entries += [{"date": e["date"], "doc": (f"Оплата (заявка {e['order_number']})" if e["order_number"] else "Оплата"), "sum": e["sum"]} for e in loose]
+        left_entries.sort(key=lambda e: e["date"])
+        left_rows = [{"date": _fmt(e["date"]), "doc": e["doc"], "sum": f"{e['sum']:.2f}"} for e in left_entries]
+
+        right_rows = [
             {"date": _fmt(o.get("load_date")), "doc": o.get("order_number", ""),
              "sum": f"{float(o.get('carrier_rate') or 0):.2f}"}
             for o in orders
         ]
-        right_rows = [
-            {"date": _fmt(p.get("date")),
-             "doc": f"ПП {p.get('pp_number', '')} от {_fmt(p.get('date', ''))}" + (f" ({p['order_number']})" if p.get("order_number") else ""),
-             "sum": f"{float(p.get('amount') or 0):.2f}"}
-            for p in payments
-        ]
         total_charged = sum(float(o.get("carrier_rate") or 0) for o in orders)
-        total_paid    = sum(float(p.get("amount") or 0)    for p in payments)
+        total_paid    = sum(e["sum"] for e in left_entries)
 
     closing_balance = opening_balance + total_charged - total_paid
-    balance_side    = cp_name if closing_balance > 0 else "ИП Александрович Е.А."
+    # closing_balance > 0 значит "начислено больше, чем оплачено" — для клиента
+    # это долг клиента перед нами, для перевозчика — наш долг перед ним.
+    # Знак один и тот же, а то, кому он "в пользу", у клиента и перевозчика
+    # противоположный.
+    if payload.type == "client":
+        balance_side = OUR_NAME if closing_balance > 0 else cp_name
+    else:
+        balance_side = cp_name if closing_balance > 0 else OUR_NAME
     period_label    = f"с {_fmt(date_from)} по {_fmt(date_to)}"
 
     print(f"[rec] type={payload.type} name={cp_name} period={date_from}–{date_to} "
@@ -3860,8 +3935,8 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         "opening_balance":    round(opening_balance, 2),
         "left_rows":          left_rows,
         "right_rows":         right_rows,
-        "left_total":         round(total_charged, 2),
-        "right_total":        round(total_paid, 2),
+        "left_total":         round(total_paid, 2),
+        "right_total":        round(total_charged, 2),
         "closing_balance":    round(closing_balance, 2),
         "balance_side_text":  f"в пользу {balance_side}",
     }
