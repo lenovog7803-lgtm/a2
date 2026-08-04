@@ -4,7 +4,7 @@ logger = logging.getLogger(__name__)
 logger.info("Starting server...")
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Request, Depends, Query
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Request, Depends, Query, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -265,11 +265,11 @@ async def ensure_indexes():
 
 
 # ====== Backup helpers ======
-_BACKUP_COLLECTIONS = ["orders", "clients", "carriers", "leads", "tasks", "users"]
+_BACKUP_COLLECTIONS = ["orders", "clients", "carriers", "leads", "tasks", "users", "payments_in", "payments_out"]
 _TRASH_COLLECTIONS = ["orders", "clients", "carriers", "leads"]
 
 
-async def _create_backup():
+async def _create_backup(reason: str = "scheduled"):
     snapshot: dict = {}
     for cname in _BACKUP_COLLECTIONS:
         docs = await db[cname].find({}, {"_id": 0}).to_list(100000)
@@ -278,6 +278,8 @@ async def _create_backup():
         "id": str(uuid.uuid4()),
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "created_at": now_iso(),
+        "reason": reason,
+        "counts": {k: len(v) for k, v in snapshot.items()},
         "collections": snapshot,
     }
     await db.backups.insert_one(backup_doc)
@@ -285,7 +287,16 @@ async def _create_backup():
     all_bk = await db.backups.find({}, {"_id": 1, "created_at": 1}).sort("created_at", -1).to_list(100)
     if len(all_bk) > 30:
         await db.backups.delete_many({"_id": {"$in": [b["_id"] for b in all_bk[30:]]}})
-    logging.getLogger(__name__).info(f"Backup created: {backup_doc['id']}")
+    logging.getLogger(__name__).info(f"Backup created: {backup_doc['id']} reason={reason} counts={backup_doc['counts']}")
+    return backup_doc["id"]
+
+
+async def _startup_backup():
+    await asyncio.sleep(60)
+    try:
+        await _create_backup(reason="startup")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Startup backup failed: {e}")
 
 
 async def _purge_old_trash():
@@ -337,7 +348,7 @@ async def _backup_loop():
         if now.hour == 23 and now.minute == 0 and last_date != now.date():
             last_date = now.date()
             try:
-                await _create_backup()
+                await _create_backup(reason="scheduled")
             except Exception as e:
                 logging.getLogger(__name__).error(f"Nightly backup failed: {e}")
         await asyncio.sleep(60)
@@ -388,6 +399,7 @@ async def _deferred_init():
     asyncio.create_task(_background_sheets_sync())
     asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
+    asyncio.create_task(_startup_backup())
     asyncio.create_task(_trash_purge_loop())
     asyncio.create_task(_token_refresh_loop())
 
@@ -416,6 +428,46 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
+
+
+# ====== Realtime (WebSocket broadcast) ======
+class ConnectionManager:
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        if ws in self.active:
+            self.active.remove(ws)
+
+    async def broadcast(self, event: dict):
+        dead = []
+        for ws in self.active:
+            try:
+                await ws.send_json(event)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
+
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # держим соединение, пинги от клиента игнорируем
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        manager.disconnect(websocket)
+
 
 TAX_RATE = 0.20  # 20% — для расчёта прибыли (маржа − налог)
 
@@ -1391,6 +1443,7 @@ async def log_call(item_id: str, payload: dict, background_tasks: BackgroundTask
     doc = await db.leads.find_one({"id": item_id}, {"_id": 0})
     background_tasks.add_task(_bg_push_lead, doc)
 
+    await manager.broadcast({"type": "lead_updated", "lead_id": item_id})
     return {
         "ok": True,
         "log": log,
@@ -1549,6 +1602,16 @@ async def leads_analytics(period: str = "month", current_user: Optional[dict] = 
             "margin": cold_margin,
         },
     }
+
+
+@api_router.get("/leads/calls_by_day")
+async def calls_by_day(date: str, current_user: Optional[dict] = Depends(_get_user_from_token)):
+    start = f"{date}T00:00:00"
+    end = f"{date}T23:59:59"
+    logs = await db.call_logs.find(
+        {"created_at": {"$gte": start, "$lte": end}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    return {"calls": logs, "date": date}
 
 
 make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)
@@ -2019,6 +2082,7 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
         raise HTTPException(404, "Order not found")
     background_tasks.add_task(_bg_push_order, doc)
     background_tasks.add_task(_bg_cal_update, doc)
+    await manager.broadcast({"type": "order_updated", "order_id": order_id})
     return Order(**doc)
 
 
@@ -2073,6 +2137,7 @@ async def mark_payment(order_id: str, side: str, payload: PaymentMark, backgroun
             record["carrier_name"] = order.get("carrier_name") or ""
         await collection.insert_one(record)
 
+    await manager.broadcast({"type": "payment_marked", "order_id": order_id, "side": side})
     return {
         "ok": True,
         paid_field: payload.paid,
@@ -3984,25 +4049,38 @@ async def list_backups(current_user: dict = Depends(_require_user)):
 async def create_backup_manual(current_user: dict = Depends(_require_user)):
     if current_user.get("role") != "admin":
         raise HTTPException(403, "Только для администратора")
-    await _create_backup()
+    await _create_backup(reason="manual")
     return {"ok": True}
 
 
+class RestoreRequest(BaseModel):
+    confirm_word: str
+
+
 @api_router.post("/backup/restore/{backup_id}")
-async def restore_backup(backup_id: str, current_user: dict = Depends(_require_user)):
+async def restore_backup(backup_id: str, payload: RestoreRequest, current_user: dict = Depends(_require_user)):
     if current_user.get("role") != "admin":
         raise HTTPException(403, "Только для администратора")
+    if payload.confirm_word.strip().upper() != "ВОССТАНОВИТЬ":
+        raise HTTPException(400, "Введите слово ВОССТАНОВИТЬ для подтверждения")
+
     doc = await db.backups.find_one({"id": backup_id})
     if not doc:
         raise HTTPException(404, "Бэкап не найден")
+
+    # Снимок текущего состояния перед восстановлением — на случай если откат тоже ошибка
+    await _create_backup(reason=f"pre_restore_{backup_id}")
+
     snapshot = doc.get("collections", {})
+    restored: dict = {}
     for cname, docs_list in snapshot.items():
         if not isinstance(docs_list, list):
             continue
         await db[cname].delete_many({})
         if docs_list:
             await db[cname].insert_many(docs_list)
-    return {"ok": True, "restored_at": now_iso()}
+        restored[cname] = len(docs_list)
+    return {"ok": True, "restored_at": now_iso(), "restored": restored}
 
 
 @api_router.get("/")
