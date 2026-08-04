@@ -4025,6 +4025,32 @@ async def ping():
     return {"ok": True}
 
 
+@api_router.get("/search")
+async def global_search(q: str, current_user: Optional[dict] = Depends(_get_user_from_token)):
+    if not q or len(q.strip()) < 2:
+        return {"results": []}
+    rx = {"$regex": q.strip(), "$options": "i"}
+
+    orders = await db.orders.find({
+        "deleted": {"$ne": True},
+        "$or": [{"order_number": rx}, {"client_name": rx}, {"carrier_name": rx}, {"route_from": rx}, {"route_to": rx}],
+    }, {"_id": 0}).limit(8).to_list(8)
+
+    clients = await db.clients.find({"deleted": {"$ne": True}, "name": rx}, {"_id": 0}).limit(8).to_list(8)
+    carriers = await db.carriers.find({"deleted": {"$ne": True}, "company_name": rx}, {"_id": 0}).limit(8).to_list(8)
+    leads = await db.leads.find({"deleted": {"$ne": True}, "$or": [{"name": rx}, {"phone": rx}]}, {"_id": 0}).limit(8).to_list(8)
+    tasks = await db.tasks.find({"title": rx, "status": {"$ne": "done"}}, {"_id": 0}).limit(8).to_list(8)
+
+    results = (
+        [{"type": "order", "id": o["id"], "title": o.get("order_number", ""), "subtitle": f"{o.get('client_name','')} · {o.get('route_from','')} → {o.get('route_to','')}"} for o in orders] +
+        [{"type": "client", "id": c["id"], "title": c.get("name", ""), "subtitle": c.get("phone", "") or "Клиент"} for c in clients] +
+        [{"type": "carrier", "id": c["id"], "title": c.get("company_name", ""), "subtitle": c.get("phone", "") or "Перевозчик"} for c in carriers] +
+        [{"type": "lead", "id": l["id"], "title": l.get("name", ""), "subtitle": l.get("phone", "") or "Лид"} for l in leads] +
+        [{"type": "task", "id": t["id"], "title": t.get("title", ""), "subtitle": "Задача"} for t in tasks]
+    )
+    return {"results": results}
+
+
 @api_router.post("/admin/restore")
 async def admin_restore():
     all_perms = {
