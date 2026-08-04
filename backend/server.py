@@ -652,6 +652,10 @@ class Order(BaseModel):
     carrier_payment_days: Optional[int] = 20
     carrier_payment_deadline: Optional[str] = ""
     carrier_payment_reminder_date: Optional[str] = ""
+    client_pp_number: Optional[str] = ""
+    client_pp_date: Optional[str] = ""
+    carrier_pp_number: Optional[str] = ""
+    carrier_pp_date: Optional[str] = ""
 
 
 class OrderPayload(BaseModel):
@@ -740,6 +744,10 @@ class OrderUpdate(BaseModel):
     carrier_payment_days: Optional[int] = None
     carrier_payment_deadline: Optional[str] = None
     carrier_payment_reminder_date: Optional[str] = None
+    client_pp_number: Optional[str] = None
+    client_pp_date: Optional[str] = None
+    carrier_pp_number: Optional[str] = None
+    carrier_pp_date: Optional[str] = None
 
 
 class Lead(BaseModel):
@@ -1987,7 +1995,8 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
         actor = (current_user or {}).get("name") or "admin"
         log_entries = []
         skip_log = {"calendar_event_id", "calendar_event_url", "doc_url_client", "doc_url_carrier", "doc_url_act",
-                    "client_paid_date", "carrier_paid_date"}
+                    "client_paid_date", "carrier_paid_date",
+                    "client_pp_number", "client_pp_date", "carrier_pp_number", "carrier_pp_date"}
         for field, new_val in update_data.items():
             if field in skip_log:
                 continue
@@ -2011,6 +2020,66 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     background_tasks.add_task(_bg_push_order, doc)
     background_tasks.add_task(_bg_cal_update, doc)
     return Order(**doc)
+
+
+class PaymentMark(BaseModel):
+    paid: bool
+    pp_number: Optional[str] = None
+    pp_date: Optional[str] = None
+
+
+@api_router.post("/orders/{order_id}/mark_payment")
+async def mark_payment(order_id: str, side: str, payload: PaymentMark, background_tasks: BackgroundTasks,
+                        current_user: Optional[dict] = Depends(_get_user_from_token)):
+    if side not in ("client", "carrier"):
+        raise HTTPException(400, "side must be 'client' or 'carrier'")
+
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Заявка не найдена")
+
+    paid_field = "client_paid" if side == "client" else "carrier_paid"
+    date_field = "client_paid_date" if side == "client" else "carrier_paid_date"
+    pp_field = "client_pp_number" if side == "client" else "carrier_pp_number"
+    pp_date_field = "client_pp_date" if side == "client" else "carrier_pp_date"
+
+    pay_date = payload.pp_date or now_iso()[:10]
+    order_update = OrderUpdate(**{
+        paid_field: payload.paid,
+        date_field: pay_date if payload.paid else None,
+        pp_field: (payload.pp_number or None) if payload.paid else None,
+        pp_date_field: (payload.pp_date or None) if payload.paid else None,
+    })
+    # Reuses update_order()'s existing side effects: task closing, carrier
+    # payment deadline calc, order_logs audit trail, calendar/sheet sync.
+    await update_order(order_id, order_update, background_tasks, current_user)
+
+    if payload.paid:
+        amount = order.get("client_rate") if side == "client" else order.get("carrier_rate")
+        collection = db.payments_in if side == "client" else db.payments_out
+        record = {
+            "id": str(uuid.uuid4()),
+            "pp_number": payload.pp_number or "",
+            "date": pay_date,
+            "amount": amount or 0,
+            "notes": f"Заявка {order.get('order_number') or order_id}",
+            "created_at": now_iso(),
+        }
+        if side == "client":
+            record["client_id"] = order.get("client_id") or ""
+            record["client_name"] = order.get("client_name") or ""
+        else:
+            record["carrier_id"] = order.get("carrier_id") or ""
+            record["carrier_name"] = order.get("carrier_name") or ""
+        await collection.insert_one(record)
+
+    return {
+        "ok": True,
+        paid_field: payload.paid,
+        date_field: pay_date if payload.paid else None,
+        pp_field: payload.pp_number if payload.paid else None,
+        pp_date_field: payload.pp_date if payload.paid else None,
+    }
 
 
 @api_router.post("/orders/{order_id}/sync_doc_urls")
