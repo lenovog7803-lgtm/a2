@@ -2784,6 +2784,22 @@ async def leads_leaderboard(period: str = "today", current_user: dict = Depends(
     return {"leaderboard": result, "period": period}
 
 
+async def _my_dashboard_month(uid: str, month_str: str) -> dict:
+    my, mm = int(month_str[:4]), int(month_str[5:7])
+    start = f"{month_str}-01"
+    end = f"{my + 1}-01-01" if mm == 12 else f"{my}-{mm + 1:02d}-01"
+    calls, won, orders_m = await asyncio.gather(
+        db.call_logs.count_documents({"created_by": uid, "created_at": {"$gte": start, "$lt": end}}),
+        db.leads.count_documents({"assigned_to": uid, "stage": "won", "won_at": {"$gte": start, "$lt": end}}),
+        db.orders.find(
+            {"assigned_to": uid, "load_date": {"$gte": start, "$lt": end}, "deleted": {"$ne": True}},
+            {"_id": 0, "client_rate": 1, "carrier_rate": 1},
+        ).to_list(2000),
+    )
+    margin = sum(_safe_float(o.get("client_rate")) - _safe_float(o.get("carrier_rate")) for o in orders_m)
+    return {"month": month_str, "calls": calls, "won": won, "margin": round(margin, 2)}
+
+
 @api_router.get("/leads/my_dashboard")
 async def my_dashboard(current_user: dict = Depends(_require_user)):
     uid = current_user["id"]
@@ -2799,31 +2815,26 @@ async def my_dashboard(current_user: dict = Depends(_require_user)):
             y -= 1
     months.reverse()
 
-    monthly = []
-    for month_str in months:
-        my, mm = int(month_str[:4]), int(month_str[5:7])
-        start = f"{month_str}-01"
-        end = f"{my + 1}-01-01" if mm == 12 else f"{my}-{mm + 1:02d}-01"
-        calls = await db.call_logs.count_documents({"created_by": uid, "created_at": {"$gte": start, "$lt": end}})
-        won = await db.leads.count_documents({"assigned_to": uid, "stage": "won", "won_at": {"$gte": start, "$lt": end}})
-        orders_m = await db.orders.find(
-            {"assigned_to": uid, "load_date": {"$gte": start, "$lt": end}, "deleted": {"$ne": True}},
-            {"_id": 0, "client_rate": 1, "carrier_rate": 1},
-        ).to_list(2000)
-        margin = sum(_safe_float(o.get("client_rate")) - _safe_float(o.get("carrier_rate")) for o in orders_m)
-        monthly.append({"month": month_str, "calls": calls, "won": won, "margin": round(margin, 2)})
-
-    best_month = max(monthly, key=lambda x: x["margin"]) if any(x["margin"] for x in monthly) else None
-
     # Redacted on purpose — a manager's commission is a percentage of the
     # order's margin, so that's what they see to check their own numbers.
     # Client/carrier identity stays out of this response entirely (not just
     # hidden in the UI) since that relationship is what the business is
     # trying to protect if a manager ever leaves.
-    orders_all = await db.orders.find(
+    orders_all_query = db.orders.find(
         {"assigned_to": uid, "deleted": {"$ne": True}},
         {"_id": 0, "order_number": 1, "client_rate": 1, "carrier_rate": 1, "load_date": 1, "status": 1},
     ).sort("load_date", -1).to_list(500)
+
+    # All 6 months' worth of queries plus the full order list fire at once
+    # instead of ~19 sequential round-trips — that was the actual cause of
+    # the manager dashboard hanging/timing out.
+    *monthly, orders_all = await asyncio.gather(
+        *[_my_dashboard_month(uid, m) for m in months],
+        orders_all_query,
+    )
+
+    best_month = max(monthly, key=lambda x: x["margin"]) if any(x["margin"] for x in monthly) else None
+
     orders_redacted = [{
         "order_number": o.get("order_number", ""),
         "margin": round(_safe_float(o.get("client_rate")) - _safe_float(o.get("carrier_rate")), 2),
