@@ -2658,6 +2658,8 @@ async def update_user(user_id: str, payload: _UpdateUserPayload, current_user: d
             raise HTTPException(400, "Нельзя изменить свои права")
         update_data["permissions"] = payload.permissions
     if payload.status is not None:
+        if payload.status == "suspended" and user_id == current_user.get("id"):
+            raise HTTPException(400, "Нельзя заблокировать себя")
         update_data["status"] = payload.status
         if payload.status == "suspended":
             await db.sessions.update_many({"user_id": user_id}, {"$set": {"active": False}})
@@ -2703,7 +2705,7 @@ async def manager_stats(period: str = "today", current_user: dict = Depends(requ
         start = datetime(2020, 1, 1, tzinfo=timezone.utc)
     start_str = start.isoformat()
 
-    managers = await db.users.find({"role": "manager"}, {"_id": 0, "password_hash": 0}).to_list(200)
+    managers = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(200)
     result = []
     for m in managers:
         total_calls = await db.call_logs.count_documents({"created_by": m["id"], "created_at": {"$gte": start_str}})
