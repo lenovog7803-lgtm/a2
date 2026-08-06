@@ -1573,6 +1573,15 @@ async def save_scripts(payload: dict, current_user: Optional[dict] = Depends(_ge
     return {"ok": True}
 
 
+def _safe_float(v) -> float:
+    # Some legacy imported orders have non-numeric junk in rate fields
+    # (blank strings, stray text) — this must never 500 a whole report.
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _analytics_period_start(period: str) -> datetime:
     now = datetime.now(timezone.utc)
     if period == "week":
@@ -2801,7 +2810,7 @@ async def my_dashboard(current_user: dict = Depends(_require_user)):
             {"assigned_to": uid, "load_date": {"$gte": start, "$lt": end}, "deleted": {"$ne": True}},
             {"_id": 0, "client_rate": 1, "carrier_rate": 1},
         ).to_list(2000)
-        margin = sum(float(o.get("client_rate") or 0) - float(o.get("carrier_rate") or 0) for o in orders_m)
+        margin = sum(_safe_float(o.get("client_rate")) - _safe_float(o.get("carrier_rate")) for o in orders_m)
         monthly.append({"month": month_str, "calls": calls, "won": won, "margin": round(margin, 2)})
 
     best_month = max(monthly, key=lambda x: x["margin"]) if any(x["margin"] for x in monthly) else None
@@ -2817,7 +2826,7 @@ async def my_dashboard(current_user: dict = Depends(_require_user)):
     ).sort("load_date", -1).to_list(500)
     orders_redacted = [{
         "order_number": o.get("order_number", ""),
-        "margin": round(float(o.get("client_rate") or 0) - float(o.get("carrier_rate") or 0), 2),
+        "margin": round(_safe_float(o.get("client_rate")) - _safe_float(o.get("carrier_rate")), 2),
         "load_date": o.get("load_date", ""),
         "status": o.get("status", ""),
     } for o in orders_all]
@@ -4042,6 +4051,23 @@ def _create_reconciliation_doc_sync(data: dict, token_doc: dict) -> tuple:
     return f"https://docs.google.com/document/d/{doc_id}/edit", new_token
 
 
+def _order_in_period_filter(date_from: str, date_to: str) -> dict:
+    # load_date is blank on some real, paid orders (never filled in) —
+    # falling back to created_at keeps them from silently vanishing out of
+    # period-based reports like the reconciliation act.
+    return {"$or": [
+        {"load_date": {"$gte": date_from, "$lte": date_to}},
+        {"load_date": {"$in": [None, ""]}, "created_at": {"$gte": date_from, "$lte": date_to + "T23:59:59"}},
+    ]}
+
+
+def _order_before_period_filter(date_from: str) -> dict:
+    return {"$or": [
+        {"load_date": {"$lt": date_from}},
+        {"load_date": {"$in": [None, ""]}, "created_at": {"$lt": date_from}},
+    ]}
+
+
 @api_router.post("/reconciliation/generate")
 async def generate_reconciliation(payload: ReconciliationRequest):
     now = datetime.now(timezone.utc)
@@ -4084,8 +4110,7 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         cp_name = payload.counterparty_name or cp_doc.get("name", "")
 
         orders = await db.orders.find({
-            "$or": [{"client_id": cid}, {"client_name": cp_name}],
-            "load_date": {"$gte": date_from, "$lte": date_to},
+            "$and": [{"$or": [{"client_id": cid}, {"client_name": cp_name}]}, _order_in_period_filter(date_from, date_to)],
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
         }).sort("load_date", 1).to_list(10000)
 
@@ -4095,8 +4120,7 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         }).sort("date", 1).to_list(10000)
 
         orders_before = await db.orders.find({
-            "$or": [{"client_id": cid}, {"client_name": cp_name}],
-            "load_date": {"$lt": date_from},
+            "$and": [{"$or": [{"client_id": cid}, {"client_name": cp_name}]}, _order_before_period_filter(date_from)],
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
         }, {"_id": 0, "id": 1, "client_rate": 1, "client_paid": 1}).to_list(10000)
         pmts_before = await db.payments_in.find({
@@ -4173,8 +4197,7 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         cp_name = payload.counterparty_name or cp_doc.get("company_name", cp_doc.get("name", ""))
 
         orders = await db.orders.find({
-            "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
-            "load_date": {"$gte": date_from, "$lte": date_to},
+            "$and": [{"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}]}, _order_in_period_filter(date_from, date_to)],
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
         }).sort("load_date", 1).to_list(10000)
 
@@ -4184,8 +4207,7 @@ async def generate_reconciliation(payload: ReconciliationRequest):
         }).sort("date", 1).to_list(10000)
 
         orders_before = await db.orders.find({
-            "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
-            "load_date": {"$lt": date_from},
+            "$and": [{"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}]}, _order_before_period_filter(date_from)],
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
         }, {"_id": 0, "id": 1, "carrier_rate": 1, "carrier_paid": 1}).to_list(10000)
         pmts_before = await db.payments_out.find({
