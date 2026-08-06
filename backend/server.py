@@ -250,11 +250,17 @@ async def ensure_indexes():
     await db.leads.create_index("phone", background=True)
     await db.leads.create_index([("stage", 1), ("next_call", 1)], background=True)
     await db.leads.create_index("industry", background=True)
+    await db.leads.create_index("assigned_to", background=True)
 
     await db.tasks.create_index([("status", 1), ("deadline", 1)], background=True)
     await db.call_logs.create_index([("lead_id", 1), ("created_at", -1)], background=True)
+    await db.call_logs.create_index([("created_by", 1), ("created_at", -1)], background=True)
     await db.payments_in.create_index("date", background=True)
     await db.payments_out.create_index("date", background=True)
+
+    await db.sessions.create_index("user_id", background=True)
+    await db.sessions.create_index("active", background=True)
+    await db.notifications.create_index([("read", 1), ("created_at", -1)], background=True)
 
     await db.app_settings.update_one(
         {"key": "indexes_ensured_at"},
@@ -387,6 +393,7 @@ async def _deferred_init():
     asyncio.create_task(_startup_backup())
     asyncio.create_task(_trash_purge_loop())
     asyncio.create_task(_token_refresh_loop())
+    asyncio.create_task(_check_stale_managers())
 
     # Debug: print last 30 carriers to inspect field names
     try:
@@ -482,13 +489,46 @@ def _verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def _create_token(user_id: str, role: str) -> str:
+def _create_token(user_id: str, role: str, session_id: Optional[str] = None) -> str:
     payload = {
         "sub": user_id,
         "role": role,
         "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS),
     }
+    if session_id:
+        payload["sid"] = session_id
     return _jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+# Debounces last_activity writes for active sessions — pinged on ~every
+# authenticated request, but we only want to touch the DB once a minute per
+# session, not on every single API call.
+_last_activity_touch: dict = {}
+
+
+async def _touch_session(sid: str):
+    now_ts = datetime.now(timezone.utc)
+    last = _last_activity_touch.get(sid)
+    if last and (now_ts - last).total_seconds() < 60:
+        return
+    _last_activity_touch[sid] = now_ts
+    try:
+        await db.sessions.update_one({"id": sid}, {"$set": {"last_activity": now_ts.isoformat()}})
+    except Exception:
+        pass
+
+
+async def _check_session_active(sid: Optional[str]) -> bool:
+    # Tokens issued before session tracking existed carry no "sid" — treat
+    # them as always valid so already-logged-in users aren't forced out by
+    # this deploy. Real session enforcement kicks in on their next login.
+    if not sid:
+        return True
+    session = await db.sessions.find_one({"id": sid}, {"_id": 0, "active": 1})
+    if not session or not session.get("active", False):
+        return False
+    asyncio.create_task(_touch_session(sid))
+    return True
 
 
 async def _get_user_from_token(credentials: HTTPAuthorizationCredentials = Depends(_http_bearer)) -> Optional[dict]:
@@ -498,6 +538,8 @@ async def _get_user_from_token(credentials: HTTPAuthorizationCredentials = Depen
         payload = _jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
         if not user_id:
+            return None
+        if not await _check_session_active(payload.get("sid")):
             return None
         return await db.users.find_one({"id": user_id}, {"_id": 0})
     except Exception:
@@ -512,6 +554,8 @@ async def _require_user(credentials: HTTPAuthorizationCredentials = Depends(_htt
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(401, "Неверный токен")
+        if not await _check_session_active(payload.get("sid")):
+            raise HTTPException(401, "Сессия завершена")
         user = await db.users.find_one({"id": user_id}, {"_id": 0})
         if not user:
             raise HTTPException(401, "Пользователь не найден")
@@ -522,6 +566,12 @@ async def _require_user(credentials: HTTPAuthorizationCredentials = Depends(_htt
         raise HTTPException(401, "Токен истёк")
     except Exception:
         raise HTTPException(401, "Неверный токен")
+
+
+def require_director(current_user: dict = Depends(_require_user)) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Доступно только директору")
+    return current_user
 
 
 # ====== Models ======
@@ -815,6 +865,7 @@ class Lead(BaseModel):
     lost_reason: Optional[str] = None
     client_id: Optional[str] = None
     assigned_to: Optional[str] = ""
+    assigned_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
     updated_at: Optional[str] = None
     stage_changed_at: Optional[str] = None
@@ -1172,7 +1223,9 @@ async def list_leads_filtered(industry: Optional[str] = None, current_user: Opti
     if current_user and current_user.get("role") == "manager":
         perms = current_user.get("permissions") or {}
         if not perms.get("can_view_all_leads"):
-            filter_q["assigned_to"] = current_user["id"]
+            # Own leads plus the unclaimed pool — not just own, so a manager
+            # can still find and claim leads nobody has picked up yet.
+            filter_q["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}, {"assigned_to": ""}]
     if industry:
         filter_q["industry"] = industry
     docs = await db.leads.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(50000)
@@ -1184,8 +1237,21 @@ def _leads_manager_filter(current_user: Optional[dict]) -> dict:
     if current_user and current_user.get("role") == "manager":
         perms = current_user.get("permissions") or {}
         if not perms.get("can_view_all_leads"):
-            base["assigned_to"] = current_user["id"]
+            base["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}, {"assigned_to": ""}]
     return base
+
+
+@api_router.post("/leads/{lead_id}/claim")
+async def claim_lead(lead_id: str, current_user: dict = Depends(_require_user)):
+    lead = await db.leads.find_one({"id": lead_id, "deleted": {"$ne": True}})
+    if not lead:
+        raise HTTPException(404, "Лид не найден")
+    if lead.get("assigned_to") and lead["assigned_to"] != current_user["id"]:
+        raise HTTPException(400, "Лид уже закреплён за другим менеджером")
+    await db.leads.update_one({"id": lead_id}, {"$set": {
+        "assigned_to": current_user["id"], "assigned_at": datetime.now(timezone.utc).isoformat(),
+    }})
+    return {"ok": True}
 
 
 @api_router.get("/leads/queue")
@@ -1484,23 +1550,19 @@ async def save_scripts(payload: dict, current_user: Optional[dict] = Depends(_ge
     return {"ok": True}
 
 
-@api_router.get("/leads/analytics")
-async def leads_analytics(period: str = "month", current_user: Optional[dict] = Depends(_get_user_from_token)):
+def _analytics_period_start(period: str) -> datetime:
     now = datetime.now(timezone.utc)
     if period == "week":
-        start = now - timedelta(days=7)
+        return now - timedelta(days=7)
     elif period == "month":
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     elif period == "quarter":
         qm = (now.month - 1) // 3 * 3 + 1
-        start = now.replace(month=qm, day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        start = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    start_str = start.isoformat()
+        return now.replace(month=qm, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return datetime(2020, 1, 1, tzinfo=timezone.utc)
 
-    logs = await db.call_logs.find({"created_at": {"$gte": start_str}}, {"_id": 0}).to_list(100000)
-    leads = await db.leads.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(100000)
 
+async def _compute_leads_analytics(logs: list, leads: list) -> dict:
     DAILY_GOAL = 45
     by_day: dict = {}
     for l in logs:
@@ -1589,6 +1651,14 @@ async def leads_analytics(period: str = "month", current_user: Optional[dict] = 
     }
 
 
+@api_router.get("/leads/analytics")
+async def leads_analytics(period: str = "month", current_user: Optional[dict] = Depends(_get_user_from_token)):
+    start_str = _analytics_period_start(period).isoformat()
+    logs = await db.call_logs.find({"created_at": {"$gte": start_str}}, {"_id": 0}).to_list(100000)
+    leads = await db.leads.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(100000)
+    return await _compute_leads_analytics(logs, leads)
+
+
 @api_router.get("/leads/calls_by_day")
 async def calls_by_day(date: str, current_user: Optional[dict] = Depends(_get_user_from_token)):
     start = f"{date}T00:00:00"
@@ -1613,6 +1683,7 @@ class Task(BaseModel):
     status: str = "pending"  # pending / done
     google_task_id: Optional[str] = None
     created_by: Optional[str] = ""
+    assigned_user_id: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -1623,6 +1694,7 @@ class TaskCreate(BaseModel):
     due_date: Optional[str] = ""
     due_time: Optional[str] = ""
     status: str = "pending"
+    assigned_user_id: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
@@ -1633,6 +1705,7 @@ class TaskUpdate(BaseModel):
     due_time: Optional[str] = None
     status: Optional[str] = None
     google_task_id: Optional[str] = None
+    assigned_user_id: Optional[str] = None
 
 
 # ====== Google Tasks background helpers ======
@@ -1829,9 +1902,15 @@ async def _bg_close_carrier_payment_on_paid(carrier_name: str, order_id: str):
 async def list_tasks(current_user: Optional[dict] = Depends(_get_user_from_token)):
     filter_q: dict = {}
     if current_user and current_user.get("role") == "manager":
-        filter_q["created_by"] = current_user["id"]
+        filter_q["$or"] = [{"created_by": current_user["id"]}, {"assigned_user_id": current_user["id"]}]
     docs = await db.tasks.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return [Task(**d) for d in docs]
+
+
+@api_router.post("/tasks/{task_id}/assign")
+async def assign_task(task_id: str, payload: dict, current_user: dict = Depends(require_director)):
+    await db.tasks.update_one({"id": task_id}, {"$set": {"assigned_user_id": payload.get("user_id")}})
+    return {"ok": True}
 
 
 @api_router.get("/tasks/{task_id}", response_model=Task)
@@ -1879,7 +1958,7 @@ async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_toke
     if current_user and current_user.get("role") == "manager":
         perms = current_user.get("permissions") or {}
         if not perms.get("can_view_all_orders"):
-            filter_q["assigned_to"] = current_user["id"]
+            filter_q["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}, {"assigned_to": ""}]
     import re as _re
     docs = await db.orders.find(filter_q, {"_id": 0}).to_list(2000)
 
@@ -2383,16 +2462,60 @@ class _CreateUserPayload(BaseModel):
     password: str
     role: str = "manager"
     permissions: Optional[dict] = None
+    daily_call_goal: Optional[int] = 45
+
+
+LOGIN_LOCK_THRESHOLD = 5
+LOGIN_LOCK_MINUTES = 15
 
 
 @api_router.post("/auth/login")
-async def auth_login(payload: _LoginPayload):
+async def auth_login(payload: _LoginPayload, request: Request):
     user = await db.users.find_one({"login": payload.login}, {"_id": 0})
-    if not user or not _verify_password(payload.password, user.get("password_hash", "")):
+    if not user:
         raise HTTPException(401, "Неверный логин или пароль")
-    token = _create_token(user["id"], user["role"])
+
+    if user.get("status") == "suspended":
+        raise HTTPException(403, "Доступ приостановлен. Обратитесь к директору.")
+
+    locked_until = user.get("locked_until")
+    if locked_until:
+        try:
+            if datetime.now(timezone.utc) < datetime.fromisoformat(locked_until):
+                raise HTTPException(429, "Слишком много попыток. Попробуйте через 15 минут.")
+        except ValueError:
+            pass
+
+    if not _verify_password(payload.password, user.get("password_hash", "")):
+        attempts = int(user.get("failed_attempts") or 0) + 1
+        upd: dict = {"failed_attempts": attempts}
+        if attempts >= LOGIN_LOCK_THRESHOLD:
+            upd["locked_until"] = (datetime.now(timezone.utc) + timedelta(minutes=LOGIN_LOCK_MINUTES)).isoformat()
+        await db.users.update_one({"id": user["id"]}, {"$set": upd})
+        raise HTTPException(401, "Неверный логин или пароль")
+
+    await db.users.update_one({"id": user["id"]}, {"$set": {"failed_attempts": 0, "locked_until": None}})
+
+    session_id = str(uuid.uuid4())
+    now_dt = datetime.now(timezone.utc)
+    await db.sessions.insert_one({
+        "id": session_id, "user_id": user["id"], "user_login": user["login"], "role": user["role"],
+        "device_info": request.headers.get("user-agent", ""),
+        "ip": request.client.host if request.client else "",
+        "created_at": now_dt.isoformat(), "last_activity": now_dt.isoformat(), "active": True,
+    })
+
+    token = _create_token(user["id"], user["role"], session_id)
     safe_user = {k: v for k, v in user.items() if k != "password_hash"}
-    return {"token": token, "user": safe_user}
+
+    if user["role"] == "manager":
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()), "type": "login",
+            "message": f"{user.get('name', user['login'])} ({user['login']}) вошёл в систему",
+            "created_at": now_dt.isoformat(), "read": False,
+        })
+
+    return {"token": token, "user": safe_user, "session_id": session_id}
 
 
 @api_router.get("/auth/me")
@@ -2401,17 +2524,14 @@ async def auth_me(current_user: dict = Depends(_require_user)):
 
 
 @api_router.get("/users")
-async def list_users(current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+async def list_users(role: Optional[str] = None, current_user: dict = Depends(require_director)):
+    filter_q = {"role": role} if role else {}
+    users = await db.users.find(filter_q, {"_id": 0, "password_hash": 0}).to_list(1000)
     return users
 
 
 @api_router.post("/users")
-async def create_user(payload: _CreateUserPayload, current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def create_user(payload: _CreateUserPayload, current_user: dict = Depends(require_director)):
     existing = await db.users.find_one({"login": payload.login})
     if existing:
         raise HTTPException(400, "Логин уже занят")
@@ -2422,6 +2542,10 @@ async def create_user(payload: _CreateUserPayload, current_user: dict = Depends(
         "password_hash": _hash_password(payload.password),
         "role": payload.role,
         "permissions": payload.permissions or {},
+        "status": "active",
+        "daily_call_goal": payload.daily_call_goal if payload.role == "manager" else None,
+        "failed_attempts": 0,
+        "locked_until": None,
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
@@ -2429,9 +2553,7 @@ async def create_user(payload: _CreateUserPayload, current_user: dict = Depends(
 
 
 @api_router.delete("/users/{user_id}")
-async def delete_user(user_id: str, current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def delete_user(user_id: str, current_user: dict = Depends(require_director)):
     if user_id == current_user.get("id"):
         raise HTTPException(400, "Нельзя удалить себя")
     target = await db.users.find_one({"id": user_id})
@@ -2440,6 +2562,7 @@ async def delete_user(user_id: str, current_user: dict = Depends(_require_user))
         if admin_count <= 1:
             raise HTTPException(400, "Нельзя удалить последнего администратора")
     await db.users.delete_one({"id": user_id})
+    await db.sessions.update_many({"user_id": user_id}, {"$set": {"active": False}})
     return {"ok": True}
 
 
@@ -2509,12 +2632,12 @@ class _UpdateUserPayload(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
     permissions: Optional[dict] = None
+    status: Optional[str] = None
+    daily_call_goal: Optional[int] = None
 
 
 @api_router.put("/users/{user_id}")
-async def update_user(user_id: str, payload: _UpdateUserPayload, current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def update_user(user_id: str, payload: _UpdateUserPayload, current_user: dict = Depends(require_director)):
     update_data: dict = {}
     if payload.name is not None:
         update_data["name"] = payload.name
@@ -2533,12 +2656,119 @@ async def update_user(user_id: str, payload: _UpdateUserPayload, current_user: d
         if user_id == current_user.get("id"):
             raise HTTPException(400, "Нельзя изменить свои права")
         update_data["permissions"] = payload.permissions
+    if payload.status is not None:
+        update_data["status"] = payload.status
+        if payload.status == "suspended":
+            await db.sessions.update_many({"user_id": user_id}, {"$set": {"active": False}})
+    if payload.daily_call_goal is not None:
+        update_data["daily_call_goal"] = payload.daily_call_goal
     if update_data:
         await db.users.update_one({"id": user_id}, {"$set": update_data})
     user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(404, "Пользователь не найден")
     return user
+
+
+async def _session_activity_summary(user_id: str, since: str) -> dict:
+    calls = await db.call_logs.count_documents({"created_by": user_id, "created_at": {"$gte": since}})
+    return {"calls": calls}
+
+
+@api_router.get("/admin/sessions")
+async def list_sessions(current_user: dict = Depends(require_director)):
+    sessions = await db.sessions.find({"active": True}, {"_id": 0}).sort("last_activity", -1).to_list(200)
+    for s in sessions:
+        s["activity_summary"] = await _session_activity_summary(s["user_id"], s["created_at"])
+    return {"sessions": sessions}
+
+
+@api_router.post("/admin/sessions/{session_id}/logout")
+async def force_logout(session_id: str, current_user: dict = Depends(require_director)):
+    await db.sessions.update_one({"id": session_id}, {"$set": {"active": False}})
+    return {"ok": True}
+
+
+@api_router.get("/admin/manager_stats")
+async def manager_stats(period: str = "today", current_user: dict = Depends(require_director)):
+    now = datetime.now(timezone.utc)
+    if period == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "week":
+        start = now - timedelta(days=7)
+    elif period == "month":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    start_str = start.isoformat()
+
+    managers = await db.users.find({"role": "manager"}, {"_id": 0, "password_hash": 0}).to_list(200)
+    result = []
+    for m in managers:
+        total_calls = await db.call_logs.count_documents({"created_by": m["id"], "created_at": {"$gte": start_str}})
+        leads_in_work = await db.leads.count_documents({
+            "assigned_to": m["id"], "stage": {"$nin": ["won", "lost", "no_contact"]},
+        })
+        won = await db.leads.count_documents({"assigned_to": m["id"], "stage": "won", "won_at": {"$gte": start_str}})
+        called_leads = await db.leads.count_documents({"assigned_to": m["id"], "total_calls": {"$gt": 0}})
+        overdue = await db.leads.count_documents({
+            "assigned_to": m["id"], "next_call": {"$ne": None, "$lt": now.isoformat()},
+            "stage": {"$nin": ["won", "lost", "no_contact"]},
+        })
+        conversion = round(won / called_leads * 100, 1) if called_leads else 0.0
+        goal_pct = round(total_calls / (m.get("daily_call_goal") or 45) * 100, 1) if period == "today" else None
+
+        result.append({
+            "id": m["id"], "name": m["name"], "login": m["login"],
+            "calls": total_calls, "goal_pct": goal_pct,
+            "leads_in_work": leads_in_work, "won": won, "conversion": conversion,
+            "overdue": overdue,
+        })
+    return {"managers": result}
+
+
+@api_router.get("/admin/manager_stats/{manager_id}")
+async def manager_stats_detail(manager_id: str, period: str = "week", current_user: dict = Depends(require_director)):
+    start_str = _analytics_period_start(period).isoformat()
+    logs = await db.call_logs.find(
+        {"created_by": manager_id, "created_at": {"$gte": start_str}}, {"_id": 0}
+    ).to_list(100000)
+    leads = await db.leads.find(
+        {"assigned_to": manager_id, "deleted": {"$ne": True}}, {"_id": 0}
+    ).to_list(100000)
+    return await _compute_leads_analytics(logs, leads)
+
+
+async def _check_stale_managers():
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            managers = await db.users.find({"role": "manager", "status": {"$ne": "suspended"}}).to_list(200)
+            for m in managers:
+                overdue = await db.leads.count_documents({
+                    "assigned_to": m["id"], "next_call": {"$ne": None, "$lt": datetime.now(timezone.utc).isoformat()},
+                    "stage": {"$nin": ["won", "lost", "no_contact"]},
+                })
+                if overdue >= 5:
+                    await db.notifications.insert_one({
+                        "id": str(uuid.uuid4()), "type": "stale_manager",
+                        "message": f"{m['name']}: {overdue} просроченных перезвонов накопилось",
+                        "created_at": datetime.now(timezone.utc).isoformat(), "read": False,
+                    })
+        except Exception as e:
+            logging.getLogger(__name__).error(f"[stale_check] {e}")
+
+
+@api_router.get("/notifications")
+async def list_notifications(current_user: dict = Depends(require_director)):
+    items = await db.notifications.find({"read": False}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return {"notifications": items}
+
+
+@api_router.post("/notifications/{notif_id}/read")
+async def mark_notification_read(notif_id: str, current_user: dict = Depends(require_director)):
+    await db.notifications.update_one({"id": notif_id}, {"$set": {"read": True}})
+    return {"ok": True}
 
 
 @api_router.get("/users/{user_id}/activity")
