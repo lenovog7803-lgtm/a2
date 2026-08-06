@@ -2041,16 +2041,29 @@ async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks,
     if not order_data.get("order_number"):
         import re as _re
         year = datetime.now(timezone.utc).year
-        all_nums = await db.orders.find(
-            {"deleted": {"$ne": True}}, {"_id": 0, "order_number": 1}
-        ).to_list(10000)
         _pat = _re.compile(r"[ЗЗз3]\s*[-–—]\s*(\d+)\s*/\s*(\d{4})", _re.IGNORECASE)
-        max_num = 0
-        for _d in all_nums:
-            _m = _pat.search(_d.get("order_number", "") or "")
-            if _m and int(_m.group(2)) == year and int(_m.group(1)) > max_num:
-                max_num = int(_m.group(1))
-        order_data["order_number"] = f"З-{max_num + 1:03d}/{year}"
+        candidate = None
+        # Two orders created close together used to be able to compute the
+        # same "next number" and both get inserted with it — the sheets sync
+        # would then later silently overwrite one of them entirely (matched
+        # by that shared number, not by id). Re-checking right before insert
+        # and retrying narrows that race; it isn't a hard DB-level guarantee
+        # (no unique index — some already-duplicated numbers exist), but
+        # combined with the sheets-import fix a collision can no longer
+        # destroy data even if one still slips through.
+        for _attempt in range(5):
+            all_nums = await db.orders.find(
+                {"deleted": {"$ne": True}}, {"_id": 0, "order_number": 1}
+            ).to_list(10000)
+            max_num = 0
+            for _d in all_nums:
+                _m = _pat.search(_d.get("order_number", "") or "")
+                if _m and int(_m.group(2)) == year and int(_m.group(1)) > max_num:
+                    max_num = int(_m.group(1))
+            candidate = f"З-{max_num + 1:03d}/{year}"
+            if not await db.orders.find_one({"order_number": candidate}, {"_id": 1}):
+                break
+        order_data["order_number"] = candidate
     obj = Order(**order_data)
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())

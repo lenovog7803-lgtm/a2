@@ -522,19 +522,28 @@ async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge
         for order in orders:
             num = order.get("order_number", "")
             existing = existing_orders.get(num)
-            if existing and mode != "replace":
-                # Keep CRM-managed status if it's a terminal state
-                crm_status = existing.get("status", "")
-                if crm_status in ("done", "cancelled", "in_progress") and order.get("status") == "new":
-                    order["status"] = crm_status
-                # Preserve CRM-only fields and existing id (avoid breaking references)
+            if existing:
+                if mode != "replace":
+                    # Keep CRM-managed status if it's a terminal state
+                    crm_status = existing.get("status", "")
+                    if crm_status in ("done", "cancelled", "in_progress") and order.get("status") == "new":
+                        order["status"] = crm_status
+                    # Preserve CRM-only fields
+                    for field in _CRM_ONLY_ORDER_FIELDS:
+                        if field in existing and existing[field]:
+                            order[field] = existing[field]
+                # Preserve the existing id and match by it, not by order_number.
+                # order_number is not guaranteed unique in the CRM (create_order
+                # can race and hand out the same number to two different orders
+                # created close together) — matching by number alone means this
+                # upsert can silently overwrite a *different*, unrelated order
+                # that happens to share it. Matching by id guarantees we only
+                # ever touch the exact document we looked up above.
                 order["id"] = existing.get("id", order["id"])
-                for field in _CRM_ONLY_ORDER_FIELDS:
-                    if field in existing and existing[field]:
-                        order[field] = existing[field]
-                await db.orders.replace_one({"order_number": num}, order, upsert=True)
+                await db.orders.replace_one({"id": order["id"]}, order, upsert=True)
             else:
-                # Use replace_one+upsert instead of insert_one to be idempotent
+                # Genuinely new to the CRM — no existing document to protect,
+                # safe to upsert keyed by order_number.
                 await db.orders.replace_one({"order_number": num}, order, upsert=True)
 
         # Remove orders that no longer exist in Sheet (soft check — only if sheet has data)
