@@ -2204,6 +2204,14 @@ async def mark_payment(order_id: str, side: str, payload: PaymentMark, backgroun
     # Reuses update_order()'s existing side effects: task closing, carrier
     # payment deadline calc, order_logs audit trail, calendar/sheet sync.
     await update_order(order_id, order_update, background_tasks, current_user)
+    # Belt-and-suspenders direct write for the PP fields specifically — seen
+    # cases where they didn't make it onto the order via the OrderUpdate
+    # round-trip above even though the payments_in record below always got
+    # them right, leaving the order itself showing no PP number.
+    if payload.paid:
+        await db.orders.update_one({"id": order_id}, {"$set": {
+            pp_field: payload.pp_number or "", pp_date_field: payload.pp_date or pay_date,
+        }})
 
     if payload.paid:
         amount = order.get("client_rate") if side == "client" else order.get("carrier_rate")
@@ -4069,20 +4077,25 @@ async def generate_reconciliation(payload: ReconciliationRequest):
                 "order_number": o.get("order_number", ""),
             })
         for p in payments:
-            if p.get("order_id"):
-                continue  # уже учтён выше через флаг заявки
-            raw_entries.append({"pp": (p.get("pp_number") or "").strip(), "date": p.get("date") or "", "sum": float(p.get("amount") or 0), "order_number": ""})
+            # payments_in is authoritative once it exists — the order-flag
+            # loop above already skipped every order that has one of these
+            # (via paid_order_ids), so this must NOT also skip them, or a
+            # payment tied to an order_id never appears anywhere at all.
+            raw_entries.append({"pp": (p.get("pp_number") or "").strip(), "date": p.get("date") or "", "sum": float(p.get("amount") or 0), "order_number": p.get("order_number", "")})
 
         # Одна платёжка может закрывать несколько заявок сразу (клиент прислал
-        # 1 перевод за 5 заявок) — если номер ПП и дата совпадают, это один и
-        # тот же платёж, схлопываем в одну строку с суммарной суммой.
+        # 1 перевод за 5 заявок, иногда даже с разницей в датах ввода) — если
+        # номер ПП совпадает, это один и тот же платёж, схлопываем в одну
+        # строку с суммарной суммой независимо от даты.
         merged: dict = {}
         loose = []
         for e in raw_entries:
             if e["pp"]:
-                key = (e["pp"], e["date"])
-                merged.setdefault(key, {"pp": e["pp"], "date": e["date"], "sum": 0.0})
-                merged[key]["sum"] += e["sum"]
+                key = e["pp"]
+                row = merged.setdefault(key, {"pp": e["pp"], "date": e["date"], "sum": 0.0})
+                if e["date"] and (not row["date"] or e["date"] < row["date"]):
+                    row["date"] = e["date"]
+                row["sum"] += e["sum"]
             else:
                 loose.append(e)
         left_entries = [{"date": v["date"], "doc": f"ПП {v['pp']} от {_fmt(v['date'])}", "sum": v["sum"]} for v in merged.values()]
@@ -4147,19 +4160,20 @@ async def generate_reconciliation(payload: ReconciliationRequest):
                 "order_number": o.get("order_number", ""),
             })
         for p in payments:
-            if p.get("order_id"):
-                continue  # уже учтён выше через флаг заявки
-            raw_entries.append({"pp": (p.get("pp_number") or "").strip(), "date": p.get("date") or "", "sum": float(p.get("amount") or 0), "order_number": ""})
+            raw_entries.append({"pp": (p.get("pp_number") or "").strip(), "date": p.get("date") or "", "sum": float(p.get("amount") or 0), "order_number": p.get("order_number", "")})
 
         # Одна платёжка может закрывать несколько заявок сразу — если номер
-        # ПП и дата совпадают, схлопываем в одну строку с суммарной суммой.
+        # ПП совпадает, схлопываем в одну строку с суммарной суммой
+        # независимо от даты (см. клиентскую ветку выше — тот же случай).
         merged: dict = {}
         loose = []
         for e in raw_entries:
             if e["pp"]:
-                key = (e["pp"], e["date"])
-                merged.setdefault(key, {"pp": e["pp"], "date": e["date"], "sum": 0.0})
-                merged[key]["sum"] += e["sum"]
+                key = e["pp"]
+                row = merged.setdefault(key, {"pp": e["pp"], "date": e["date"], "sum": 0.0})
+                if e["date"] and (not row["date"] or e["date"] < row["date"]):
+                    row["date"] = e["date"]
+                row["sum"] += e["sum"]
             else:
                 loose.append(e)
         left_entries = [{"date": v["date"], "doc": f"ПП {v['pp']} от {_fmt(v['date'])}", "sum": v["sum"]} for v in merged.values()]
