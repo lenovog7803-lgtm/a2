@@ -1701,9 +1701,6 @@ async def calls_by_day(date: str, current_user: Optional[dict] = Depends(_get_us
     return {"calls": logs, "date": date}
 
 
-make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)
-
-
 # ====== Task models ======
 class Task(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -2826,6 +2823,17 @@ async def my_dashboard(current_user: dict = Depends(_require_user)):
         "total_calls": total_calls,
         "total_won": total_won,
     }
+
+
+# Registered here — after every specific /leads/... route above — on
+# purpose. FastAPI matches routes in registration order, and this call
+# defines GET /leads/{item_id} among others; if it ran earlier (it used to,
+# right after /leads/calls_by_day), that catch-all shadowed any later
+# single-segment /leads/<literal> route registered after it — e.g.
+# /leads/leaderboard and /leads/my_dashboard both silently 404'd as "lead
+# leaderboard/my_dashboard not found" instead of ever reaching their real
+# handlers.
+make_crud("leads", "leads", Lead, LeadUpdate, sync_to_sheets=True, user_filter=True, soft_delete=True)
 
 
 @api_router.get("/admin/manager_stats/{manager_id}")
