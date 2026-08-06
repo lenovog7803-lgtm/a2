@@ -2717,8 +2717,7 @@ async def force_logout(session_id: str, current_user: dict = Depends(require_dir
     return {"ok": True}
 
 
-@api_router.get("/admin/manager_stats")
-async def manager_stats(period: str = "today", current_user: dict = Depends(require_director)):
+async def _compute_manager_stats(period: str, query: Optional[dict] = None) -> list:
     now = datetime.now(timezone.utc)
     if period == "today":
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -2730,7 +2729,7 @@ async def manager_stats(period: str = "today", current_user: dict = Depends(requ
         start = datetime(2020, 1, 1, tzinfo=timezone.utc)
     start_str = start.isoformat()
 
-    managers = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(200)
+    managers = await db.users.find(query or {}, {"_id": 0, "password_hash": 0}).to_list(200)
     result = []
     for m in managers:
         total_calls = await db.call_logs.count_documents({"created_by": m["id"], "created_at": {"$gte": start_str}})
@@ -2752,7 +2751,20 @@ async def manager_stats(period: str = "today", current_user: dict = Depends(requ
             "leads_in_work": leads_in_work, "won": won, "conversion": conversion,
             "overdue": overdue,
         })
+    return result
+
+
+@api_router.get("/admin/manager_stats")
+async def manager_stats(period: str = "today", current_user: dict = Depends(require_director)):
+    result = await _compute_manager_stats(period)
     return {"managers": result}
+
+
+@api_router.get("/leads/leaderboard")
+async def leads_leaderboard(period: str = "today", current_user: dict = Depends(_require_user)):
+    result = await _compute_manager_stats(period, query={"role": "manager"})
+    result.sort(key=lambda r: r["calls"], reverse=True)
+    return {"leaderboard": result, "period": period}
 
 
 @api_router.get("/admin/manager_stats/{manager_id}")
