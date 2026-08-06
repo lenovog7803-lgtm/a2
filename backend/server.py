@@ -1533,7 +1533,27 @@ async def convert_lead_to_client(item_id: str, current_user: Optional[dict] = De
         "created_at": now_iso(),
     }
     await db.clients.insert_one(dict(client))
-    await db.leads.update_one({"id": item_id}, {"$set": {"client_id": client["id"]}})
+
+    now = datetime.now(timezone.utc)
+    lead_upd: dict = {"client_id": client["id"]}
+    # Converting to a client is a win even if it didn't come through the
+    # call-outcome flow — without this, stats/session activity never see it.
+    if lead.get("stage") != "won":
+        lead_upd["stage"] = "won"
+        lead_upd["won_at"] = now.isoformat()
+        lead_upd["stage_changed_at"] = now.isoformat()
+    if not lead.get("assigned_to") and current_user:
+        lead_upd["assigned_to"] = current_user["id"]
+        lead_upd["assigned_at"] = now.isoformat()
+    await db.leads.update_one({"id": item_id}, {"$set": lead_upd})
+
+    if current_user:
+        await db.lead_activity.insert_one({
+            "id": str(uuid.uuid4()), "lead_id": item_id, "user_id": current_user["id"],
+            "action": "convert", "old_status": lead.get("stage"), "new_status": lead_upd.get("stage", lead.get("stage")),
+            "timestamp": now, "date": now.strftime("%Y-%m-%d"),
+        })
+
     return {"client_id": client["id"], "client": client}
 
 
@@ -2675,7 +2695,12 @@ async def update_user(user_id: str, payload: _UpdateUserPayload, current_user: d
 
 async def _session_activity_summary(user_id: str, since: str) -> dict:
     calls = await db.call_logs.count_documents({"created_by": user_id, "created_at": {"$gte": since}})
-    return {"calls": calls}
+    # Activity in the leads section isn't only phone calls — a lead can also
+    # be marked won by converting it straight to a client, which doesn't
+    # touch call_logs at all. Counted separately so "0 calls" during a
+    # session that only did conversions doesn't read as "did nothing".
+    won = await db.leads.count_documents({"assigned_to": user_id, "stage": "won", "won_at": {"$gte": since}})
+    return {"calls": calls, "won": won}
 
 
 @api_router.get("/admin/sessions")
