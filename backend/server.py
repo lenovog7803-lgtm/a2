@@ -568,8 +568,11 @@ async def _require_user(credentials: HTTPAuthorizationCredentials = Depends(_htt
         raise HTTPException(401, "Неверный токен")
 
 
+DIRECTOR_ROLES = ("admin", "director")
+
+
 def require_director(current_user: dict = Depends(_require_user)) -> dict:
-    if current_user.get("role") != "admin":
+    if current_user.get("role") not in DIRECTOR_ROLES:
         raise HTTPException(403, "Доступно только директору")
     return current_user
 
@@ -2557,8 +2560,8 @@ async def delete_user(user_id: str, current_user: dict = Depends(require_directo
     if user_id == current_user.get("id"):
         raise HTTPException(400, "Нельзя удалить себя")
     target = await db.users.find_one({"id": user_id})
-    if target and target.get("role") == "admin":
-        admin_count = await db.users.count_documents({"role": "admin"})
+    if target and target.get("role") in DIRECTOR_ROLES:
+        admin_count = await db.users.count_documents({"role": {"$in": list(DIRECTOR_ROLES)}})
         if admin_count <= 1:
             raise HTTPException(400, "Нельзя удалить последнего администратора")
     await db.users.delete_one({"id": user_id})
@@ -2567,9 +2570,7 @@ async def delete_user(user_id: str, current_user: dict = Depends(require_directo
 
 
 @api_router.get("/users/activity_summary")
-async def get_users_activity_summary(current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def get_users_activity_summary(current_user: dict = Depends(require_director)):
     now_dt = datetime.now(timezone.utc)
     month_start = f"{now_dt.year}-{now_dt.month:02d}-01"
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
@@ -2772,9 +2773,7 @@ async def mark_notification_read(notif_id: str, current_user: dict = Depends(req
 
 
 @api_router.get("/users/{user_id}/activity")
-async def get_user_activity(user_id: str, current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def get_user_activity(user_id: str, current_user: dict = Depends(require_director)):
     now_dt = datetime.now(timezone.utc)
     month_start = f"{now_dt.year}-{now_dt.month:02d}-01"
     orders_month = await db.orders.count_documents({
@@ -2811,9 +2810,7 @@ async def get_user_activity(user_id: str, current_user: dict = Depends(_require_
 
 
 @api_router.get("/users/{user_id}/stats")
-async def get_user_stats(user_id: str, month: Optional[str] = None, current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def get_user_stats(user_id: str, month: Optional[str] = None, current_user: dict = Depends(require_director)):
     now_dt = datetime.now(timezone.utc)
     if month and len(month) == 7:
         y, m = int(month[:4]), int(month[5:7])
@@ -2849,9 +2846,7 @@ async def get_user_stats(user_id: str, month: Optional[str] = None, current_user
 
 
 @api_router.get("/users/{user_id}/orders")
-async def get_user_orders(user_id: str, month: Optional[str] = None, current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def get_user_orders(user_id: str, month: Optional[str] = None, current_user: dict = Depends(require_director)):
     now_dt = datetime.now(timezone.utc)
     if month and len(month) == 7:
         y, m = int(month[:4]), int(month[5:7])
@@ -2873,9 +2868,7 @@ async def get_user_orders(user_id: str, month: Optional[str] = None, current_use
 
 
 @api_router.get("/users/{user_id}/leads")
-async def get_user_leads(user_id: str, current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def get_user_leads(user_id: str, current_user: dict = Depends(require_director)):
     leads = await db.leads.find(
         {"assigned_to": user_id, "deleted": {"$ne": True}},
         {"_id": 0, "id": 1, "name": 1, "company": 1, "stage": 1, "last_contact": 1, "phone": 1},
@@ -4328,9 +4321,7 @@ async def restore_trash(collection: str, item_id: str, current_user: dict = Depe
 
 
 @api_router.post("/trash/purge")
-async def purge_trash(current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def purge_trash(current_user: dict = Depends(require_director)):
     total = 0
     for cname in _TRASH_LABELS:
         r = await db[cname].delete_many({"deleted": True})
@@ -4340,17 +4331,13 @@ async def purge_trash(current_user: dict = Depends(_require_user)):
 
 # ====== Backup ======
 @api_router.get("/backup/list")
-async def list_backups(current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def list_backups(current_user: dict = Depends(require_director)):
     docs = await db.backups.find({}, {"_id": 0, "collections": 0}).sort("created_at", -1).to_list(50)
     return docs
 
 
 @api_router.post("/backup/create")
-async def create_backup_manual(current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def create_backup_manual(current_user: dict = Depends(require_director)):
     await _create_backup(reason="manual")
     return {"ok": True}
 
@@ -4360,9 +4347,7 @@ class RestoreRequest(BaseModel):
 
 
 @api_router.post("/backup/restore/{backup_id}")
-async def restore_backup(backup_id: str, payload: RestoreRequest, current_user: dict = Depends(_require_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(403, "Только для администратора")
+async def restore_backup(backup_id: str, payload: RestoreRequest, current_user: dict = Depends(require_director)):
     if payload.confirm_word.strip().upper() != "ВОССТАНОВИТЬ":
         raise HTTPException(400, "Введите слово ВОССТАНОВИТЬ для подтверждения")
 
