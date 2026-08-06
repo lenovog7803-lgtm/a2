@@ -1221,7 +1221,7 @@ async def leads_industries():
 
 
 @api_router.get("/leads", response_model=List[Lead])
-async def list_leads_filtered(industry: Optional[str] = None, current_user: Optional[dict] = Depends(_get_user_from_token)):
+async def list_leads_filtered(industry: Optional[str] = None, current_user: dict = Depends(_require_user)):
     filter_q: dict = {"deleted": {"$ne": True}}
     if current_user and current_user.get("role") == "manager":
         perms = current_user.get("permissions") or {}
@@ -1259,7 +1259,7 @@ async def claim_lead(lead_id: str, current_user: dict = Depends(_require_user)):
 
 @api_router.get("/leads/queue")
 async def get_call_queue(industry: Optional[str] = None, limit: int = 50,
-                         current_user: Optional[dict] = Depends(_get_user_from_token)):
+                         current_user: dict = Depends(_require_user)):
     now = datetime.now(timezone.utc).isoformat()
     today_end = datetime.now(timezone.utc).replace(hour=23, minute=59, second=59).isoformat()
 
@@ -1902,9 +1902,9 @@ async def _bg_close_carrier_payment_on_paid(carrier_name: str, order_id: str):
 
 # ====== Task CRUD endpoints ======
 @api_router.get("/tasks", response_model=List[Task])
-async def list_tasks(current_user: Optional[dict] = Depends(_get_user_from_token)):
+async def list_tasks(current_user: dict = Depends(_require_user)):
     filter_q: dict = {}
-    if current_user and current_user.get("role") == "manager":
+    if current_user.get("role") == "manager":
         filter_q["$or"] = [{"created_by": current_user["id"]}, {"assigned_user_id": current_user["id"]}]
     docs = await db.tasks.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return [Task(**d) for d in docs]
@@ -1956,9 +1956,9 @@ async def delete_task(task_id: str, background_tasks: BackgroundTasks):
 
 
 @api_router.get("/orders", response_model=List[Order])
-async def list_orders(current_user: Optional[dict] = Depends(_get_user_from_token)):
+async def list_orders(current_user: dict = Depends(_require_user)):
     filter_q: dict = {"deleted": {"$ne": True}}
-    if current_user and current_user.get("role") == "manager":
+    if current_user.get("role") == "manager":
         perms = current_user.get("permissions") or {}
         if not perms.get("can_view_all_orders"):
             filter_q["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}, {"assigned_to": ""}]
