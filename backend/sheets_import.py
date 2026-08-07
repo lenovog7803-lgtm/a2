@@ -546,13 +546,25 @@ async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge
                 # safe to upsert keyed by order_number.
                 await db.orders.replace_one({"order_number": num}, order, upsert=True)
 
-        # Remove orders that no longer exist in Sheet (soft check — only if sheet has data)
+        # Orders no longer in the Sheet get soft-deleted, not hard-deleted —
+        # this "not in sheet" check is a plain string match against
+        # order_number and has no tolerance for formatting drift (a sheet
+        # row with a bare "636" instead of "З-636/2026", a different dash
+        # character, stray whitespace — anything parse_order() doesn't
+        # normalize). A false "not in sheet" here used to mean db.orders.
+        # delete_many(), i.e. permanently, silently gone with no trash entry
+        # and no way back — that's exactly what happened to real orders
+        # twice. Recoverable via Trash now; a wrong match costs a restore
+        # click instead of the order.
         if orders:
             sheet_numbers = {o["order_number"] for o in orders if o.get("order_number")}
-            await db.orders.delete_many({
-                "order_number": {"$nin": list(sheet_numbers), "$exists": True, "$ne": ""},
-                "deleted": {"$ne": True},
-            })
+            await db.orders.update_many(
+                {
+                    "order_number": {"$nin": list(sheet_numbers), "$exists": True, "$ne": ""},
+                    "deleted": {"$ne": True},
+                },
+                {"$set": {"deleted": True, "deleted_at": _now_iso()}},
+            )
 
     # Лиды: merge-upsert по телефону (с fallback на имя) — не затирать call_notes,
     # стадию и правки, сделанные в CRM во время звонков.
