@@ -453,14 +453,6 @@ class SheetsImporter:
 
 
 _ALL_TARGETS = ("clients", "carriers", "orders", "leads")
-_CRM_ONLY_ORDER_FIELDS = {"client_paid", "carrier_paid", "client_paid_date", "carrier_paid_date",
-                           "docs_to_client_sent", "docs_from_client_received",
-                           "docs_to_carrier_sent", "docs_from_carrier_received",
-                           "docs_to_client_sent_date", "docs_from_client_received_date",
-                           "docs_to_carrier_sent_date", "docs_from_carrier_received_date",
-                           "calendar_event_id", "calendar_event_url",
-                           "doc_url_client", "doc_url_carrier", "doc_url_act",
-                           "notes", "deleted", "deleted_at"}
 
 
 async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge") -> Dict[str, Any]:
@@ -523,15 +515,6 @@ async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge
             num = order.get("order_number", "")
             existing = existing_orders.get(num)
             if existing:
-                if mode != "replace":
-                    # Keep CRM-managed status if it's a terminal state
-                    crm_status = existing.get("status", "")
-                    if crm_status in ("done", "cancelled", "in_progress") and order.get("status") == "new":
-                        order["status"] = crm_status
-                    # Preserve CRM-only fields
-                    for field in _CRM_ONLY_ORDER_FIELDS:
-                        if field in existing and existing[field]:
-                            order[field] = existing[field]
                 # Preserve the existing id and match by it, not by order_number.
                 # order_number is not guaranteed unique in the CRM (create_order
                 # can race and hand out the same number to two different orders
@@ -540,7 +523,22 @@ async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge
                 # that happens to share it. Matching by id guarantees we only
                 # ever touch the exact document we looked up above.
                 order["id"] = existing.get("id", order["id"])
-                await db.orders.replace_one({"id": order["id"]}, order, upsert=True)
+                if mode != "replace":
+                    # Keep CRM-managed status if it's a terminal state
+                    crm_status = existing.get("status", "")
+                    if crm_status in ("done", "cancelled", "in_progress") and order.get("status") == "new":
+                        order["status"] = crm_status
+                    # $set only the fields the sheet actually produced, instead of
+                    # replace_one'ing the whole document. A full replace_one here
+                    # used to silently wipe every CRM-only field the sheet doesn't
+                    # know about (doc-flow dates, payment order number/date, ...)
+                    # each auto-sync cycle, because parse_order() never emits them
+                    # and the old preserve-by-fieldname allowlist had drifted out
+                    # of sync with the actual Order model field names. $set can't
+                    # drop a field it was never given, so nothing to keep in sync.
+                    await db.orders.update_one({"id": order["id"]}, {"$set": order}, upsert=True)
+                else:
+                    await db.orders.replace_one({"id": order["id"]}, order, upsert=True)
             else:
                 # Genuinely new to the CRM — no existing document to protect,
                 # safe to upsert keyed by order_number.
