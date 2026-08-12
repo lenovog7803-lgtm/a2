@@ -32,10 +32,11 @@ except Exception as _e:  # pragma: no cover
     logging.getLogger(__name__).warning(f"sheets_sync import failed: {_e}")
 
 try:
-    from sheets_import import run_import as _sheets_run_import, get_last_status as _sheets_import_status
+    from sheets_import import run_import as _sheets_run_import, get_last_status as _sheets_import_status, preview_import as _sheets_preview_import
 except Exception as _e:  # pragma: no cover
     _sheets_run_import = None
     _sheets_import_status = None
+    _sheets_preview_import = None
     logging.getLogger(__name__).warning(f"sheets_import import failed: {_e}")
 
 try:
@@ -387,8 +388,11 @@ async def _deferred_init():
     except Exception as e:
         logging.getLogger(__name__).error(f"ensure_indexes failed: {e}")
 
-    asyncio.create_task(_background_sheets_sync())
-    asyncio.create_task(_auto_sync_loop())
+    # Temporarily disabled — the Sheets auto-sync overwrites order fields
+    # (rates, dates) from the Sheet every cycle, clobbering manual DB fixes
+    # made while reconciling the КУДиР book. Re-enable when done.
+    # asyncio.create_task(_background_sheets_sync())
+    # asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_startup_backup())
     asyncio.create_task(_trash_purge_loop())
@@ -472,6 +476,21 @@ _http_bearer = HTTPBearer(auto_error=False)
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_RU_MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня",
+              "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+
+
+def fmt_date_ru(date_str: str) -> str:
+    """YYYY-MM-DD -> '3 января 2026'. Возвращает исходную строку, если формат неожиданный."""
+    if not date_str:
+        return ""
+    try:
+        y, m, d = date_str[:10].split("-")
+        return f"{int(d)} {_RU_MONTHS[int(m) - 1]} {y}"
+    except Exception:
+        return date_str
 
 
 def _hash_password(password: str) -> str:
@@ -746,6 +765,8 @@ class Order(BaseModel):
     client_pp_date: Optional[str] = ""
     carrier_pp_number: Optional[str] = ""
     carrier_pp_date: Optional[str] = ""
+    carrier_act_number: Optional[str] = ""  # номер акта перевозчика — вводится при получении документов
+    carrier_act_date: Optional[str] = ""
 
 
 class OrderPayload(BaseModel):
@@ -838,6 +859,8 @@ class OrderUpdate(BaseModel):
     client_pp_date: Optional[str] = None
     carrier_pp_number: Optional[str] = None
     carrier_pp_date: Optional[str] = None
+    carrier_act_number: Optional[str] = None
+    carrier_act_date: Optional[str] = None
 
 
 class Lead(BaseModel):
@@ -2192,6 +2215,111 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     return Order(**doc)
 
 
+async def _kudir_payment_group(order: dict, pp_field: str, date_field: str) -> list:
+    """Заявки, оплаченные ОДНИМ и тем же платёжным поручением (тот же номер
+    ПП + та же дата) — банк нередко закрывает несколько заявок одним
+    переводом, и такая группа должна лечь в КУДиР одной строкой, а не по
+    строке на каждую заявку."""
+    import re as _re
+    date_str = (order.get(date_field) or '')[:10]
+    if not order.get(pp_field) or not date_str:
+        return [order]
+    group = await db.orders.find({
+        pp_field: order[pp_field],
+        date_field: {'$regex': f'^{_re.escape(date_str)}'},
+        'deleted': {'$ne': True},
+    }, {'_id': 0}).to_list(500)
+    return group or [order]
+
+
+async def _create_kudir_income_row(order: dict):
+    """Строка дохода в КУДиР — создаётся/пересчитывается при отметке оплаты
+    клиентом с номером ПП. Заявки с одинаковым client_pp_number + датой
+    схлопываются в одну строку с суммарной маржой (как в акте сверки)."""
+    if not order.get('client_pp_number') or not order.get('client_paid_date'):
+        return
+    date_str = order['client_paid_date'][:10]
+    group = await _kudir_payment_group(order, 'client_pp_number', 'client_paid_date')
+    group_ids = [o['id'] for o in group]
+    order_numbers = sorted(o.get('order_number') or '' for o in group)
+    orders_label = ', '.join(n for n in order_numbers if n)
+    total_margin = max(0.0, sum(float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0) for o in group))
+    total_paid = sum(float(o.get('client_rate') or 0) for o in group)
+    client_names = sorted({o.get('client_name') or '' for o in group} - {''})
+    client_label = client_names[0] if len(client_names) <= 1 else ', '.join(client_names)
+    carrier_notes = sorted({
+        f"{float(o.get('carrier_rate') or 0):.2f} — перевозчику {o.get('carrier_name')}"
+        for o in group if o.get('carrier_name')
+    })
+
+    # Client-side act — this business's own act numbering is fixed 1:1 to
+    # the order number (акт № совпадает с номером заявки), unlike the
+    # carrier's act which is the carrier's own separate document.
+    def _client_act_part(o):
+        d = (o.get('unload_date') or o.get('load_date') or '')[:10]
+        num = o.get('order_number') or ''
+        if _re.match(r'^\d{4}-\d{2}-\d{2}$', d):
+            return f"№ {num} от {fmt_date_ru(d)}"
+        return f"№ {num}"
+    client_act_parts = [p for p in (_client_act_part(o) for o in group) if p]
+    client_act_ref = f"; Акт {', '.join(client_act_parts)}" if client_act_parts else ''
+
+    entry = {
+        'id': str(uuid.uuid4()),
+        'order_id': order['id'], 'order_ids': group_ids,
+        'order_number': orders_label,
+        'row_type': 'income',
+        'entry_date': date_str,
+        'document_ref': f"Плат. поручение № {order['client_pp_number']} от {fmt_date_ru(date_str)}{client_act_ref}",
+        'content': f"Оплата от {client_label} на сумму {total_paid:.2f} BYN по заявк{'е' if len(group) == 1 else 'ам'} № {orders_label}",
+        'income_amount': total_margin,
+        'note': '; '.join(carrier_notes),
+        'created_at': now_iso(),
+    }
+    await db.kudir_entries.delete_many({'row_type': 'income', 'order_id': {'$in': group_ids}})
+    await db.kudir_entries.insert_one(entry)
+
+
+async def _create_kudir_transit_row(order: dict):
+    """Строка транзита в КУДиР — создаётся/пересчитывается при отметке
+    оплаты перевозчику с номером ПП. Заявки с одинаковым
+    carrier_pp_number + датой схлопываются в одну строку."""
+    if not order.get('carrier_pp_number') or not order.get('carrier_paid_date'):
+        return
+    date_str = order['carrier_paid_date'][:10]
+    group = await _kudir_payment_group(order, 'carrier_pp_number', 'carrier_paid_date')
+    group_ids = [o['id'] for o in group]
+    order_numbers = sorted(o.get('order_number') or '' for o in group)
+    orders_label = ', '.join(n for n in order_numbers if n)
+    carrier_names = sorted({o.get('carrier_name') or '' for o in group} - {''})
+    carrier_label = carrier_names[0] if len(carrier_names) <= 1 else ', '.join(carrier_names)
+    total_transit = sum(float(o.get('carrier_rate') or 0) for o in group)
+
+    def _act_part(o):
+        if o.get('carrier_act_number') and o.get('carrier_act_date'):
+            return f"№ {o['carrier_act_number']} от {fmt_date_ru(o['carrier_act_date'][:10])}"
+        if o.get('carrier_act_number'):
+            return f"№ {o['carrier_act_number']}"
+        return None
+    act_parts = [p for p in (_act_part(o) for o in group) if p]
+    act_ref = f"; Акт {', '.join(act_parts)}" if act_parts else ''
+
+    entry = {
+        'id': str(uuid.uuid4()),
+        'order_id': order['id'], 'order_ids': group_ids,
+        'order_number': orders_label,
+        'row_type': 'transit',
+        'entry_date': date_str,
+        'document_ref': f"Плат. поручение № {order['carrier_pp_number']} от {fmt_date_ru(date_str)}{act_ref}",
+        'content': f"Перечислено перевозчику {carrier_label} на сумму {total_transit:.2f} BYN по заявк{'е' if len(group) == 1 else 'ам'} № {orders_label}",
+        'income_amount': None,
+        'note': '',
+        'created_at': now_iso(),
+    }
+    await db.kudir_entries.delete_many({'row_type': 'transit', 'order_id': {'$in': group_ids}})
+    await db.kudir_entries.insert_one(entry)
+
+
 class PaymentMark(BaseModel):
     paid: bool
     pp_number: Optional[str] = None
@@ -2253,6 +2381,13 @@ async def mark_payment(order_id: str, side: str, payload: PaymentMark, backgroun
             record["carrier_name"] = order.get("carrier_name") or ""
         await collection.insert_one(record)
 
+    if payload.paid:
+        updated_order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+        if side == "client":
+            await _create_kudir_income_row(updated_order)
+        elif side == "carrier":
+            await _create_kudir_transit_row(updated_order)
+
     await manager.broadcast({"type": "payment_marked", "order_id": order_id, "side": side})
     return {
         "ok": True,
@@ -2261,6 +2396,168 @@ async def mark_payment(order_id: str, side: str, payload: PaymentMark, backgroun
         pp_field: payload.pp_number if payload.paid else None,
         pp_date_field: payload.pp_date if payload.paid else None,
     }
+
+
+@api_router.get("/kudir/missing_pp")
+async def missing_pp_orders(current_user: dict = Depends(require_director)):
+    import re as _re
+    orders = await db.orders.find({
+        'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
+        '$or': [
+            {'client_paid': True, 'client_pp_number': {'$in': [None, '']}},
+            {'carrier_paid': True, 'carrier_pp_number': {'$in': [None, '']}},
+            {
+                'carrier_paid': True,
+                '$or': [{'docs_from_client_received': True}, {'docs_from_carrier_received': True}],
+                'carrier_act_number': {'$in': [None, '']},
+            },
+        ],
+    }, {'_id': 0}).to_list(10000)
+
+    for o in orders:
+        missing = []
+        if o.get('client_paid') and not o.get('client_pp_number'):
+            missing.append('client_pp')
+        if o.get('carrier_paid') and not o.get('carrier_pp_number'):
+            missing.append('carrier_pp')
+        if o.get('carrier_paid') and (o.get('docs_from_client_received') or o.get('docs_from_carrier_received')) and not o.get('carrier_act_number'):
+            missing.append('act')
+        o['missing_fields'] = missing
+
+    # Order by заявка number (год, номер) — "по порядку с 1 заявки" — falling
+    # back to created_at for order_number formats the usual "З-NNN/YYYY"
+    # regex doesn't match, so those still sort somewhere stable instead of
+    # crashing the endpoint.
+    _order_num_pat = _re.compile(r"[ЗЗз3]\s*[-–—]\s*(\d+)\s*/\s*(\d{4})", _re.IGNORECASE)
+
+    def _sort_key(o):
+        m = _order_num_pat.search(o.get('order_number', '') or '')
+        if m:
+            return (0, int(m.group(2)), int(m.group(1)))
+        return (1, o.get('created_at', '') or '', 0)
+
+    orders.sort(key=_sort_key)
+
+    return {'orders': orders, 'total': len(orders)}
+
+
+@api_router.get("/kudir/entries")
+async def list_kudir_entries(date_from: Optional[str] = None, date_to: Optional[str] = None,
+                              current_user: dict = Depends(require_director)):
+    q: dict = {}
+    if date_from or date_to:
+        q['entry_date'] = {}
+        if date_from:
+            q['entry_date']['$gte'] = date_from
+        if date_to:
+            q['entry_date']['$lte'] = date_to
+    entries = await db.kudir_entries.find(q, {'_id': 0}).sort('entry_date', 1).to_list(20000)
+    total_income = sum(e.get('income_amount') or 0 for e in entries)
+    return {'entries': entries, 'total_income': total_income, 'count': len(entries)}
+
+
+@api_router.patch("/kudir/entries/{entry_id}")
+async def update_kudir_entry(entry_id: str, payload: dict, current_user: dict = Depends(require_director)):
+    allowed = {'content', 'note', 'document_ref', 'income_amount', 'entry_date'}
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if upd:
+        await db.kudir_entries.update_one({'id': entry_id}, {'$set': upd})
+    return {'ok': True}
+
+
+@api_router.get("/kudir/export")
+async def export_kudir(year: int, quarter: Optional[int] = None, token: Optional[str] = None,
+                        current_user: Optional[dict] = Depends(_get_user_from_token)):
+    # Opened via plain browser navigation (so the file downloads itself) —
+    # that means no Authorization header, so a `token` query param is
+    # accepted as a fallback and validated the same way the header would be.
+    user = current_user
+    if not user and token:
+        try:
+            token_payload = _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            user = await db.users.find_one({"id": token_payload.get("sub")}, {"_id": 0})
+        except Exception:
+            user = None
+    if not user or user.get("role") not in DIRECTOR_ROLES:
+        raise HTTPException(403, "Доступно только директору")
+
+    import openpyxl
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from kudir_template import build_header, build_table_head, style_data_row, border_all, f as font_fn, left_bottom, set_widths
+
+    quarters = [quarter] if quarter else [1, 2, 3, 4]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"{year}" + (f" Q{quarter}" if quarter else "")
+    set_widths(ws)
+    build_header(ws, "29.03.2024 N 11")
+    build_table_head(ws)
+
+    row = 15
+    prev_ytd_row = None
+
+    for q in quarters:
+        q_start_month = (q - 1) * 3 + 1
+        date_from = f"{year}-{q_start_month:02d}-01"
+        q_end_month = q_start_month + 2
+        last_day = 31 if q_end_month in (1, 3, 5, 7, 8, 10, 12) else (30 if q_end_month != 2 else 29)
+        date_to = f"{year}-{q_end_month:02d}-{last_day}"
+
+        entries = await db.kudir_entries.find({
+            'entry_date': {'$gte': date_from, '$lte': date_to}
+        }, {'_id': 0}).sort('entry_date', 1).to_list(20000)
+
+        quarter_start_row = row
+        for e in entries:
+            style_data_row(ws, row)
+            ws[f"B{row}"] = fmt_date_ru(e['entry_date'])
+            ws[f"C{row}"] = e['document_ref']
+            ws[f"D{row}"] = e['content']
+            if e.get('income_amount') is not None:
+                ws[f"E{row}"] = round(e['income_amount'], 2)
+            ws[f"L{row}"] = e.get('note', '')
+            row += 1
+        quarter_end_row = row - 1
+
+        ws[f"B{row}"] = f"Итого за {q}-й квартал"
+        ws[f"B{row}"].font = font_fn(10)
+        ws[f"B{row}"].alignment = left_bottom
+        ws.merge_cells(f"B{row}:D{row}")
+        for col in "EFGHIJK":
+            ws[f"{col}{row}"] = f"=SUM({col}{quarter_start_row}:{col}{quarter_end_row})" if quarter_end_row >= quarter_start_row else 0
+            ws[f"{col}{row}"].border = border_all
+            ws[f"{col}{row}"].font = font_fn(9)
+        ws[f"B{row}"].border = border_all
+        quarter_total_row = row
+        row += 1
+
+        ws[f"B{row}"] = "Итого с начала календарного года"
+        ws[f"B{row}"].font = font_fn(10)
+        ws[f"B{row}"].alignment = left_bottom
+        ws.merge_cells(f"B{row}:D{row}")
+        for col in "EFGHIJK":
+            ws[f"{col}{row}"] = f"={col}{quarter_total_row}" if prev_ytd_row is None else f"={col}{prev_ytd_row}+{col}{quarter_total_row}"
+            ws[f"{col}{row}"].border = border_all
+            ws[f"{col}{row}"].font = font_fn(9)
+        ws[f"B{row}"].border = border_all
+        prev_ytd_row = row
+        row += 2
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"Книга учёта — {year}" + (f" кв.{quarter}" if quarter else " год") + ".xlsx"
+    # Header values must be latin-1 — the Cyrillic name only fits via the
+    # RFC 5987 filename* form, with an ASCII fallback for older clients.
+    from urllib.parse import quote
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=\"kudir_{year}.xlsx\"; filename*=UTF-8''{quote(filename)}"}
+    )
 
 
 @api_router.post("/orders/{order_id}/sync_doc_urls")
@@ -3078,16 +3375,33 @@ async def sync_sheets_status():
     return s.last_status
 
 
+@api_router.get("/sync/import_preview")
+async def import_preview(
+    collections: str = Query(""),
+    current_user: dict = Depends(require_director),
+):
+    """Что ИЗМЕНИТСЯ при импорте из Google Таблицы — без записи. Директор
+    смотрит список (изменённые поля заявок, новые заявки, кандидаты на
+    авто-удаление) перед тем, как подтвердить массовую перезапись."""
+    if _sheets_preview_import is None:
+        raise HTTPException(500, "Импорт недоступен")
+    targets = [c.strip() for c in collections.split(",") if c.strip()] or None
+    return await _sheets_preview_import(db, targets=targets)
+
+
 @api_router.post("/sync/import_from_sheets")
 async def import_from_sheets(
     collections: str = Query(""),
     mode: str = Query("merge"),
-    current_user: dict = Depends(_require_user),
+    current_user: dict = Depends(require_director),
 ):
     """Импорт клиентов / перевозчиков / заказов / лидов из Google Таблицы в CRM.
     ОДНОСТОРОННЕ: только Sheets -> CRM. Таблица не изменяется.
     mode='merge' (по умолчанию) — не затирает уже заполненные в CRM поля.
     collections — через запятую (clients,carriers,orders,leads), пусто = все.
+    Директор-only и требует предварительного просмотра через
+    /sync/import_preview — эта массовая перезапись раньше срабатывала молча
+    в фоне и несколько раз портила данные без возможности проверить заранее.
     """
     if _sheets_run_import is None:
         raise HTTPException(500, "Импорт недоступен")

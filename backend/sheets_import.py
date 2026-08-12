@@ -559,9 +559,15 @@ async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge
         # click instead of the order.
         if orders:
             sheet_numbers = {o["order_number"] for o in orders if o.get("order_number")}
+            # З-001..003/2025 are real orders that keep getting flagged "not
+            # in sheet" every auto-sync cycle for reasons unrelated to their
+            # actual existence in the CRM (they were repeatedly soft-deleted
+            # and restored this way already) — exempt them from this cleanup
+            # rather than let the cycle keep re-deleting them.
+            protected_numbers = {"З-001/2025", "З-002/2025", "З-003/2025"}
             await db.orders.update_many(
                 {
-                    "order_number": {"$nin": list(sheet_numbers), "$exists": True, "$ne": ""},
+                    "order_number": {"$nin": list(sheet_numbers | protected_numbers), "$exists": True, "$ne": ""},
                     "deleted": {"$ne": True},
                 },
                 {"$set": {"deleted": True, "deleted_at": _now_iso()}},
@@ -596,6 +602,96 @@ async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge
     _last_import_status.update(last)
     logger.info(f"[Sheets import] {last['imported']} counts={counts}")
     return last
+
+
+async def preview_import(db, targets: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Считает, что ИЗМЕНИТСЯ при импорте из Sheets, но ничего не пишет.
+    Директор смотрит список перед тем, как подтвердить массовую перезапись
+    (после нескольких случаев, когда авто-импорт тихо затирал/удалял заявки)."""
+    want = set(targets) if targets else set(_ALL_TARGETS)
+    importer = SheetsImporter()
+
+    def _fetch():
+        clients = importer.import_clients() if ("clients" in want or "orders" in want) else []
+        carriers = importer.import_carriers() if ("carriers" in want or "orders" in want) else []
+        orders = importer.import_orders(clients, carriers) if "orders" in want else []
+        leads = importer.import_leads() if "leads" in want else []
+        return clients, carriers, orders, leads
+
+    clients, carriers, orders, leads = await asyncio.to_thread(_fetch)
+
+    result: Dict[str, Any] = {"ok": True, "at": _now_iso()}
+
+    if "orders" in want:
+        existing = {o["order_number"]: o for o in await db.orders.find(
+            {"order_number": {"$exists": True, "$ne": ""}}, {"_id": 0}
+        ).to_list(100000)}
+
+        new_orders = []
+        changed_orders = []
+        FIELD_LABELS = {
+            "client_rate": "Ставка клиента", "carrier_rate": "Ставка перевозчика",
+            "client_name": "Клиент", "carrier_name": "Перевозчик",
+            "status": "Статус", "load_date": "Дата загрузки", "unload_date": "Дата выгрузки",
+            "route_from": "Откуда", "route_to": "Куда", "notes": "Заметки",
+            "client_paid": "Оплата клиента", "carrier_paid": "Оплата перевозчику",
+        }
+        for order in orders:
+            num = order.get("order_number", "")
+            ex = existing.get(num)
+            if not ex:
+                new_orders.append(num)
+                continue
+            diffs = []
+            for field, new_val in order.items():
+                # client_id/carrier_id are FKs re-resolved by name lookup on
+                # every import — they're near-guaranteed to differ even when
+                # the underlying client/carrier name hasn't changed, so
+                # comparing raw ids here is meaningless noise for a human diff.
+                if field in ("id", "created_at", "order_number", "client_id", "carrier_id"):
+                    continue
+                old_val = ex.get(field)
+                if field == "status" and ex.get("status") in ("done", "cancelled", "in_progress") and new_val == "new":
+                    continue  # _apply_orders keeps terminal CRM status, not a real change
+                if (old_val or None) != (new_val or None):
+                    diffs.append({
+                        "field": field,
+                        "label": FIELD_LABELS.get(field, field),
+                        "old": old_val, "new": new_val,
+                    })
+            if diffs:
+                changed_orders.append({"order_number": num, "diffs": diffs})
+
+        sheet_numbers = {o["order_number"] for o in orders if o.get("order_number")}
+        protected_numbers = {"З-001/2025", "З-002/2025", "З-003/2025"}
+        would_delete = [
+            n for n, ex in existing.items()
+            if n and n not in sheet_numbers and n not in protected_numbers and not ex.get("deleted")
+        ]
+
+        result["orders"] = {
+            "total_in_sheet": len(orders),
+            "new": new_orders,
+            "changed": changed_orders,
+            "would_delete": sorted(would_delete),
+        }
+
+    if "clients" in want:
+        existing_c = {c.get("name"): c for c in await db.clients.find({}, {"_id": 0}).to_list(10000)}
+        result["clients"] = {
+            "total_in_sheet": len(clients),
+            "new": sum(1 for c in clients if c.get("name") not in existing_c),
+        }
+    if "carriers" in want:
+        existing_cr = {c.get("company_name"): c for c in await db.carriers.find({}, {"_id": 0}).to_list(10000)}
+        result["carriers"] = {
+            "total_in_sheet": len(carriers),
+            "new": sum(1 for c in carriers if c.get("company_name") not in existing_cr),
+        }
+    if "leads" in want:
+        result["leads"] = {"total_in_sheet": len(leads)}
+
+    return result
 
 
 _last_import_status: Dict[str, Any] = {"ok": False, "message": "Импорт ещё не запускался", "imported": {}}
