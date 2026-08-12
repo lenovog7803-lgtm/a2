@@ -254,6 +254,13 @@ def parse_carrier(row: List[str]) -> Optional[Dict[str, Any]]:
 
 
 def parse_order(row: List[str], client_idx: Dict[str, str], carrier_idx: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    # Column layout here MUST mirror sheets_sync.py::order_row() exactly —
+    # that's what actually writes the "Заказы" tab. This used to expect a
+    # much wider, unrelated ~50-column layout (route as one combined
+    # string, doc URLs/driver/cargo/notes out past column 34) left over
+    # from an older sheet format; reading the real 27-column sheet through
+    # it silently misaligned every field (addresses into rate/date columns,
+    # etc.) on every auto-sync cycle.
     num = _s(row[0]) if len(row) > 0 else ""
     if not num:
         return None
@@ -262,7 +269,6 @@ def parse_order(row: List[str], client_idx: Dict[str, str], carrier_idx: Dict[st
 
     client_name = _s(row[2]) if len(row) > 2 else ""
     carrier_name = _s(row[3]) if len(row) > 3 else ""
-    rfrom, rto = _split_route(_s(row[4]) if len(row) > 4 else "")
 
     return {
         "id": str(uuid.uuid4()),
@@ -271,31 +277,28 @@ def parse_order(row: List[str], client_idx: Dict[str, str], carrier_idx: Dict[st
         "client_name": client_name,
         "carrier_id": carrier_idx.get(carrier_name.lower(), ""),
         "carrier_name": carrier_name,
-        "route_from": rfrom,
-        "route_to": rto,
-        "route_from_address": _s(row[48]) if len(row) > 48 else "",
-        "route_to_address": _s(row[49]) if len(row) > 49 else "",
-        "load_date": _date(row[5]) if len(row) > 5 else "",
-        "unload_date": _date(row[6]) if len(row) > 6 else "",
-        "driver_name": _s(row[46]) if len(row) > 46 else "",
-        "driver_phone": "",
-        "vehicle_type": "",
-        "vehicle_plate": "",
-        "client_rate": _money(row[7]) if len(row) > 7 else 0,
-        "carrier_rate": _money(row[8]) if len(row) > 8 else 0,
-        "status": _status(row[9]) if len(row) > 9 else "new",
-        "client_paid": _bool_pay(row[10]) if len(row) > 10 else False,
-        "carrier_paid": _bool_pay(row[11]) if len(row) > 11 else False,
-        "docs_from_carrier_received": _bool_check(row[16]) if len(row) > 16 else False,
-        "docs_to_carrier_sent": _bool_check(row[17]) if len(row) > 17 else False,
-        "docs_to_client_sent": _bool_check(row[18]) if len(row) > 18 else False,
-        "docs_from_client_received": _bool_check(row[19]) if len(row) > 19 else False,
-        "cargo": _s(row[47]) if len(row) > 47 else "",
-        "weight_tons": 0,
-        "notes": _s(row[50]) if len(row) > 50 else "",
-        "doc_url_client": _s(row[34]) if len(row) > 34 else "",
-        "doc_url_carrier": _s(row[35]) if len(row) > 35 else "",
-        "doc_url_act": _s(row[36]) if len(row) > 36 else "",
+        "route_from": _s(row[4]) if len(row) > 4 else "",
+        "route_from_address": _s(row[5]) if len(row) > 5 else "",
+        "route_to": _s(row[6]) if len(row) > 6 else "",
+        "route_to_address": _s(row[7]) if len(row) > 7 else "",
+        "load_date": _date(row[8]) if len(row) > 8 else "",
+        "unload_date": _date(row[9]) if len(row) > 9 else "",
+        "driver_name": _s(row[10]) if len(row) > 10 else "",
+        "driver_phone": _s(row[11]) if len(row) > 11 else "",
+        "vehicle_type": _s(row[12]) if len(row) > 12 else "",
+        "vehicle_plate": _s(row[13]) if len(row) > 13 else "",
+        "cargo": _s(row[14]) if len(row) > 14 else "",
+        "weight_tons": _money(row[15]) if len(row) > 15 else 0,
+        "client_rate": _money(row[16]) if len(row) > 16 else 0,
+        "carrier_rate": _money(row[17]) if len(row) > 17 else 0,
+        "status": _status(row[19]) if len(row) > 19 else "new",
+        "client_paid": _bool_check(row[20]) if len(row) > 20 else False,
+        "carrier_paid": _bool_check(row[21]) if len(row) > 21 else False,
+        "docs_to_client_sent": _bool_check(row[22]) if len(row) > 22 else False,
+        "docs_from_client_received": _bool_check(row[23]) if len(row) > 23 else False,
+        "docs_to_carrier_sent": _bool_check(row[24]) if len(row) > 24 else False,
+        "docs_from_carrier_received": _bool_check(row[25]) if len(row) > 25 else False,
+        "notes": _s(row[26]) if len(row) > 26 else "",
         "created_at": _date(row[1]) + "T00:00:00+00:00" if (len(row) > 1 and _date(row[1])) else _now_iso(),
     }
 

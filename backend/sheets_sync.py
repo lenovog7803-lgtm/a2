@@ -5,6 +5,7 @@ Google Sheets sync module for CRM.
 - Безопасно к ошибкам: ошибки логируются, но не валят основной API
 """
 import os
+import re
 import logging
 import asyncio
 from pathlib import Path
@@ -246,9 +247,21 @@ def get_sync() -> SheetsSync:
 
 
 # ====== Async helper для вызова из FastAPI ======
+def _order_sort_key(o: Dict[str, Any]):
+    """Заявка № → (год, номер), чтобы лист в Google Таблице шёл по порядку
+    номеров, а не в произвольном порядке выдачи из Mongo. Заявки с номером,
+    который не удаётся разобрать, уходят в конец — отсортированные по дате
+    создания, а не теряются."""
+    m = re.match(r"^З-(\d+)/(\d{4})$", o.get("order_number", "") or "")
+    if m:
+        return (0, int(m.group(2)), int(m.group(1)))
+    return (1, o.get("created_at", "") or "", 0)
+
+
 async def trigger_sync(db) -> Dict[str, Any]:
     """Полностью пересинхронизировать все 3 коллекции."""
     orders = await db.orders.find({}, {"_id": 0}).to_list(5000)
+    orders.sort(key=_order_sort_key)
     clients = await db.clients.find({}, {"_id": 0}).to_list(5000)
     carriers = await db.carriers.find({}, {"_id": 0}).to_list(5000)
     sync = get_sync()
