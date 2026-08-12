@@ -206,7 +206,10 @@ async def _auto_sync_loop():
         if _sheets_run_import is None:
             continue
         try:
-            await _sheets_run_import(db, mode="merge")
+            # skip_delete: background cycle only ever updates/creates fields
+            # from the Sheet — never soft-deletes. Deletions only happen via
+            # the director's manual, preview-then-confirm import.
+            await _sheets_run_import(db, mode="merge", skip_delete=True)
         except Exception as e:
             logging.getLogger(__name__).error(f"auto sync failed: {e}")
 
@@ -219,7 +222,7 @@ async def _background_sheets_sync():
     if _sheets_run_import is None:
         return
     try:
-        result = await _sheets_run_import(db, mode="merge")
+        result = await _sheets_run_import(db, mode="merge", skip_delete=True)
         logging.getLogger(__name__).info(f"[Sheets background sync] {result.get('imported')}")
     except Exception as e:
         logging.getLogger(__name__).error(f"[Sheets background sync] failed: {e}")
@@ -388,11 +391,8 @@ async def _deferred_init():
     except Exception as e:
         logging.getLogger(__name__).error(f"ensure_indexes failed: {e}")
 
-    # Temporarily disabled — the Sheets auto-sync overwrites order fields
-    # (rates, dates) from the Sheet every cycle, clobbering manual DB fixes
-    # made while reconciling the КУДиР book. Re-enable when done.
-    # asyncio.create_task(_background_sheets_sync())
-    # asyncio.create_task(_auto_sync_loop())
+    asyncio.create_task(_background_sheets_sync())
+    asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_startup_backup())
     asyncio.create_task(_trash_purge_loop())

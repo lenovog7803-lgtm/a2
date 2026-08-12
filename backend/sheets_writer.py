@@ -5,7 +5,7 @@
 - Если строки нет — добавляет новую в конец таблицы
 
 Структура листов сохраняется как у пользователя:
-- "Заказы": заголовки в строке 4 (row=4), данные с строки 5
+- "Заказы": заголовки в строке 1, данные с строки 4
 - "Клиенты": заголовки в строке 1, статистика-подзаголовки в строке 2, данные с строки 3
 - "Перевозчики": заголовки в строке 1, данные с строки 2
 
@@ -30,7 +30,7 @@ SCOPES = [
 ]
 
 # Где начинаются данные (1-based)
-ORDERS_DATA_START_ROW = 5
+ORDERS_DATA_START_ROW = 4
 CLIENTS_DATA_START_ROW = 3
 CARRIERS_DATA_START_ROW = 2
 LEADS_DATA_START_ROW = 2
@@ -59,62 +59,69 @@ def _status_label(s: str) -> str:
     return {
         'new': 'Новая',
         'in_progress': 'В работе',
-        'delivered': 'Завершён',
-        'cancelled': 'Отменён',
+        'done': 'Доставлено',
+        'delivered': 'Доставлено',
+        'cancelled': 'Отменено',
     }.get(s or '', s or '')
 
 
-def _pay_label(b: bool) -> str:
-    return 'Оплачено' if b else 'Не оплачено'
+def _bool(v) -> str:
+    return 'Да' if v else 'Нет'
 
 
-def _doc_label(b: bool) -> str:
-    return '✔️ Выполнено' if b else ''
-
-
-def _month_label(unload: str, load: str) -> str:
-    s = unload or load or ''
-    if not s:
-        return ''
-    s = s.split('T')[0]
-    m = re.match(r'^\d{4}-(\d{2})', s)
-    if not m:
-        return ''
-    months = {'01': 'Январь', '02': 'Февраль', '03': 'Март', '04': 'Апрель',
-              '05': 'Май', '06': 'Июнь', '07': 'Июль', '08': 'Август',
-              '09': 'Сентябрь', '10': 'Октябрь', '11': 'Ноябрь', '12': 'Декабрь'}
-    return months.get(m.group(1), '')
+def _normalize_order_key(s: str) -> str:
+    """"З-642/2026", "3-642/2026", "з-642/2026" -> "642/2026" — так
+    сравнение номеров заявок не зависит от того, кириллической "З" или
+    цифрой "3" набран префикс."""
+    return re.sub(r'^[ЗзZz3]\s*[-–—]\s*', '', s.strip())
 
 
 # ===== Order -> ячейки в "Заказы" =====
-# Маппинг: индекс колонки (1-based) -> значение
+# Маппинг: индекс колонки (1-based) -> значение. ДОЛЖЕН зеркалить
+# sheets_sync.py::order_row() / sheets_import.py::parse_order() один в
+# один — это единственная схема, которую реально читает импорт. Раньше
+# здесь была отдельная, унаследованная от старого ~50-колоночного листа
+# схема (route_from+route_to одной ячейкой через дефис, курсы в других
+# колонках и т.д.) — каждая заявка, созданная или изменённая в CRM,
+# писалась в Таблицу не в те ячейки, а следующий импорт читал этот мусор
+# обратно в CRM.
 def order_cells(o: Dict[str, Any]) -> Dict[int, Any]:
+    revenue = float(o.get('client_rate') or 0)
+    cost = float(o.get('carrier_rate') or 0)
+    margin = revenue - cost
     return {
         1:  o.get('order_number', ''),
-        2:  _date_dot((o.get('created_at') or '')[:10]),
+        2:  (o.get('created_at') or '')[:10],
         3:  o.get('client_name', ''),
         4:  o.get('carrier_name', ''),
-        5:  f"{o.get('route_from', '')}-{o.get('route_to', '')}".strip('-'),
-        6:  _date_dot(o.get('load_date', '')),
-        7:  _date_dot(o.get('unload_date', '')),
-        8:  _money(o.get('client_rate')),
-        9:  _money(o.get('carrier_rate')),
-        10: _status_label(o.get('status', '')),
-        11: _pay_label(o.get('client_paid', False)),
-        12: _pay_label(o.get('carrier_paid', False)),
-        13: _month_label(o.get('unload_date', ''), o.get('load_date', '')),
-        17: _doc_label(o.get('docs_from_carrier_received', False)),
-        18: _doc_label(o.get('docs_to_carrier_sent', False)),
-        19: _doc_label(o.get('docs_to_client_sent', False)),
-        20: _doc_label(o.get('docs_from_client_received', False)),
-        # Документы — кликабельные ссылки (35,36,37 = AI, AJ, AK)
+        5:  o.get('route_from', ''),
+        6:  o.get('route_from_address', ''),
+        7:  o.get('route_to', ''),
+        8:  o.get('route_to_address', ''),
+        9:  o.get('load_date', ''),
+        10: o.get('unload_date', ''),
+        11: o.get('driver_name', ''),
+        12: o.get('driver_phone', ''),
+        13: o.get('vehicle_type', ''),
+        14: o.get('vehicle_plate', ''),
+        15: o.get('cargo', ''),
+        16: _money(o.get('weight_tons')),
+        17: _money(revenue),
+        18: _money(cost),
+        19: _money(margin),
+        20: _status_label(o.get('status', '')),
+        21: _bool(o.get('client_paid', False)),
+        22: _bool(o.get('carrier_paid', False)),
+        23: _bool(o.get('docs_to_client_sent', False)),
+        24: _bool(o.get('docs_from_client_received', False)),
+        25: _bool(o.get('docs_to_carrier_sent', False)),
+        26: _bool(o.get('docs_from_carrier_received', False)),
+        27: o.get('notes', ''),
+        # Ссылки на документы — читателем (parse_order) не разбираются,
+        # это просто кликабельные ссылки для человека, открывшего лист.
         35: o.get('doc_url_client', '') or '',
         36: o.get('doc_url_carrier', '') or '',
         37: o.get('doc_url_act', '') or '',
-        47: o.get('driver_name', ''),
-        48: o.get('cargo', ''),
-        49: o.get('route_from_address', ''),
-        50: o.get('route_to_address', ''),
     }
 
 
@@ -196,14 +203,22 @@ class SheetsWriter:
         return self._ss
 
     def _find_row_by_key(self, ws, key: str, key_col: int = 1, start_row: int = 1) -> Optional[int]:
-        """Ищет строку, у которой в колонке key_col значение == key. Возвращает 1-based индекс или None."""
+        """Ищет строку, у которой в колонке key_col значение == key. Возвращает 1-based индекс или None.
+
+        Номера заявок сравниваются с нормализацией "З"/"3" (кириллица vs
+        цифра) — старые строки в листе набирались вручную цифрой "3", а
+        CRM всегда генерирует номер кириллической "З". Точное сравнение
+        никогда не находило существующую строку, и апсерт каждый раз
+        добавлял новую в конец вместо обновления — искажая соседние
+        строки при гонке двух параллельных записей в "последнюю пустую"."""
         if not key:
             return None
+        target = _normalize_order_key(str(key).strip())
         col_vals = ws.col_values(key_col)
         for i, v in enumerate(col_vals, start=1):
             if i < start_row:
                 continue
-            if str(v).strip() == str(key).strip():
+            if _normalize_order_key(str(v).strip()) == target:
                 return i
         return None
 

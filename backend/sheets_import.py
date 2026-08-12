@@ -458,12 +458,16 @@ class SheetsImporter:
 _ALL_TARGETS = ("clients", "carriers", "orders", "leads")
 
 
-async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge") -> Dict[str, Any]:
+async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge", skip_delete: bool = False) -> Dict[str, Any]:
     """Импорт из Google Sheets в Mongo.
 
     targets: какие коллекции синхронизировать (по умолчанию — все 4).
     mode: 'merge' (по умолчанию) — не затирать уже заполненные в CRM поля;
           'replace' — принудительная полная перезапись (ручной форс-ресинк).
+    skip_delete: не помечать удалёнными заявки, которых нет в листе — для
+    фонового автосинка (никаких удалений без просмотра человеком); ручной
+    импорт через /sync/import_from_sheets (после предпросмотра в модалке)
+    оставляет обычное поведение.
     Sheet остаётся неизменной (импорт однонаправленный: Sheets -> CRM).
     """
     want = set(targets) if targets else set(_ALL_TARGETS)
@@ -557,7 +561,7 @@ async def run_import(db, targets: Optional[List[str]] = None, mode: str = "merge
         # and no way back — that's exactly what happened to real orders
         # twice. Recoverable via Trash now; a wrong match costs a restore
         # click instead of the order.
-        if orders:
+        if orders and not skip_delete:
             sheet_numbers = {o["order_number"] for o in orders if o.get("order_number")}
             # З-001..003/2025 are real orders that keep getting flagged "not
             # in sheet" every auto-sync cycle for reasons unrelated to their
