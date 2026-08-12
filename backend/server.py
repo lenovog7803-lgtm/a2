@@ -2607,7 +2607,8 @@ async def get_order_logs(order_id: str):
 
 
 @api_router.delete("/orders/{order_id}")
-async def delete_order(order_id: str, background_tasks: BackgroundTasks):
+async def delete_order(order_id: str, background_tasks: BackgroundTasks,
+                        current_user: dict = Depends(require_director)):
     # Primary lookup by UUID `id` string field (how the app stores orders)
     doc = await db.orders.find_one({"id": order_id})
     if not doc:
