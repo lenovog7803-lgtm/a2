@@ -172,18 +172,6 @@ async def _bg_delete_client(name: str):
         logging.getLogger(__name__).error(f"delete_client bg failed: {e}", exc_info=True)
 
 
-async def _bg_trigger_apps_script(order_number: str):
-    url = os.environ.get("GOOGLE_APPS_SCRIPT_URL")
-    if not url:
-        return
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=15) as client:
-            await client.post(url, json={"orderNumber": order_number})
-    except Exception as e:
-        logging.getLogger(__name__).error(f"apps_script trigger failed: {e}")
-
-
 async def _bg_delete_order_row(order_number: str):
     if _sw_delete_order is None or not order_number:
         return
@@ -2090,7 +2078,6 @@ async def create_order(payload: OrderPayload, background_tasks: BackgroundTasks,
     obj = Order(**order_data)
     await db.orders.insert_one(obj.dict())
     background_tasks.add_task(_bg_push_order, obj.dict())
-    background_tasks.add_task(_bg_trigger_apps_script, obj.order_number)
     background_tasks.add_task(_bg_cal_create, obj.dict())
     return obj
 
