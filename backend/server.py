@@ -87,31 +87,6 @@ except Exception as _e:  # pragma: no cover
     logging.getLogger(__name__).warning(f"oauth_google import failed: {_e}")
 
 
-# Регистрируем провайдер user-credentials для генерации документов
-async def _get_oauth_token_doc():
-    """Прочитать сохранённый refresh_token из коллекции oauth_tokens."""
-    return await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
-
-
-def _sync_user_creds_provider():
-    """gspread/Drive API ожидают синхронную функцию. Запускаем async через временный loop."""
-    import asyncio as _asyncio
-    try:
-        loop = _asyncio.get_event_loop()
-    except RuntimeError:
-        loop = _asyncio.new_event_loop()
-    if loop.is_running():
-        # вызывается из потока (asyncio.to_thread) — создаём новый loop
-        new_loop = _asyncio.new_event_loop()
-        try:
-            return new_loop.run_until_complete(_get_oauth_token_doc())
-        finally:
-            new_loop.close()
-    return loop.run_until_complete(_get_oauth_token_doc())
-
-
-
-
 async def _bg_sheets_sync():
     """Полная пересинхронизация ОТКЛЮЧЕНА (опасно — может перезаписать).
     Вместо этого — точечный upsert в _bg_push_order/_bg_push_client/_bg_push_carrier.
@@ -399,11 +374,6 @@ async def _deferred_init():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if _docs_get_generator is not None:
-        try:
-            _docs_get_generator().set_user_credentials_provider(_sync_user_creds_provider)
-        except Exception as _e:
-            logging.getLogger(__name__).warning(f"docs_gen user creds wiring failed: {_e}")
     logger.info("Starting server...")
     asyncio.create_task(_deferred_init())
     yield
@@ -1145,6 +1115,13 @@ async def generate_all_acts(client_id: str, current_user: dict = Depends(_requir
     if not client_doc:
         raise HTTPException(404, "Клиент не найден")
 
+    # Получаем токен один раз здесь, на основном event loop — дальше он идёт
+    # параметром в gen.generate/gen.create_combined_doc, которые выполняются
+    # в asyncio.to_thread. Раньше credentials строились лениво внутри самого
+    # потока через отдельный event loop, что падало с "Task ... attached to
+    # a different loop" (Motor-клиент db привязан к основному loop).
+    token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+
     client_name = client_doc.get("name", "")
     orders = await db.orders.find(
         {
@@ -1178,7 +1155,7 @@ async def generate_all_acts(client_id: str, current_user: dict = Depends(_requir
                 order_urls[kind] = existing
                 continue
             try:
-                url = await asyncio.to_thread(gen.generate, kind, order, client_doc, carrier_doc)
+                url = await asyncio.to_thread(gen.generate, kind, order, client_doc, carrier_doc, token_doc)
                 await db.orders.update_one({"id": order_id_val}, {"$set": {field: url}})
                 order_urls[kind] = url
             except Exception as e:
@@ -1192,7 +1169,7 @@ async def generate_all_acts(client_id: str, current_user: dict = Depends(_requir
     act_items = [r for r in results if r.get("act")]
     if act_items:
         try:
-            combined_url = await asyncio.to_thread(gen.create_combined_doc, act_items, client_name)
+            combined_url = await asyncio.to_thread(gen.create_combined_doc, act_items, client_name, token_doc)
             print(f"[generate_all_acts] combined doc: {combined_url}")
         except Exception as e:
             print(f"[generate_all_acts] combine error: {e}")
@@ -3316,9 +3293,15 @@ async def generate_order_doc(order_id: str, kind: str, regenerate: bool = False)
     if not carrier_doc and order.get("carrier_name"):
         carrier_doc = await db.carriers.find_one({"company_name": order["carrier_name"]}, {"_id": 0})
 
+    # Токен читаем здесь, на основном event loop, и передаём его в gen.generate
+    # параметром — оно выполняется внутри asyncio.to_thread, и там нельзя
+    # повторно await'ить Mongo (db привязан к основному loop, а не к тому,
+    # что был бы создан внутри потока).
+    token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+
     try:
         gen = _docs_get_generator()
-        url = await asyncio.to_thread(gen.generate, kind, order, client_doc, carrier_doc)
+        url = await asyncio.to_thread(gen.generate, kind, order, client_doc, carrier_doc, token_doc)
     except Exception as e:
         # Сообщение пользователю
         msg = str(e) or repr(e)

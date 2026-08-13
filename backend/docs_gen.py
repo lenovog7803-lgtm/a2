@@ -109,29 +109,34 @@ class DocsGenerator:
         self.creds_path = creds_path if os.path.isabs(creds_path) else str(ROOT_DIR / creds_path)
         self._drive = None
         self._docs = None
-        self._user_creds_provider = None  # callable -> dict с access/refresh_token
 
-    def set_user_credentials_provider(self, fn):
-        """Установить функцию, возвращающую dict {access_token, refresh_token}.
-        Если установлена — генерация будет идти от имени пользователя (его Drive, его квота).
+    def _services(self, token_doc: Optional[Dict[str, Any]] = None):
+        """Build Drive/Docs services.
+
+        token_doc, when given, is used to build fresh per-call user
+        credentials directly — callers running inside asyncio.to_thread must
+        fetch it themselves (await db.oauth_tokens.find_one(...)) on the
+        main event loop *before* calling gen.generate(...) and pass it in
+        here. This used to be done lazily via a callback that opened a new
+        event loop inside the worker thread to await that same Mongo lookup,
+        which crashed with "Task ... attached to a different loop" — the
+        Motor client only exists on the main loop, not a throwaway one.
+        With no token_doc, falls back to the service account (no Drive
+        storage quota of its own, so only useful where that doesn't matter).
         """
-        self._user_creds_provider = fn
-        # сбрасываем кеш сервисов, чтобы пересоздались
-        self._drive = None
-        self._docs = None
-
-    def _services(self):
+        if token_doc is not None:
+            if not token_doc.get('refresh_token'):
+                raise RuntimeError(
+                    "Сначала авторизуйтесь через Google: откройте /api/auth/google/start"
+                )
+            from oauth_google import make_user_credentials
+            creds, _ = make_user_credentials(token_doc)
+            return (
+                build('drive', 'v3', credentials=creds, cache_discovery=False),
+                build('docs', 'v1', credentials=creds, cache_discovery=False),
+            )
         if self._drive is None:
-            if self._user_creds_provider is not None:
-                from oauth_google import make_user_credentials
-                token_doc = self._user_creds_provider()
-                if not token_doc or not token_doc.get('refresh_token'):
-                    raise RuntimeError(
-                        "Сначала авторизуйтесь через Google: откройте /api/auth/google/start"
-                    )
-                creds, _ = make_user_credentials(token_doc)
-            else:
-                creds = Credentials.from_service_account_file(self.creds_path, scopes=SCOPES)
+            creds = Credentials.from_service_account_file(self.creds_path, scopes=SCOPES)
             self._drive = build('drive', 'v3', credentials=creds, cache_discovery=False)
             self._docs = build('docs', 'v1', credentials=creds, cache_discovery=False)
         return self._drive, self._docs
@@ -254,12 +259,13 @@ class DocsGenerator:
         order: Dict[str, Any],
         client: Optional[Dict[str, Any]],
         carrier: Optional[Dict[str, Any]],
+        token_doc: Optional[Dict[str, Any]] = None,
     ) -> str:
         cfg = TEMPLATES.get(kind)
         if not cfg:
             raise ValueError(f"Неизвестный тип документа: {kind}")
 
-        drive, docs = self._services()
+        drive, docs = self._services(token_doc)
         filename = cfg['filename'](order)
 
         # 1. Копируем шаблон в нужную папку
@@ -298,14 +304,14 @@ class DocsGenerator:
 
         return f"https://docs.google.com/document/d/{new_id}/edit"
 
-    def create_combined_doc(self, act_items: List[Dict[str, Any]], client_name: str) -> str:
+    def create_combined_doc(self, act_items: List[Dict[str, Any]], client_name: str, token_doc: Optional[Dict[str, Any]] = None) -> str:
         """
         Combine text from multiple act documents into one new Google Doc.
         act_items: list of {"order_number": str, "act": "url"}
         Returns the webViewLink of the combined doc.
         """
         folder_id = TEMPLATES["act"]["folder_id"]
-        drive, docs = self._services()
+        drive, docs = self._services(token_doc)
 
         title = f"Все акты — {client_name}"
         new_file = drive.files().create(
