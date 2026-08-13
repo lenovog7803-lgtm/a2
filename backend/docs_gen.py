@@ -51,13 +51,13 @@ SCOPES = [
 TEMPLATES = {
     "client": {
         "name": "Заявка клиенту",
-        "template_id": "1R7Q99u_LFw080lQyL4hpBkAj1Q6an2pnUtkCdrqx-eY",
+        "template_id": "1-FtQ7Mop9yb9agfYM8wcwR-MGcm53Mek4G1I_DbH0oo",  # rebuilt from scratch (docs.documents().create, no files.copy() in its history) — old id 1R7Q99u_LFw080lQyL4hpBkAj1Q6an2pnUtkCdrqx-eY carried a batchUpdate-breaking corruption through every copy
         "folder_id":   "1Vlc98uFl5QRLMpOUhrfig82qv6tVKDv3",
         "filename": lambda o: f"Заявка №{o.get('order_number', '')} - {o.get('client_name', '')}",
     },
     "carrier": {
         "name": "Договор-заявка перевозчику",
-        "template_id": "1Us_NhuCvZ_vMsVSPcJRXPAf6ZkwXITna0MoaK2_OMBw",
+        "template_id": "1DnXs1TUAGHyDdxL0kdbvJNoZEGqTCdZxluWO0FL2kZ4",  # rebuilt from scratch, same reason — old id 1Us_NhuCvZ_vMsVSPcJRXPAf6ZkwXITna0MoaK2_OMBw
         "folder_id":   "17U94rS1jEVUoNYPR2jNBf5cY38pzvyL7",
         "filename": lambda o: f"Договор-заявка №{o.get('order_number', '')} - {o.get('carrier_name', '')}",
     },
