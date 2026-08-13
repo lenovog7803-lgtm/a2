@@ -7,6 +7,7 @@
 4. Возвращает URL созданного документа
 """
 import os
+import time
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -14,8 +15,30 @@ from datetime import datetime
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
+
+
+def _batch_update_with_retry(docs_service, document_id: str, requests: list, max_attempts: int = 4):
+    """Google Docs API batchUpdate can 500 sporadically when called right
+    after files.copy(), before the fresh copy is fully indexed. A short,
+    increasing delay before each attempt gives that indexing time to catch up.
+    """
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            time.sleep(1.5 * attempt)
+            return docs_service.documents().batchUpdate(
+                documentId=document_id, body={'requests': requests}
+            ).execute()
+        except HttpError as e:
+            last_error = e
+            if e.resp.status == 500:
+                logger.warning(f"[DOC] batchUpdate attempt {attempt}/{max_attempts} got 500, retrying...")
+                continue
+            raise  # другие ошибки (403, 404 и т.д.) не имеет смысла повторять — пробрасываем сразу
+    raise last_error
 
 ROOT_DIR = Path(__file__).parent
 
@@ -289,7 +312,7 @@ class DocsGenerator:
         ]
         print(f"[DOC] Replacing {len(requests)} placeholders in doc {new_id} (kind={kind})")
         if requests:
-            result = docs.documents().batchUpdate(documentId=new_id, body={'requests': requests}).execute()
+            result = _batch_update_with_retry(docs, new_id, requests)
             print(f"[DOC] batchUpdate done, replies={len(result.get('replies', []))}")
 
         # 3. Делаем файл доступным «по ссылке» (чтобы пользователь мог открыть)
@@ -338,10 +361,10 @@ class DocsGenerator:
         if segments:
             separator = "\n\n" + "─" * 60 + "\n\n"
             combined_text = separator.join(segments)
-            docs.documents().batchUpdate(
-                documentId=combined_id,
-                body={"requests": [{"insertText": {"location": {"index": 1}, "text": combined_text}}]},
-            ).execute()
+            _batch_update_with_retry(
+                docs, combined_id,
+                [{"insertText": {"location": {"index": 1}, "text": combined_text}}],
+            )
 
         try:
             drive.permissions().create(
