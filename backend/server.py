@@ -2202,7 +2202,7 @@ async def _kudir_payment_group(order: dict, pp_field: str, date_field: str) -> l
     group = await db.orders.find({
         pp_field: order[pp_field],
         date_field: {'$regex': f'^{_re.escape(date_str)}'},
-        'deleted': {'$ne': True},
+        'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
     }, {'_id': 0}).to_list(500)
     return group or [order]
 
