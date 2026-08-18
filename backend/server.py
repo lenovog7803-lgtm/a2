@@ -729,6 +729,11 @@ class Order(BaseModel):
     carrier_pp_date: Optional[str] = ""
     carrier_act_number: Optional[str] = ""  # номер акта перевозчика — вводится при получении документов
     carrier_act_date: Optional[str] = ""
+    # Несколько частичных ПП на одну заявку. Пусто/отсутствует у старых
+    # заявок — тогда список собирается на лету из client_pp_number/
+    # client_paid_date/client_rate, см. _get_payments().
+    client_payments: Optional[List[dict]] = None
+    carrier_payments: Optional[List[dict]] = None
 
 
 class OrderPayload(BaseModel):
@@ -823,6 +828,8 @@ class OrderUpdate(BaseModel):
     carrier_pp_date: Optional[str] = None
     carrier_act_number: Optional[str] = None
     carrier_act_date: Optional[str] = None
+    client_payments: Optional[List[dict]] = None
+    carrier_payments: Optional[List[dict]] = None
 
 
 class Lead(BaseModel):
@@ -2296,6 +2303,88 @@ async def _create_kudir_transit_row(order: dict):
     await db.kudir_entries.insert_one(entry)
 
 
+_LEGACY_PAYMENT_ID_PREFIX = 'legacy-'
+
+
+def _get_payments(order: dict, side: str) -> list:
+    """A side's payments as a list, whether the order already has the new
+    `{side}_payments` array or is an old order that only has the single
+    client_pp_number/client_paid_date/client_rate fields. Old orders get a
+    synthesized one-item list so nothing entered before this feature shipped
+    is lost — the synthesized entry's id is prefixed so callers can tell it
+    apart from a real, persisted payment."""
+    field = f'{side}_payments'
+    payments = order.get(field)
+    if payments:
+        return payments
+    paid_field = f'{side}_paid'
+    pp_field = f'{side}_pp_number'
+    date_field = f'{side}_paid_date'
+    pp_date_field = f'{side}_pp_date'
+    rate_field = f'{side}_rate'
+    if order.get(paid_field) and (order.get(pp_field) or order.get(date_field)):
+        return [{
+            'id': f"{_LEGACY_PAYMENT_ID_PREFIX}{order.get('id','')}-{side}",
+            'pp_number': order.get(pp_field) or '',
+            'pp_date': order.get(pp_date_field) or order.get(date_field) or '',
+            'amount': float(order.get(rate_field) or 0),
+        }]
+    return []
+
+
+async def _sync_kudir_rows_for_payments(order: dict, side: str):
+    """One KUDiR row per payment entry in `{side}_payments` — replaces the
+    single merged-by-PP row the legacy flow produces, since a single order
+    can now carry several different PPs that don't share a date/number to
+    group by. Client-side rows carry a proportional share of the order's
+    margin (client_rate − carrier_rate); carrier-side rows stay zero-amount
+    audit lines, matching the existing transit-row design (see
+    _create_kudir_transit_row)."""
+    row_type = 'income' if side == 'client' else 'transit'
+    payments = [p for p in (order.get(f'{side}_payments') or [])
+                if not str(p.get('id', '')).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
+
+    await db.kudir_entries.delete_many({
+        'row_type': row_type, 'order_id': order['id'], 'payment_id': {'$exists': True},
+    })
+    if not payments:
+        return
+
+    total_rate = float(order.get(f'{side}_rate') or 0)
+    margin_total = total_rate - float(order.get('carrier_rate') or 0) if side == 'client' else 0
+    multiple = len(payments) > 1
+
+    for p in payments:
+        date_str = (p.get('pp_date') or '')[:10]
+        if not date_str:
+            continue
+        amount = float(p.get('amount') or 0)
+        entry = {
+            'id': str(uuid.uuid4()),
+            'payment_id': p.get('id'),
+            'order_id': order['id'], 'order_ids': [order['id']],
+            'order_number': order.get('order_number', ''),
+            'row_type': row_type,
+            'entry_date': date_str,
+            'document_ref': f"Плат. поручение № {p.get('pp_number','')} от {fmt_date_ru(date_str)}",
+            'created_at': now_iso(),
+        }
+        if side == 'client':
+            share = (amount / total_rate) if total_rate else 0
+            prefix = 'Частичная оплата' if multiple else 'Оплата'
+            entry['content'] = (f"{prefix} от {order.get('client_name','')} на сумму {amount:.2f} BYN "
+                                 f"по заявке № {order.get('order_number','')}")
+            entry['income_amount'] = round(margin_total * share, 2)
+            entry['note'] = (f"{float(order.get('carrier_rate') or 0):.2f} — перевозчику {order.get('carrier_name')}"
+                              if order.get('carrier_name') else '')
+        else:
+            entry['content'] = (f"Перечислено перевозчику {order.get('carrier_name','')} на сумму {amount:.2f} BYN "
+                                 f"по заявке № {order.get('order_number','')}")
+            entry['income_amount'] = None
+            entry['note'] = ''
+        await db.kudir_entries.insert_one(entry)
+
+
 async def _sync_kudir_row(order_id: str, side: str):
     """Keeps a KUDiR row in sync with an order's current payment state —
     creates/recomputes it when paid+PP+date are all present, and removes
@@ -2312,6 +2401,15 @@ async def _sync_kudir_row(order_id: str, side: str):
     order = await db.orders.find_one({'id': order_id}, {'_id': 0})
     if not order:
         return
+
+    # Multi-payment orders (payments/{side} endpoints) skip the legacy
+    # single-PP merge-by-group logic entirely — they get one row per
+    # payment instead, kept in sync here so the generic order-update
+    # endpoint's retroactive resync (below) doesn't clobber them.
+    if order.get(f'{side}_payments'):
+        await _sync_kudir_rows_for_payments(order, side)
+        return
+
     if order.get(paid_field) and order.get(pp_field) and order.get(date_field):
         await create_fn(order)
         return
@@ -2402,14 +2500,88 @@ async def mark_payment(order_id: str, side: str, payload: PaymentMark, backgroun
     }
 
 
+class PaymentEntry(BaseModel):
+    pp_number: str
+    pp_date: str
+    amount: float
+
+
+@api_router.post("/orders/{order_id}/payments/{side}")
+async def add_payment(order_id: str, side: str, payload: PaymentEntry, background_tasks: BackgroundTasks,
+                       current_user: Optional[dict] = Depends(_get_user_from_token)):
+    """Adds one partial-payment PP to an order's side. Several of these can
+    add up to the order's rate (client_rate/carrier_rate) — the side is only
+    flagged paid once the sum matches; each PP still gets its own KUDiR row
+    (see _sync_kudir_rows_for_payments) so partial payments show up in the
+    book as they land instead of waiting for the last one."""
+    if side not in ("client", "carrier"):
+        raise HTTPException(400, "side must be 'client' or 'carrier'")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Заявка не найдена")
+
+    field = f"{side}_payments"
+    rate_field = f"{side}_rate"
+    paid_field = f"{side}_paid"
+    date_field = f"{side}_paid_date"
+    expected = float(order.get(rate_field) or 0)
+
+    payments = [p for p in _get_payments(order, side)
+                if not str(p.get("id", "")).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
+    payments.append({"id": str(uuid.uuid4()), **payload.dict()})
+    total = sum(float(p.get("amount") or 0) for p in payments)
+    fully_paid = abs(total - expected) < 0.01
+
+    set_data = {field: payments, paid_field: fully_paid}
+    if fully_paid and not order.get(date_field):
+        set_data[date_field] = payload.pp_date
+    await db.orders.update_one({"id": order_id}, {"$set": set_data})
+    updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+
+    await _sync_kudir_rows_for_payments(updated, side)
+
+    background_tasks.add_task(_bg_push_order, updated)
+    await manager.broadcast({"type": "payment_marked", "order_id": order_id, "side": side})
+    return {"ok": True, "payments": payments, "total": total, "expected": expected, "fully_paid": fully_paid}
+
+
+@api_router.delete("/orders/{order_id}/payments/{side}/{payment_id}")
+async def delete_payment(order_id: str, side: str, payment_id: str, background_tasks: BackgroundTasks,
+                          current_user: Optional[dict] = Depends(_get_user_from_token)):
+    if side not in ("client", "carrier"):
+        raise HTTPException(400, "side must be 'client' or 'carrier'")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Заявка не найдена")
+
+    field = f"{side}_payments"
+    rate_field = f"{side}_rate"
+    paid_field = f"{side}_paid"
+    expected = float(order.get(rate_field) or 0)
+
+    payments = [p for p in _get_payments(order, side)
+                if p.get("id") != payment_id and not str(p.get("id", "")).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
+    total = sum(float(p.get("amount") or 0) for p in payments)
+    fully_paid = bool(payments) and abs(total - expected) < 0.01
+
+    await db.orders.update_one({"id": order_id}, {"$set": {field: payments, paid_field: fully_paid}})
+    updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+
+    await _sync_kudir_rows_for_payments(updated, side)
+
+    background_tasks.add_task(_bg_push_order, updated)
+    await manager.broadcast({"type": "payment_marked", "order_id": order_id, "side": side})
+    return {"ok": True, "payments": payments, "total": total, "expected": expected, "fully_paid": fully_paid}
+
+
 @api_router.get("/kudir/missing_pp")
 async def missing_pp_orders(current_user: dict = Depends(require_director)):
     import re as _re
     orders = await db.orders.find({
         'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
         '$or': [
-            {'client_paid': True, 'client_pp_number': {'$in': [None, '']}},
-            {'carrier_paid': True, 'carrier_pp_number': {'$in': [None, '']}},
+            {'client_paid': True, 'client_pp_number': {'$in': [None, '']}, 'client_payments': {'$in': [None, []]}},
+            {'carrier_paid': True, 'carrier_pp_number': {'$in': [None, '']}, 'carrier_payments': {'$in': [None, []]}},
             {
                 'carrier_paid': True,
                 '$or': [{'docs_from_client_received': True}, {'docs_from_carrier_received': True}],
@@ -2420,9 +2592,9 @@ async def missing_pp_orders(current_user: dict = Depends(require_director)):
 
     for o in orders:
         missing = []
-        if o.get('client_paid') and not o.get('client_pp_number'):
+        if o.get('client_paid') and not o.get('client_pp_number') and not o.get('client_payments'):
             missing.append('client_pp')
-        if o.get('carrier_paid') and not o.get('carrier_pp_number'):
+        if o.get('carrier_paid') and not o.get('carrier_pp_number') and not o.get('carrier_payments'):
             missing.append('carrier_pp')
         if o.get('carrier_paid') and (o.get('docs_from_client_received') or o.get('docs_from_carrier_received')) and not o.get('carrier_act_number'):
             missing.append('act')
