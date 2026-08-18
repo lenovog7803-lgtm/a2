@@ -2586,31 +2586,40 @@ async def delete_payment(order_id: str, side: str, payment_id: str, background_t
     return {"ok": True, "payments": payments, "total": total, "expected": expected, "fully_paid": fully_paid}
 
 
+def _has_pp(order: dict, side: str) -> bool:
+    """True if the side has a real PP number — either the legacy single
+    field, or at least one entry in the payments list with a non-blank
+    pp_number (a payments list can exist with every pp_number left blank,
+    e.g. saved via 'дозаполнить позже' — that still counts as missing)."""
+    if order.get(f'{side}_pp_number'):
+        return True
+    return any(p.get('pp_number') for p in (order.get(f'{side}_payments') or []))
+
+
 @api_router.get("/kudir/missing_pp")
 async def missing_pp_orders(current_user: dict = Depends(require_director)):
     import re as _re
-    orders = await db.orders.find({
+    # Broad query (any paid order) — precise "actually missing a PP" check
+    # happens in Python below via _has_pp, since that requires inspecting
+    # the payments list contents, not just whether the field is empty.
+    candidates = await db.orders.find({
         'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
-        '$or': [
-            {'client_paid': True, 'client_pp_number': {'$in': [None, '']}, 'client_payments': {'$in': [None, []]}},
-            {'carrier_paid': True, 'carrier_pp_number': {'$in': [None, '']}, 'carrier_payments': {'$in': [None, []]}},
-            {
-                'carrier_paid': True,
-                '$or': [{'docs_from_client_received': True}, {'docs_from_carrier_received': True}],
-                'carrier_act_number': {'$in': [None, '']},
-            },
-        ],
+        '$or': [{'client_paid': True}, {'carrier_paid': True}],
     }, {'_id': 0}).to_list(10000)
 
-    for o in orders:
+    orders = []
+    for o in candidates:
         missing = []
-        if o.get('client_paid') and not o.get('client_pp_number') and not o.get('client_payments'):
+        if o.get('client_paid') and not _has_pp(o, 'client'):
             missing.append('client_pp')
-        if o.get('carrier_paid') and not o.get('carrier_pp_number') and not o.get('carrier_payments'):
+        if o.get('carrier_paid') and not _has_pp(o, 'carrier'):
             missing.append('carrier_pp')
         if o.get('carrier_paid') and (o.get('docs_from_client_received') or o.get('docs_from_carrier_received')) and not o.get('carrier_act_number'):
             missing.append('act')
+        if not missing:
+            continue
         o['missing_fields'] = missing
+        orders.append(o)
 
     # Order by заявка number (год, номер) — "по порядку с 1 заявки" — falling
     # back to created_at for order_number formats the usual "З-NNN/YYYY"
