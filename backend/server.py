@@ -2351,7 +2351,9 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
         return
 
     total_rate = float(order.get(f'{side}_rate') or 0)
-    margin_total = total_rate - float(order.get('carrier_rate') or 0) if side == 'client' else 0
+    # Клиентская ставка ниже ставки перевозчика — маржа отрицательная, но в
+    # книгу минус не пишем (как и в старой _create_kudir_income_row).
+    margin_total = max(0.0, total_rate - float(order.get('carrier_rate') or 0)) if side == 'client' else 0
     multiple = len(payments) > 1
 
     for p in payments:
