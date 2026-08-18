@@ -354,8 +354,12 @@ async def _deferred_init():
     except Exception as e:
         logging.getLogger(__name__).error(f"ensure_indexes failed: {e}")
 
-    asyncio.create_task(_background_sheets_sync())
-    asyncio.create_task(_auto_sync_loop())
+    # Disabled permanently: this loop pulls the Sheet's (stale) order_number
+    # values back over CRM on every cycle, which has now twice silently
+    # reverted a manual order-number correction mid-session. Re-enable only
+    # once the Sheet itself is kept in sync with any manual CRM renames.
+    # asyncio.create_task(_background_sheets_sync())
+    # asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_startup_backup())
     asyncio.create_task(_trash_purge_loop())
