@@ -1981,14 +1981,24 @@ async def delete_task(task_id: str, background_tasks: BackgroundTasks):
 
 
 @api_router.get("/orders", response_model=List[Order])
-async def list_orders(current_user: dict = Depends(_require_user)):
+async def list_orders(current_user: dict = Depends(_require_user), limit: int = 2000,
+                       client_id: Optional[str] = None, carrier_id: Optional[str] = None):
     filter_q: dict = {"deleted": {"$ne": True}}
     if current_user.get("role") == "manager":
         perms = current_user.get("permissions") or {}
         if not perms.get("can_view_all_orders"):
             filter_q["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}, {"assigned_to": ""}]
+    # Pushed down to Mongo instead of fetched-then-filtered client-side —
+    # CarrierDetail/ClientDetail already filter the result by these ids on
+    # their end (kept as a harmless no-op there), but previously that meant
+    # every visit to either page pulled the *entire* orders collection just
+    # to display one counterparty's handful of rows.
+    if client_id:
+        filter_q["client_id"] = client_id
+    if carrier_id:
+        filter_q["carrier_id"] = carrier_id
     import re as _re
-    docs = await db.orders.find(filter_q, {"_id": 0}).to_list(2000)
+    docs = await db.orders.find(filter_q, {"_id": 0}).to_list(min(max(limit, 1), 2000))
 
     seen: set = set()
     unique_docs = []
