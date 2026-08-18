@@ -2177,6 +2177,16 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Order not found")
+    # Retroactive KUDiR row: mark_payment() creates these at the moment of
+    # payment, but the "дозаполнить ПП" screen for already-paid orders saves
+    # through this generic endpoint instead — so a PP number/date filled in
+    # later here needs to trigger the same row creation. Both helpers
+    # delete-then-insert by order_id, so calling them on every save is safe
+    # and just recomputes the row if nothing relevant changed.
+    if doc.get("client_paid") and doc.get("client_pp_number") and doc.get("client_paid_date"):
+        await _create_kudir_income_row(doc)
+    if doc.get("carrier_paid") and doc.get("carrier_pp_number") and doc.get("carrier_paid_date"):
+        await _create_kudir_transit_row(doc)
     background_tasks.add_task(_bg_push_order, doc)
     background_tasks.add_task(_bg_cal_update, doc)
     await manager.broadcast({"type": "order_updated", "order_id": order_id})
