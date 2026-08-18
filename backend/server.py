@@ -2214,6 +2214,7 @@ async def _create_kudir_income_row(order: dict):
     """Строка дохода в КУДиР — создаётся/пересчитывается при отметке оплаты
     клиентом с номером ПП. Заявки с одинаковым client_pp_number + датой
     схлопываются в одну строку с суммарной маржой (как в акте сверки)."""
+    import re as _re
     if not order.get('client_pp_number') or not order.get('client_paid_date'):
         return
     date_str = order['client_paid_date'][:10]
