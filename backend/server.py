@@ -2177,16 +2177,13 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Order not found")
-    # Retroactive KUDiR row: mark_payment() creates these at the moment of
+    # Retroactive KUDiR sync: mark_payment() syncs these at the moment of
     # payment, but the "дозаполнить ПП" screen for already-paid orders saves
     # through this generic endpoint instead — so a PP number/date filled in
-    # later here needs to trigger the same row creation. Both helpers
-    # delete-then-insert by order_id, so calling them on every save is safe
-    # and just recomputes the row if nothing relevant changed.
-    if doc.get("client_paid") and doc.get("client_pp_number") and doc.get("client_paid_date"):
-        await _create_kudir_income_row(doc)
-    if doc.get("carrier_paid") and doc.get("carrier_pp_number") and doc.get("carrier_paid_date"):
-        await _create_kudir_transit_row(doc)
+    # later (or a payment unmarked) here needs to trigger the same
+    # create/remove logic. Safe to call on every save; it just recomputes.
+    await _sync_kudir_row(order_id, "client")
+    await _sync_kudir_row(order_id, "carrier")
     background_tasks.add_task(_bg_push_order, doc)
     background_tasks.add_task(_bg_cal_update, doc)
     await manager.broadcast({"type": "order_updated", "order_id": order_id})
@@ -2299,6 +2296,37 @@ async def _create_kudir_transit_row(order: dict):
     await db.kudir_entries.insert_one(entry)
 
 
+async def _sync_kudir_row(order_id: str, side: str):
+    """Keeps a KUDiR row in sync with an order's current payment state —
+    creates/recomputes it when paid+PP+date are all present, and removes
+    the order from any existing row when they're not (payment unmarked, or
+    the PP/date got cleared). Called from both mark_payment and the generic
+    order-update endpoint so unmarking a payment there also clears the
+    book, not just marking one adds to it."""
+    row_type = 'income' if side == 'client' else 'transit'
+    paid_field = 'client_paid' if side == 'client' else 'carrier_paid'
+    pp_field = 'client_pp_number' if side == 'client' else 'carrier_pp_number'
+    date_field = 'client_paid_date' if side == 'client' else 'carrier_paid_date'
+    create_fn = _create_kudir_income_row if side == 'client' else _create_kudir_transit_row
+
+    order = await db.orders.find_one({'id': order_id}, {'_id': 0})
+    if not order:
+        return
+    if order.get(paid_field) and order.get(pp_field) and order.get(date_field):
+        await create_fn(order)
+        return
+
+    existing = await db.kudir_entries.find_one({'row_type': row_type, 'order_ids': order_id})
+    if not existing:
+        return
+    await db.kudir_entries.delete_one({'id': existing['id']})
+    remaining_ids = [oid for oid in existing.get('order_ids', []) if oid != order_id]
+    if remaining_ids:
+        remaining_order = await db.orders.find_one({'id': remaining_ids[0]}, {'_id': 0})
+        if remaining_order:
+            await create_fn(remaining_order)
+
+
 class PaymentMark(BaseModel):
     paid: bool
     pp_number: Optional[str] = None
@@ -2360,12 +2388,9 @@ async def mark_payment(order_id: str, side: str, payload: PaymentMark, backgroun
             record["carrier_name"] = order.get("carrier_name") or ""
         await collection.insert_one(record)
 
-    if payload.paid:
-        updated_order = await db.orders.find_one({"id": order_id}, {"_id": 0})
-        if side == "client":
-            await _create_kudir_income_row(updated_order)
-        elif side == "carrier":
-            await _create_kudir_transit_row(updated_order)
+    # Syncs the KUDiR row either way: creates/recomputes it when paid with a
+    # PP+date, and removes it (or shrinks a merged group) when unmarked.
+    await _sync_kudir_row(order_id, side)
 
     await manager.broadcast({"type": "payment_marked", "order_id": order_id, "side": side})
     return {
