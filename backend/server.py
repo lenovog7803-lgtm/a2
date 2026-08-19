@@ -4596,6 +4596,46 @@ def _order_before_period_filter(date_from: str) -> dict:
     ]}
 
 
+@api_router.get("/client_pp_ledger/{client_id}")
+async def get_client_pp_ledger(client_id: str):
+    entries = await db.client_pp_ledger.find(
+        {"client_id": client_id}, {"_id": 0}
+    ).sort("pp_date", 1).to_list(1000)
+    return {"entries": entries}
+
+
+class PPLedgerEntry(BaseModel):
+    pp_number: str
+    pp_date: str
+    amount: float
+
+
+@api_router.post("/client_pp_ledger/{client_id}")
+async def add_client_pp_entry(client_id: str, payload: PPLedgerEntry):
+    client = await db.clients.find_one({"id": client_id})
+    if not client:
+        raise HTTPException(404, "Клиент не найден")
+
+    entry = {
+        "id": str(uuid.uuid4()),
+        "client_id": client_id,
+        "client_name": client.get("name", ""),
+        "pp_number": payload.pp_number,
+        "pp_date": payload.pp_date,
+        "amount": payload.amount,
+        "created_at": now_iso(),
+    }
+    await db.client_pp_ledger.insert_one(dict(entry))
+    entry.pop("_id", None)
+    return entry
+
+
+@api_router.delete("/client_pp_ledger/{client_id}/{entry_id}")
+async def delete_client_pp_entry(client_id: str, entry_id: str):
+    result = await db.client_pp_ledger.delete_one({"id": entry_id, "client_id": client_id})
+    return {"ok": True, "deleted": result.deleted_count}
+
+
 @api_router.post("/reconciliation/generate")
 async def generate_reconciliation(payload: ReconciliationRequest):
     now = datetime.now(timezone.utc)
@@ -4642,73 +4682,30 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
         }).sort("load_date", 1).to_list(10000)
 
-        payments = await db.payments_in.find({
-            "$or": [{"client_id": cid}, {"client_name": cp_name}],
-            "date": {"$gte": date_from, "$lte": date_to},
-        }).sort("date", 1).to_list(10000)
-
         orders_before = await db.orders.find({
             "$and": [{"$or": [{"client_id": cid}, {"client_name": cp_name}]}, _order_before_period_filter(date_from)],
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
         }, {"_id": 0, "id": 1, "client_rate": 1, "client_paid": 1}).to_list(10000)
-        pmts_before = await db.payments_in.find({
-            "$or": [{"client_id": cid}, {"client_name": cp_name}],
-            "date": {"$lt": date_from},
-        }, {"_id": 0, "amount": 1, "order_id": 1}).to_list(10000)
 
-        # Некоторые старые заявки помечены оплаченными (client_paid) без
-        # отдельной записи в payments_in — платёж вручную добавляли до того,
-        # как mark_payment стал создавать эти записи автоматически. Чтобы
-        # такие оплаты не пропадали из акта, доверяем прежде всего флагу
-        # оплаты на самой заявке, а payments_in используем только для
-        # платежей, не привязанных ни к какой заявке (order_id пуст).
-        paid_before_order_ids = {p.get("order_id") for p in pmts_before if p.get("order_id")}
-        paid_before = (
-            sum(float(o.get("client_rate") or 0) for o in orders_before
-                if o.get("client_paid") and o.get("id") not in paid_before_order_ids)
-            + sum(float(p.get("amount") or 0) for p in pmts_before if not p.get("order_id"))
-        )
+        # Оплаты клиента для акта сверки ведутся в отдельном, накапливаемом
+        # журнале client_pp_ledger — независимо от заявок и от payments_in,
+        # чтобы платежи не терялись/не задваивались при правках заявок.
+        ledger_before = await db.client_pp_ledger.find({
+            "client_id": cid, "pp_date": {"$lt": date_from},
+        }, {"_id": 0}).to_list(10000)
+        paid_before = sum(float(e.get("amount") or 0) for e in ledger_before)
         opening_balance = sum(float(o.get("client_rate") or 0) for o in orders_before) - paid_before
 
         # Табличная шапка в шаблоне: левая колонка — под именем контрагента
         # (его платежи, ПП и своя дата), правая — под нашим ИП (наши заявки).
-        paid_order_ids = {p.get("order_id") for p in payments if p.get("order_id")}
-        raw_entries = []
-        for o in orders:
-            if not o.get("client_paid") or o.get("id") in paid_order_ids:
-                continue
-            raw_entries.append({
-                "pp": (o.get("client_pp_number") or "").strip(),
-                "date": o.get("client_pp_date") or o.get("client_paid_date") or o.get("load_date") or "",
-                "sum": float(o.get("client_rate") or 0),
-                "order_number": o.get("order_number", ""),
-            })
-        for p in payments:
-            # payments_in is authoritative once it exists — the order-flag
-            # loop above already skipped every order that has one of these
-            # (via paid_order_ids), so this must NOT also skip them, or a
-            # payment tied to an order_id never appears anywhere at all.
-            raw_entries.append({"pp": (p.get("pp_number") or "").strip(), "date": p.get("date") or "", "sum": float(p.get("amount") or 0), "order_number": p.get("order_number", "")})
-
-        # Одна платёжка может закрывать несколько заявок сразу (клиент прислал
-        # 1 перевод за 5 заявок, иногда даже с разницей в датах ввода) — если
-        # номер ПП совпадает, это один и тот же платёж, схлопываем в одну
-        # строку с суммарной суммой независимо от даты.
-        merged: dict = {}
-        loose = []
-        for e in raw_entries:
-            if e["pp"]:
-                key = e["pp"]
-                row = merged.setdefault(key, {"pp": e["pp"], "date": e["date"], "sum": 0.0})
-                if e["date"] and (not row["date"] or e["date"] < row["date"]):
-                    row["date"] = e["date"]
-                row["sum"] += e["sum"]
-            else:
-                loose.append(e)
-        left_entries = [{"date": v["date"], "doc": f"ПП {v['pp']} от {_fmt(v['date'])}", "sum": v["sum"]} for v in merged.values()]
-        left_entries += [{"date": e["date"], "doc": (f"Оплата (заявка {e['order_number']})" if e["order_number"] else "Оплата"), "sum": e["sum"]} for e in loose]
-        left_entries.sort(key=lambda e: e["date"])
-        left_rows = [{"date": _fmt(e["date"]), "doc": e["doc"], "sum": f"{e['sum']:.2f}"} for e in left_entries]
+        ledger_entries = await db.client_pp_ledger.find({
+            "client_id": cid, "pp_date": {"$gte": date_from, "$lte": date_to},
+        }, {"_id": 0}).sort("pp_date", 1).to_list(10000)
+        left_rows = [
+            {"date": _fmt(e.get("pp_date")), "doc": f"ПП № {e.get('pp_number', '')}", "sum": f"{float(e.get('amount') or 0):.2f}"}
+            for e in ledger_entries
+        ]
+        total_paid = sum(float(e.get("amount") or 0) for e in ledger_entries)
 
         right_rows = [
             {"date": _fmt(o.get("load_date")), "doc": o.get("order_number", ""),
@@ -4716,7 +4713,6 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             for o in orders
         ]
         total_charged = sum(float(o.get("client_rate") or 0) for o in orders)
-        total_paid    = sum(e["sum"] for e in left_entries)
 
     else:  # carrier
         cp_doc = await db.carriers.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
