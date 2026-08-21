@@ -191,9 +191,12 @@ async def _background_sheets_sync():
         logging.getLogger(__name__).error(f"[Sheets background sync] failed: {e}")
 
 
+_INDEX_VERSION = 2  # bump when the index set below changes, to bypass the 24h skip below once
+
+
 async def ensure_indexes():
     marker = await db.app_settings.find_one({"key": "indexes_ensured_at"})
-    if marker:
+    if marker and marker.get("version") == _INDEX_VERSION:
         last = datetime.fromisoformat(marker["value"])
         if datetime.now(timezone.utc) - last < timedelta(hours=24):
             logging.getLogger(__name__).info("Indexes checked recently, skipping")
@@ -209,17 +212,21 @@ async def ensure_indexes():
 
     await db.clients.create_index("id", background=True)
     await db.clients.create_index("name", background=True)
+    await db.clients.create_index([("deleted", 1), ("created_at", -1)], background=True)
 
     await db.carriers.create_index("id", background=True)
     await db.carriers.create_index("company_name", background=True)
+    await db.carriers.create_index([("deleted", 1), ("created_at", -1)], background=True)
 
     await db.leads.create_index("id", background=True)
     await db.leads.create_index("phone", background=True)
     await db.leads.create_index([("stage", 1), ("next_call", 1)], background=True)
     await db.leads.create_index("industry", background=True)
     await db.leads.create_index("assigned_to", background=True)
+    await db.leads.create_index([("deleted", 1), ("created_at", -1)], background=True)
 
     await db.tasks.create_index([("status", 1), ("deadline", 1)], background=True)
+    await db.tasks.create_index([("created_at", -1)], background=True)
     await db.call_logs.create_index([("lead_id", 1), ("created_at", -1)], background=True)
     await db.call_logs.create_index([("created_by", 1), ("created_at", -1)], background=True)
     await db.payments_in.create_index("date", background=True)
@@ -227,14 +234,29 @@ async def ensure_indexes():
 
     await db.sessions.create_index("user_id", background=True)
     await db.sessions.create_index("active", background=True)
+    await db.sessions.create_index([("active", 1), ("last_activity", -1)], background=True)
     await db.notifications.create_index([("read", 1), ("created_at", -1)], background=True)
+
+    await db.kudir_entries.create_index([("entry_date", 1)], background=True)
+    await db.kudir_entries.create_index("order_id", background=True)
+    await db.kudir_entries.create_index("order_ids", background=True)
+
+    await db.client_pp_ledger.create_index("client_id", background=True)
+    await db.client_pp_ledger.create_index([("pp_date", 1)], background=True)
+
+    try:
+        await db.users.create_index("login", unique=True, background=True)
+    except Exception as e:
+        # Non-fatal: a duplicate login already in the data would make this
+        # index build fail — logged for cleanup, doesn't block the rest.
+        logging.getLogger(__name__).warning(f"users.login unique index failed (likely duplicate logins): {e}")
 
     await db.app_settings.update_one(
         {"key": "indexes_ensured_at"},
-        {"$set": {"key": "indexes_ensured_at", "value": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {"key": "indexes_ensured_at", "value": datetime.now(timezone.utc).isoformat(), "version": _INDEX_VERSION}},
         upsert=True,
     )
-    logging.getLogger(__name__).info("Indexes ensured")
+    logging.getLogger(__name__).info("Extended indexes ensured")
 
 
 # ====== Backup helpers ======
@@ -3667,9 +3689,19 @@ async def dashboard_day_orders(date: str):
     }
 
 
+_DASHBOARD_PROJECTION = {
+    "_id": 0, "client_rate": 1, "carrier_rate": 1, "client_paid": 1, "carrier_paid": 1,
+    "client_name": 1, "carrier_name": 1, "status": 1, "unload_date": 1, "load_date": 1,
+    "created_at": 1,
+}
+
+
 @api_router.get("/dashboard")
 async def dashboard(period: str = "all"):
-    all_orders = await db.orders.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(5000)
+    # Only the handful of fields this endpoint actually reads — the full
+    # order document (route text, doc URLs, payment history, ...) was being
+    # pulled over the wire for every one of up to 5000 orders on every load.
+    all_orders = await db.orders.find({"deleted": {"$ne": True}}, _DASHBOARD_PROJECTION).to_list(5000)
     orders = [o for o in all_orders if order_in_period(o, period)]
 
     carriers_count = await db.carriers.count_documents({"deleted": {"$ne": True}})
