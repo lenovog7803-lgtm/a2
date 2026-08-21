@@ -2213,7 +2213,7 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     await _sync_kudir_row(order_id, "carrier")
     background_tasks.add_task(_bg_push_order, doc)
     background_tasks.add_task(_bg_cal_update, doc)
-    await manager.broadcast({"type": "order_updated", "order_id": order_id})
+    await manager.broadcast({"type": "order_updated", "order_id": order_id, "patch": update_data})
     return Order(**doc)
 
 
