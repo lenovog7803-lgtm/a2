@@ -191,7 +191,7 @@ async def _background_sheets_sync():
         logging.getLogger(__name__).error(f"[Sheets background sync] failed: {e}")
 
 
-_INDEX_VERSION = 2  # bump when the index set below changes, to bypass the 24h skip below once
+_INDEX_VERSION = 3  # bump when the index set below changes, to bypass the 24h skip below once
 
 
 async def ensure_indexes():
@@ -232,6 +232,11 @@ async def ensure_indexes():
     await db.payments_in.create_index("date", background=True)
     await db.payments_out.create_index("date", background=True)
 
+    # _check_session_active() looks sessions up by "id" on literally every
+    # authenticated request — this was the one lookup on that collection
+    # with no supporting index, so it degraded as the (never-purged)
+    # sessions collection grew over months of use.
+    await db.sessions.create_index("id", background=True)
     await db.sessions.create_index("user_id", background=True)
     await db.sessions.create_index("active", background=True)
     await db.sessions.create_index([("active", 1), ("last_activity", -1)], background=True)
@@ -2012,9 +2017,21 @@ async def delete_task(task_id: str, background_tasks: BackgroundTasks):
     return {"ok": True}
 
 
+_ORDERS_LIGHT_PROJECTION = {
+    "_id": 0, "id": 1, "order_number": 1, "client_id": 1, "client_name": 1,
+    "carrier_id": 1, "carrier_name": 1, "route_from": 1, "route_to": 1, "cargo": 1,
+    "status": 1, "client_paid": 1, "carrier_paid": 1, "client_paid_date": 1,
+    "carrier_paid_date": 1, "client_rate": 1, "carrier_rate": 1, "load_date": 1,
+    "unload_date": 1, "weight_tons": 1, "client_pp_number": 1, "client_payments": 1,
+    "docs_to_client_sent": 1, "docs_from_client_received": 1, "docs_to_carrier_sent": 1,
+    "docs_from_carrier_received": 1,
+}
+
+
 @api_router.get("/orders", response_model=List[Order])
 async def list_orders(current_user: dict = Depends(_require_user), limit: int = 2000,
-                       client_id: Optional[str] = None, carrier_id: Optional[str] = None):
+                       client_id: Optional[str] = None, carrier_id: Optional[str] = None,
+                       light: bool = False):
     filter_q: dict = {"deleted": {"$ne": True}}
     if current_user.get("role") == "manager":
         perms = current_user.get("permissions") or {}
@@ -2030,7 +2047,14 @@ async def list_orders(current_user: dict = Depends(_require_user), limit: int = 
     if carrier_id:
         filter_q["carrier_id"] = carrier_id
     import re as _re
-    docs = await db.orders.find(filter_q, {"_id": 0}).to_list(min(max(limit, 1), 2000))
+    # light=true is opt-in, used only by the list-overview screens (Orders
+    # list, dashboard's preloaded orders) — the full unprojected shape stays
+    # the default for every other caller (order detail, client/carrier
+    # detail, the mobile app) so nothing else silently loses fields.
+    projection = _ORDERS_LIGHT_PROJECTION if light else {"_id": 0}
+    _t0 = time.time()
+    docs = await db.orders.find(filter_q, projection).to_list(min(max(limit, 1), 2000))
+    _t1 = time.time()
 
     seen: set = set()
     unique_docs = []
@@ -2054,6 +2078,9 @@ async def list_orders(current_user: dict = Depends(_require_user), limit: int = 
         status = d.get("status", "")
         d["is_overdue"] = bool(unload and unload < today and status not in ("done", "delivered", "cancelled"))
         result.append(Order(**d))
+    _t2 = time.time()
+    if _t2 - _t0 > 0.5:
+        logger.warning(f"[PROFILE] /orders count={len(docs)} db_fetch={_t1-_t0:.2f}s process+pydantic={_t2-_t1:.2f}s")
     return result
 
 
