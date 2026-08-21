@@ -9,7 +9,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, uuid, asyncio, hashlib, secrets
+import os, uuid, asyncio, hashlib, secrets, time
 import jwt as _jwt
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -386,6 +386,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
+
+
+@app.middleware("http")
+async def log_slow_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = time.time() - start
+    if duration > 0.5:
+        logger.warning(f"[SLOW] {request.method} {request.url.path} took {duration:.2f}s")
+    return response
 
 
 # ====== Realtime (WebSocket broadcast) ======
