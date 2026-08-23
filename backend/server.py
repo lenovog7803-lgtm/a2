@@ -2779,6 +2779,17 @@ async def update_kudir_entry(entry_id: str, payload: dict, current_user: dict = 
     return {'ok': True}
 
 
+@api_router.delete("/kudir/entries/{entry_id}")
+async def delete_kudir_entry(entry_id: str, current_user: dict = Depends(require_director)):
+    """Removes a book row outright — for duplicate/erroneous rows the
+    auto-sync won't touch (rows created without a payment_id, e.g. by the
+    legacy grouped-PP path, are never cleaned up automatically). Zeroing a
+    row's amount via PATCH leaves the row itself behind; this is for when
+    the row shouldn't exist at all."""
+    await db.kudir_entries.delete_one({'id': entry_id})
+    return {'ok': True}
+
+
 @api_router.post("/kudir/entries/{entry_id}/unlock")
 async def unlock_kudir_entry(entry_id: str, current_user: dict = Depends(require_director)):
     """Reverts a hand-corrected row back to auto-sync — the next payment
