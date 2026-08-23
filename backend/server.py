@@ -2329,6 +2329,11 @@ async def _create_kudir_income_row(order: dict):
         'note': '; '.join(carrier_notes),
         'created_at': now_iso(),
     }
+    # A row someone hand-corrected in the book (PATCH /kudir/entries) must
+    # survive the next resync instead of being silently overwritten — skip
+    # both the delete and the reinsert when one already exists for this group.
+    if await db.kudir_entries.find_one({'row_type': 'income', 'order_id': {'$in': group_ids}, 'manually_edited': True}):
+        return
     await db.kudir_entries.delete_many({'row_type': 'income', 'order_id': {'$in': group_ids}})
     await db.kudir_entries.insert_one(entry)
 
@@ -2369,6 +2374,10 @@ async def _create_kudir_transit_row(order: dict):
         'note': '',
         'created_at': now_iso(),
     }
+    # See the matching guard in _create_kudir_income_row — a hand-corrected
+    # row must not get clobbered by the next auto-sync.
+    if await db.kudir_entries.find_one({'row_type': 'transit', 'order_id': {'$in': group_ids}, 'manually_edited': True}):
+        return
     await db.kudir_entries.delete_many({'row_type': 'transit', 'order_id': {'$in': group_ids}})
     await db.kudir_entries.insert_one(entry)
 
@@ -2414,9 +2423,20 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
     payments = [p for p in (order.get(f'{side}_payments') or [])
                 if not str(p.get('id', '')).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
 
-    await db.kudir_entries.delete_many({
-        'row_type': row_type, 'order_id': order['id'], 'payment_id': {'$exists': True},
-    })
+    # Rows someone hand-corrected in the book (PATCH /kudir/entries) must
+    # survive this resync — leave them untouched and don't regenerate a row
+    # for that same payment_id, instead of wiping every row and rebuilding
+    # from scratch on every payment add/delete.
+    existing_rows = await db.kudir_entries.find(
+        {'row_type': row_type, 'order_id': order['id'], 'payment_id': {'$exists': True}}, {'_id': 0}
+    ).to_list(500)
+    locked_payment_ids = {r['payment_id'] for r in existing_rows if r.get('manually_edited')}
+    delete_filter = {'row_type': row_type, 'order_id': order['id']}
+    if locked_payment_ids:
+        delete_filter['payment_id'] = {'$exists': True, '$nin': list(locked_payment_ids)}
+    else:
+        delete_filter['payment_id'] = {'$exists': True}
+    await db.kudir_entries.delete_many(delete_filter)
     if not payments:
         return
 
@@ -2427,6 +2447,8 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
     multiple = len(payments) > 1
 
     for p in payments:
+        if p.get('id') in locked_payment_ids:
+            continue
         date_str = (p.get('pp_date') or '')[:10]
         if not date_str:
             continue
@@ -2488,6 +2510,8 @@ async def _sync_kudir_row(order_id: str, side: str):
 
     existing = await db.kudir_entries.find_one({'row_type': row_type, 'order_ids': order_id})
     if not existing:
+        return
+    if existing.get('manually_edited'):
         return
     await db.kudir_entries.delete_one({'id': existing['id']})
     remaining_ids = [oid for oid in existing.get('order_ids', []) if oid != order_id]
@@ -2713,12 +2737,41 @@ async def list_kudir_entries(date_from: Optional[str] = None, date_to: Optional[
     return {'entries': entries, 'total_income': total_income, 'count': len(entries)}
 
 
+_KUDIR_EXTRA_COLUMNS = {
+    # графа 5..10 официального бланка (Приложение 9) — не заполняются
+    # автосинхронизацией (только графа 4/E — доход, и графа 11/L —
+    # примечание — считаются из заявки), но доступны для ручного заполнения
+    # прямо в CRM, чтобы веб-вид один в один совпадал с печатной формой.
+    'tax_from_revenue',  # графа 5 (F) — сумма налогов из выручки
+    'exempt_income',     # графа 6 (G) — освобождаемые доходы
+    'other_income',      # графа 7 (H) — иные поступления
+    'expense_period',    # графа 8 (I) — расходы за отчётный период
+    'expense_norm',      # графа 9 (J) — расходы по нормативу
+    'expense_other',     # графа 10 (K) — иные расходы
+}
+
+
 @api_router.patch("/kudir/entries/{entry_id}")
 async def update_kudir_entry(entry_id: str, payload: dict, current_user: dict = Depends(require_director)):
-    allowed = {'content', 'note', 'document_ref', 'income_amount', 'entry_date'}
+    allowed = {'content', 'note', 'document_ref', 'income_amount', 'entry_date'} | _KUDIR_EXTRA_COLUMNS
     upd = {k: v for k, v in payload.items() if k in allowed}
+    # Marks the row as hand-corrected so the order-driven auto-sync
+    # (_create_kudir_income_row / _create_kudir_transit_row /
+    # _sync_kudir_rows_for_payments) leaves it alone from now on instead of
+    # silently deleting and rebuilding it from the order the next time
+    # anything about that order's payment is touched.
     if upd:
+        upd['manually_edited'] = True
+        upd['edited_at'] = now_iso()
         await db.kudir_entries.update_one({'id': entry_id}, {'$set': upd})
+    return {'ok': True}
+
+
+@api_router.post("/kudir/entries/{entry_id}/unlock")
+async def unlock_kudir_entry(entry_id: str, current_user: dict = Depends(require_director)):
+    """Reverts a hand-corrected row back to auto-sync — the next payment
+    change on its order(s) will recompute and overwrite it again."""
+    await db.kudir_entries.update_one({'id': entry_id}, {'$unset': {'manually_edited': '', 'edited_at': ''}})
     return {'ok': True}
 
 
