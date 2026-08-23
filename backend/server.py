@@ -2023,6 +2023,7 @@ _ORDERS_LIGHT_PROJECTION = {
     "status": 1, "client_paid": 1, "carrier_paid": 1, "client_paid_date": 1,
     "carrier_paid_date": 1, "client_rate": 1, "carrier_rate": 1, "load_date": 1,
     "unload_date": 1, "weight_tons": 1, "client_pp_number": 1, "client_payments": 1,
+    "carrier_pp_number": 1, "carrier_pp_date": 1, "carrier_payments": 1,
     "docs_to_client_sent": 1, "docs_from_client_received": 1, "docs_to_carrier_sent": 1,
     "docs_from_carrier_received": 1,
 }
