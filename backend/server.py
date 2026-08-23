@@ -771,6 +771,11 @@ class Order(BaseModel):
     # client_paid_date/client_rate, см. _get_payments().
     client_payments: Optional[List[dict]] = None
     carrier_payments: Optional[List[dict]] = None
+    # Marks a side as paid in cash — no PP number/date exists to record, so
+    # the "missing ПП" and "amount doesn't match" checks skip these orders
+    # instead of flagging a cash payment as an error.
+    client_cash: Optional[bool] = False
+    carrier_cash: Optional[bool] = False
 
 
 class OrderPayload(BaseModel):
@@ -867,6 +872,8 @@ class OrderUpdate(BaseModel):
     carrier_act_date: Optional[str] = None
     client_payments: Optional[List[dict]] = None
     carrier_payments: Optional[List[dict]] = None
+    client_cash: Optional[bool] = None
+    carrier_cash: Optional[bool] = None
 
 
 class Lead(BaseModel):
@@ -2024,6 +2031,7 @@ _ORDERS_LIGHT_PROJECTION = {
     "carrier_paid_date": 1, "client_rate": 1, "carrier_rate": 1, "load_date": 1,
     "unload_date": 1, "weight_tons": 1, "client_pp_number": 1, "client_payments": 1,
     "carrier_pp_number": 1, "carrier_pp_date": 1, "carrier_payments": 1,
+    "client_cash": 1, "carrier_cash": 1,
     "docs_to_client_sent": 1, "docs_from_client_received": 1, "docs_to_carrier_sent": 1,
     "docs_from_carrier_received": 1,
 }
@@ -2296,7 +2304,11 @@ async def _create_kudir_income_row(order: dict):
     group_ids = [o['id'] for o in group]
     order_numbers = sorted(o.get('order_number') or '' for o in group)
     orders_label = ', '.join(n for n in order_numbers if n)
-    total_margin = max(0.0, sum(float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0) for o in group))
+    # Each order's margin is floored at zero BEFORE summing — otherwise a
+    # loss on one order in the group would silently offset a gain on
+    # another (they only share this row because they share a PP+date, not
+    # because they're related), understating the group's real income.
+    total_margin = sum(max(0.0, float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0)) for o in group)
     total_paid = sum(float(o.get('client_rate') or 0) for o in group)
     client_names = sorted({o.get('client_name') or '' for o in group} - {''})
     client_label = client_names[0] if len(client_names) <= 1 else ', '.join(client_names)
