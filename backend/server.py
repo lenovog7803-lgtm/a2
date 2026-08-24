@@ -2872,6 +2872,20 @@ async def unlock_kudir_entry(entry_id: str, current_user: dict = Depends(require
     return {'ok': True}
 
 
+@api_router.post("/kudir/resync")
+async def resync_kudir(current_user: dict = Depends(require_director)):
+    """One-off sweep: re-runs _sync_kudir_rows_for_payments for every order
+    still on the payments-array format, so the cross-order PP+date grouping
+    added there applies to rows created before that logic existed instead of
+    only to orders touched going forward."""
+    orders = await db.orders.find(
+        {'deleted': {'$ne': True}, 'client_payments': {'$exists': True, '$ne': []}}, {'_id': 0}
+    ).to_list(5000)
+    for o in orders:
+        await _sync_kudir_rows_for_payments(o, 'client')
+    return {'ok': True, 'orders_processed': len(orders)}
+
+
 @api_router.get("/kudir/export")
 async def export_kudir(year: int, quarter: Optional[int] = None, token: Optional[str] = None,
                         current_user: Optional[dict] = Depends(_get_user_from_token)):
