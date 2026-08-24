@@ -2424,71 +2424,145 @@ def _get_payments(order: dict, side: str) -> list:
 
 
 async def _sync_kudir_rows_for_payments(order: dict, side: str):
-    """One KUDiR row per payment entry in `{side}_payments` — replaces the
-    single merged-by-PP row the legacy flow produces, since a single order
-    can now carry several different PPs that don't share a date/number to
-    group by. Client-side rows carry a proportional share of the order's
-    margin (client_rate − carrier_rate); carrier-side rows stay zero-amount
-    audit lines, matching the existing transit-row design (see
-    _create_kudir_transit_row)."""
-    row_type = 'income' if side == 'client' else 'transit'
-    payments = [p for p in (order.get(f'{side}_payments') or [])
-                if not str(p.get('id', '')).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
+    """One KUDiR row per payment entry in `{side}_payments`. Carrier-side
+    rows stay one-row-per-payment-per-order — zero-amount audit lines,
+    matching the existing transit-row design (see _create_kudir_transit_row).
 
-    # Rows someone hand-corrected in the book (PATCH /kudir/entries) must
-    # survive this resync — leave them untouched and don't regenerate a row
-    # for that same payment_id, instead of wiping every row and rebuilding
-    # from scratch on every payment add/delete.
-    existing_rows = await db.kudir_entries.find(
-        {'row_type': row_type, 'order_id': order['id'], 'payment_id': {'$exists': True}}, {'_id': 0}
-    ).to_list(500)
-    locked_payment_ids = {r['payment_id'] for r in existing_rows if r.get('manually_edited')}
-    delete_filter = {'row_type': row_type, 'order_id': order['id']}
-    if locked_payment_ids:
-        delete_filter['payment_id'] = {'$exists': True, '$nin': list(locked_payment_ids)}
-    else:
-        delete_filter['payment_id'] = {'$exists': True}
-    await db.kudir_entries.delete_many(delete_filter)
-    if not payments:
+    Client-side rows merge across orders: a single bank transfer often
+    closes several orders at once (same PP number + date recorded on each
+    order's own payments array independently) — those get combined into one
+    row with the summed amount/margin and a per-order carrier-cost
+    breakdown, matching how the printed act reads, instead of one row per
+    order for what was really one payment."""
+    if side != 'client':
+        row_type = 'transit'
+        payments = [p for p in (order.get('carrier_payments') or [])
+                    if not str(p.get('id', '')).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
+        existing_rows = await db.kudir_entries.find(
+            {'row_type': row_type, 'order_id': order['id'], 'payment_id': {'$exists': True}}, {'_id': 0}
+        ).to_list(500)
+        locked_payment_ids = {r['payment_id'] for r in existing_rows if r.get('manually_edited')}
+        delete_filter = {'row_type': row_type, 'order_id': order['id']}
+        if locked_payment_ids:
+            delete_filter['payment_id'] = {'$exists': True, '$nin': list(locked_payment_ids)}
+        else:
+            delete_filter['payment_id'] = {'$exists': True}
+        await db.kudir_entries.delete_many(delete_filter)
+        for p in payments:
+            if p.get('id') in locked_payment_ids:
+                continue
+            date_str = (p.get('pp_date') or '')[:10]
+            if not date_str:
+                continue
+            amount = float(p.get('amount') or 0)
+            await db.kudir_entries.insert_one({
+                'id': str(uuid.uuid4()),
+                'payment_id': p.get('id'),
+                'order_id': order['id'], 'order_ids': [order['id']],
+                'order_number': order.get('order_number', ''),
+                'row_type': row_type,
+                'entry_date': date_str,
+                'document_ref': f"Плат. поручение № {p.get('pp_number','')} от {fmt_date_ru(date_str)}",
+                'created_at': now_iso(),
+                'content': (f"Перечислено перевозчику {order.get('carrier_name','')} на сумму {amount:.2f} BYN "
+                            f"по заявке № {order.get('order_number','')}"),
+                'income_amount': None,
+                'note': '',
+            })
         return
 
-    total_rate = float(order.get(f'{side}_rate') or 0)
-    # Клиентская ставка ниже ставки перевозчика — маржа отрицательная, но в
-    # книгу минус не пишем (как и в старой _create_kudir_income_row).
-    margin_total = max(0.0, total_rate - float(order.get('carrier_rate') or 0)) if side == 'client' else 0
-    multiple = len(payments) > 1
+    import re as _re
+    payments = [p for p in (order.get('client_payments') or [])
+                if not str(p.get('id', '')).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
+    if not payments:
+        # Still clear out this order's own rows (e.g. its last payment was
+        # just deleted) — but never touch a group row another sibling order
+        # still legitimately owns, so scope this to rows where this order is
+        # the ONLY member.
+        await db.kudir_entries.delete_many(
+            {'row_type': 'income', 'order_ids': [order['id']]}
+        )
+        return
 
+    groups = []
+    seen_keys = set()
+    all_group_order_ids = set()
     for p in payments:
-        if p.get('id') in locked_payment_ids:
-            continue
         date_str = (p.get('pp_date') or '')[:10]
+        pp_number = (p.get('pp_number') or '').strip()
         if not date_str:
             continue
-        amount = float(p.get('amount') or 0)
-        entry = {
+        key = (pp_number, date_str)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        members = [(order, p)]
+        if pp_number:
+            siblings = await db.orders.find({
+                'id': {'$ne': order['id']},
+                'client_payments': {'$elemMatch': {
+                    'pp_number': pp_number, 'pp_date': {'$regex': f'^{_re.escape(date_str)}'},
+                }},
+                'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
+            }, {'_id': 0}).to_list(50)
+            for sib in siblings:
+                for sp in (sib.get('client_payments') or []):
+                    if (sp.get('pp_number') or '').strip() == pp_number and (sp.get('pp_date') or '')[:10] == date_str:
+                        members.append((sib, sp))
+                        break
+        groups.append((pp_number, date_str, members))
+        all_group_order_ids.update(mo['id'] for mo, _ in members)
+
+    # A row someone hand-corrected in the book (PATCH /kudir/entries) must
+    # survive this resync — if any row touching these orders was locked,
+    # leave the whole batch alone rather than guess which piece is safe.
+    if await db.kudir_entries.find_one({
+        'row_type': 'income', 'order_ids': {'$in': list(all_group_order_ids)}, 'manually_edited': True,
+    }):
+        return
+
+    if all_group_order_ids:
+        await db.kudir_entries.delete_many(
+            {'row_type': 'income', 'order_ids': {'$in': list(all_group_order_ids)}}
+        )
+
+    for pp_number, date_str, members in groups:
+        total_amount = sum(float(mp.get('amount') or 0) for _, mp in members)
+        order_numbers = sorted(mo.get('order_number') or '' for mo, _ in members)
+        orders_label = ', '.join(n for n in order_numbers if n)
+        client_names = sorted({mo.get('client_name') or '' for mo, _ in members} - {''})
+        client_label = client_names[0] if len(client_names) <= 1 else ', '.join(client_names)
+        carrier_notes = sorted({
+            f"{float(mo.get('carrier_rate') or 0):.2f} — перевозчику {mo.get('carrier_name')}"
+            for mo, _ in members if mo.get('carrier_name')
+        })
+        total_margin = 0.0
+        partial = False
+        for mo, mp in members:
+            rate = float(mo.get('client_rate') or 0)
+            margin = max(0.0, rate - float(mo.get('carrier_rate') or 0))
+            amt = float(mp.get('amount') or 0)
+            share = (amt / rate) if rate else 0
+            total_margin += margin * share
+            if abs(amt - rate) > 0.01 or len(mo.get('client_payments') or []) > 1:
+                partial = True
+
+        await db.kudir_entries.insert_one({
             'id': str(uuid.uuid4()),
-            'payment_id': p.get('id'),
-            'order_id': order['id'], 'order_ids': [order['id']],
-            'order_number': order.get('order_number', ''),
-            'row_type': row_type,
+            'payment_id': members[0][1].get('id') if len(members) == 1 else None,
+            'order_id': members[0][0]['id'],
+            'order_ids': [mo['id'] for mo, _ in members],
+            'order_number': orders_label,
+            'row_type': 'income',
             'entry_date': date_str,
-            'document_ref': f"Плат. поручение № {p.get('pp_number','')} от {fmt_date_ru(date_str)}",
+            'document_ref': f"Плат. поручение № {pp_number} от {fmt_date_ru(date_str)}" if pp_number else '',
             'created_at': now_iso(),
-        }
-        if side == 'client':
-            share = (amount / total_rate) if total_rate else 0
-            prefix = 'Частичная оплата' if multiple else 'Оплата'
-            entry['content'] = (f"{prefix} от {order.get('client_name','')} на сумму {amount:.2f} BYN "
-                                 f"по заявке № {order.get('order_number','')}")
-            entry['income_amount'] = round(margin_total * share, 2)
-            entry['note'] = (f"{float(order.get('carrier_rate') or 0):.2f} — перевозчику {order.get('carrier_name')}"
-                              if order.get('carrier_name') else '')
-        else:
-            entry['content'] = (f"Перечислено перевозчику {order.get('carrier_name','')} на сумму {amount:.2f} BYN "
-                                 f"по заявке № {order.get('order_number','')}")
-            entry['income_amount'] = None
-            entry['note'] = ''
-        await db.kudir_entries.insert_one(entry)
+            'content': (f"{'Частичная оплата' if partial else 'Оплата'} от {client_label} на сумму {total_amount:.2f} BYN "
+                        f"по заявк{'е' if len(members) == 1 else 'ам'} № {orders_label}"),
+            'income_amount': round(total_margin, 2),
+            'note': '; '.join(carrier_notes),
+        })
 
 
 async def _sync_kudir_row(order_id: str, side: str):
