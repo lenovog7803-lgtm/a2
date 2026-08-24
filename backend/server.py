@@ -2486,7 +2486,6 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
 
     groups = []
     seen_keys = set()
-    all_group_order_ids = set()
     for p in payments:
         date_str = (p.get('pp_date') or '')[:10]
         pp_number = (p.get('pp_number') or '').strip()
@@ -2512,22 +2511,26 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
                         members.append((sib, sp))
                         break
         groups.append((pp_number, date_str, members))
-        all_group_order_ids.update(mo['id'] for mo, _ in members)
-
-    # A row someone hand-corrected in the book (PATCH /kudir/entries) must
-    # survive this resync — if any row touching these orders was locked,
-    # leave the whole batch alone rather than guess which piece is safe.
-    if await db.kudir_entries.find_one({
-        'row_type': 'income', 'order_ids': {'$in': list(all_group_order_ids)}, 'manually_edited': True,
-    }):
-        return
-
-    if all_group_order_ids:
-        await db.kudir_entries.delete_many(
-            {'row_type': 'income', 'order_ids': {'$in': list(all_group_order_ids)}}
-        )
 
     for pp_number, date_str, members in groups:
+        # This order can belong to several *different* groups at once (one
+        # payment grouped with order B, another payment grouped with C+D) —
+        # deleting by "any row touching any member order" would also wipe
+        # out those other groups' rows the moment they share so much as one
+        # member with this one, without regenerating them (they're not in
+        # `members` here). Scope the delete to exactly this group's own row
+        # — same date + same document reference — instead.
+        document_ref = f"Плат. поручение № {pp_number} от {fmt_date_ru(date_str)}" if pp_number else ''
+        delete_q = {'row_type': 'income', 'entry_date': date_str}
+        if pp_number:
+            delete_q['document_ref'] = document_ref
+        else:
+            delete_q['order_ids'] = [mo['id'] for mo, _ in members]
+        # A row someone hand-corrected in the book (PATCH /kudir/entries)
+        # must survive this resync — leave this specific group alone.
+        if await db.kudir_entries.find_one({**delete_q, 'manually_edited': True}):
+            continue
+        await db.kudir_entries.delete_many(delete_q)
         total_amount = sum(float(mp.get('amount') or 0) for _, mp in members)
         order_numbers = sorted(mo.get('order_number') or '' for mo, _ in members)
         orders_label = ', '.join(n for n in order_numbers if n)
@@ -2556,7 +2559,7 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
             'order_number': orders_label,
             'row_type': 'income',
             'entry_date': date_str,
-            'document_ref': f"Плат. поручение № {pp_number} от {fmt_date_ru(date_str)}" if pp_number else '',
+            'document_ref': document_ref,
             'created_at': now_iso(),
             'content': (f"{'Частичная оплата' if partial else 'Оплата'} от {client_label} на сумму {total_amount:.2f} BYN "
                         f"по заявк{'е' if len(members) == 1 else 'ам'} № {orders_label}"),
