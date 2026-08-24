@@ -2840,6 +2840,29 @@ _KUDIR_EXTRA_COLUMNS = {
 }
 
 
+@api_router.post("/kudir/entries")
+async def create_kudir_entry(payload: dict, current_user: dict = Depends(require_director)):
+    """A hand-added row not tied to any order — for a real bank payment
+    (found while reconciling the statement) that has no matching order to
+    attach it to, e.g. because that order was deleted after the payment was
+    recorded. Locked (manually_edited) from creation since there's no order
+    to ever auto-resync it from."""
+    allowed = {'content', 'note', 'document_ref', 'income_amount', 'entry_date', 'order_number', 'row_type'} | _KUDIR_EXTRA_COLUMNS
+    entry = {k: v for k, v in payload.items() if k in allowed}
+    entry.setdefault('row_type', 'income')
+    if not entry.get('entry_date'):
+        raise HTTPException(400, "entry_date обязателен")
+    entry.update({
+        'id': str(uuid.uuid4()),
+        'order_id': None, 'order_ids': [],
+        'order_number': entry.get('order_number', ''),
+        'created_at': now_iso(),
+        'manually_edited': True, 'edited_at': now_iso(),
+    })
+    await db.kudir_entries.insert_one(entry)
+    return {'ok': True, 'id': entry['id']}
+
+
 @api_router.patch("/kudir/entries/{entry_id}")
 async def update_kudir_entry(entry_id: str, payload: dict, current_user: dict = Depends(require_director)):
     allowed = {'content', 'note', 'document_ref', 'income_amount', 'entry_date'} | _KUDIR_EXTRA_COLUMNS
