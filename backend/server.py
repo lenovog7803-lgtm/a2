@@ -9,7 +9,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, uuid, asyncio, hashlib, secrets, time
+import os, uuid, asyncio, hashlib, secrets, time, html as _html
 import jwt as _jwt
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -559,40 +559,73 @@ async def build_report(period: str) -> dict:
     }
 
 
+def _esc(s) -> str:
+    """HTML-escape для parse_mode=HTML в Telegram — иначе '&' или '<' в
+    названии клиента/перевозчика ломают всё сообщение (Telegram вернёт 400)."""
+    return _html.escape(str(s if s is not None else ''))
+
+
+def _byn(x) -> str:
+    try:
+        return f"{round(float(x or 0)):,}".replace(',', ' ') + ' BYN'
+    except Exception:
+        return f"{x} BYN"
+
+
+_REPORT_HR = '━━━━━━━━━━━━━━'
+
+
 def _fmt_leg(x: dict) -> str:
-    route = ' → '.join(p for p in (x.get('route_from'), x.get('route_to')) if p)
-    parts = [f"заявка {x.get('order_number') or '—'}"]
-    if route:
-        parts.append(route)
+    route = ' → '.join(_esc(p) for p in (x.get('route_from'), x.get('route_to')) if p)
+    line = f"•  <b>{_esc(x.get('order_number') or '—')}</b>" + (f"   {route}" if route else '')
+    sub = []
     if x.get('client_name'):
-        parts.append(f"клиент {x['client_name']}")
+        sub.append(f"клиент: {_esc(x['client_name'])}")
     if x.get('carrier_name'):
-        parts.append(f"перевозчик {x['carrier_name']}")
-    return ' — '.join(parts)
+        sub.append(f"перевозчик: {_esc(x['carrier_name'])}")
+    if sub:
+        line += "\n     <i>" + '  ·  '.join(sub) + "</i>"
+    return line
 
 
 def format_report_text(report: dict) -> str:
     labels = {'daily': 'за сегодня', 'weekly': 'за неделю', 'monthly': 'за месяц'}
-    lines = [
-        f"<b>Отчёт {labels.get(report['period'], report['period'])}</b>",
-        f"Выручка: {report['revenue']:.0f} BYN, маржа: {report['margin']:.0f} BYN",
-        f"Доставлено заявок: {report['delivered']}",
-        f"Просрочено перевозчикам: {report['overdue_carrier_count']} на {report['overdue_carrier_sum']:.0f} BYN",
-        f"Должники (клиенты): {report['debtors_count']} на {report['debtors_sum']:.0f} BYN",
-        f"Звонков: {report['calls_total']}, стало клиентами: {report['calls_won']}",
-        "Топ клиентов: " + (', '.join(f"{n} ({float(s):.0f})" for n, s in report['top_clients']) or '—'),
+    period = report.get('period')
+    delivered = report.get('delivered', 0)
+    total_orders = report.get('orders_count', 0)
+
+    L = [
+        f"📊  <b>Отчёт {labels.get(period, period)}</b>",
+        f"<i>{_esc(fmt_date_ru(report.get('generated_at', '')))}</i>",
+        _REPORT_HR,
+        f"💰  Выручка:  <b>{_byn(report.get('revenue'))}</b>",
+        f"📈  Маржа:  <b>{_byn(report.get('margin'))}</b>",
+        f"✅  Доставлено:  <b>{delivered}{f' из {total_orders}' if total_orders else ''}</b>",
+        "",
+        f"⚠️  Просрочка перевозчикам:  <b>{report.get('overdue_carrier_count', 0)}</b>  ·  {_byn(report.get('overdue_carrier_sum'))}",
+        f"🧾  Должники (клиенты):  <b>{report.get('debtors_count', 0)}</b>  ·  {_byn(report.get('debtors_sum'))}",
+        f"📞  Звонки:  <b>{report.get('calls_total', 0)}</b>  ·  клиентами стали {report.get('calls_won', 0)}",
     ]
 
-    loads = report.get('tomorrow_loads') or []
-    unloads = report.get('tomorrow_unloads') or []
-    if loads or unloads:
-        lines.append('')
-        lines.append('<b>Завтра — загрузки:</b>')
-        lines += [f"• {_fmt_leg(x)}" for x in loads] or ['• нет']
-        lines.append('<b>Завтра — выгрузки:</b>')
-        lines += [f"• {_fmt_leg(x)}" for x in unloads] or ['• нет']
+    top = report.get('top_clients') or []
+    if top:
+        L.append("")
+        L.append("🏆  <b>Топ клиентов</b>")
+        L += [f"{i}.  {_esc(n)}  —  {_byn(s)}" for i, (n, s) in enumerate(top, 1)]
 
-    return '\n'.join(lines)
+    if period == 'daily':
+        loads = report.get('tomorrow_loads') or []
+        unloads = report.get('tomorrow_unloads') or []
+        L.append(_REPORT_HR)
+        L.append(f"📅  <b>Завтра — {_esc(fmt_date_ru(report.get('tomorrow_date', '')))}</b>")
+        L.append("")
+        L.append(f"📦  <b>Загрузки · {len(loads)}</b>")
+        L += [_fmt_leg(x) for x in loads] or ["<i>нет</i>"]
+        L.append("")
+        L.append(f"🏁  <b>Выгрузки · {len(unloads)}</b>")
+        L += [_fmt_leg(x) for x in unloads] or ["<i>нет</i>"]
+
+    return '\n'.join(L)
 
 
 # chat_id, куда отчёт уходит всегда — даже если в CRM никто не подписан
