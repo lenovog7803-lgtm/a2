@@ -405,80 +405,121 @@ async def notify_user(user_id: str, text: str) -> list:
     return out
 
 
+_REMINDER_WINDOW_DAYS = int(os.environ.get('PAYMENT_REMINDER_WINDOW_DAYS', '3'))
+
+
+async def _run_payment_reminder_sync() -> dict:
+    """Один проход: по каждой неоплаченной заявке, где до срока оплаты
+    <= _REMINDER_WINDOW_DAYS дней (или уже просрочено), создаёт/обновляет
+    одну задачу type=payment_reminder. Срок client-стороны = дата выгрузки,
+    carrier-стороны = carrier_payment_deadline. Закрывается в mark_payment.
+    Возвращает {'created': [task, ...], 'updated': n}."""
+    now = datetime.now(_REPORT_TZ)
+    today = now.date()
+    today_str = now.strftime('%Y-%m-%d')
+    created: list = []
+    updated = 0
+
+    orders = await db.orders.find({
+        'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
+        '$or': [
+            {'client_paid': False},
+            {'carrier_paid': False, 'carrier_payment_deadline': {'$ne': ''}},
+        ],
+    }).to_list(10000)
+
+    for o in orders:
+        for side in ('client', 'carrier'):
+            if o.get(f'{side}_paid'):
+                continue
+            due = o.get('carrier_payment_deadline') if side == 'carrier' else o.get('unload_date')
+            if not due:
+                continue
+            due_date = due[:10]
+            try:
+                d = datetime.fromisoformat(due_date).date()
+            except Exception:
+                continue
+            days_left = (d - today).days
+            if days_left > _REMINDER_WINDOW_DAYS:
+                continue
+
+            existing = await db.tasks.find_one({
+                'order_id': o['id'], 'type': 'payment_reminder',
+                'side': side, 'status': 'pending',
+            })
+
+            who = 'перевозчику' if side == 'carrier' else 'от клиента'
+            if due_date <= today_str:
+                overdue = (today - d).days
+                title = (f"Оплати!: {who} по заявке {o['order_number']}"
+                         + (f" (просрочено {overdue} дн.)" if overdue > 0 else ""))
+            else:
+                title = f"Через {days_left} дн. оплата {who} по заявке {o['order_number']}"
+
+            if existing:
+                if existing.get('title') != title or existing.get('due_date') != due_date:
+                    await db.tasks.update_one(
+                        {'id': existing['id']},
+                        {'$set': {'title': title, 'due_date': due_date}},
+                    )
+                    updated += 1
+            else:
+                assigned = o.get('assigned_to') or o.get('created_by')
+                task = {
+                    'id': str(uuid.uuid4()), 'order_id': o['id'], 'order_number': o['order_number'],
+                    'type': 'payment_reminder', 'task_type': 'payment', 'side': side,
+                    'due_date': due_date, 'title': title, 'status': 'pending',
+                    'assigned_user_id': assigned or None,
+                    'created_by': assigned or '',
+                    'created_at': now.isoformat(), 'completed_at': None,
+                }
+                await db.tasks.insert_one(task)
+                created.append(task)
+
+    return {'created': created, 'updated': updated}
+
+
+async def _notify_new_payment_reminders(created: list) -> list:
+    """Одно сводное сообщение в Telegram по новым напоминаниям об оплате —
+    директорам-подписчикам и на дефолтный chat_id (вместо десятков пингов)."""
+    if not created:
+        return []
+    rows = [f"•  {_esc(t['title'])}" for t in created[:40]]
+    if len(created) > 40:
+        rows.append(f"…и ещё {len(created) - 40}")
+    text = f"🔔 <b>Новые напоминания об оплате · {len(created)}</b>\n" + "\n".join(rows)
+
+    targets: list = list(_DEFAULT_REPORT_CHAT_IDS)
+    directors = await db.users.find({'role': {'$in': list(DIRECTOR_ROLES)}}).to_list(20)
+    for dd in directors:
+        for s in await db.bot_subscribers.find({'user_id': dd['id']}).to_list(10):
+            if s.get('telegram_chat_id'):
+                targets.append(s['telegram_chat_id'])
+
+    seen: set = set()
+    out: list = []
+    for cid in targets:
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(await send_telegram_a2info(cid, text))
+    return out
+
+
 async def _sync_payment_reminders():
-    """Раз в час: создаёт/обновляет единственную задачу-напоминание об оплате
-    по каждой неоплаченной заявке со сроком. Заголовок меняется по мере
-    приближения срока; при просрочке становится 'Оплати!'. Закрывается
-    автоматически в mark_payment в момент отметки оплаты."""
+    """Первый проход — почти сразу при старте, дальше раз в час."""
+    await asyncio.sleep(25)
     while True:
-        await asyncio.sleep(3600)
         try:
-            now = datetime.now(timezone.utc)
-            today_str = now.strftime('%Y-%m-%d')
-
-            orders = await db.orders.find({
-                'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
-                '$or': [
-                    {'client_paid': False},
-                    {'carrier_paid': False, 'carrier_payment_deadline': {'$ne': ''}},
-                ],
-            }).to_list(10000)
-
-            for o in orders:
-                for side in ('client', 'carrier'):
-                    if o.get(f'{side}_paid'):
-                        continue
-
-                    if side == 'carrier':
-                        due = o.get('carrier_payment_deadline')
-                    else:
-                        due = o.get('unload_date')
-
-                    if not due:
-                        continue
-
-                    due_date = due[:10]
-                    try:
-                        days_left = (datetime.fromisoformat(due_date) - now.replace(tzinfo=None)).days
-                    except Exception:
-                        continue
-
-                    if days_left > 3:
-                        continue
-
-                    existing = await db.tasks.find_one({
-                        'order_id': o['id'], 'type': 'payment_reminder',
-                        'side': side, 'status': 'pending',
-                    })
-
-                    is_due_today = due_date <= today_str
-                    who = 'перевозчику' if side == 'carrier' else 'от клиента'
-                    if is_due_today:
-                        title = f"Оплати!: {who} по заявке {o['order_number']}"
-                    else:
-                        title = f"Через {days_left} дн. оплата {who} по заявке {o['order_number']}"
-
-                    if existing:
-                        await db.tasks.update_one(
-                            {'id': existing['id']},
-                            {'$set': {'title': title, 'due_date': due_date}},
-                        )
-                    else:
-                        assigned = o.get('assigned_to') or o.get('created_by')
-                        task = {
-                            'id': str(uuid.uuid4()), 'order_id': o['id'], 'order_number': o['order_number'],
-                            'type': 'payment_reminder', 'task_type': 'payment', 'side': side,
-                            'due_date': due_date, 'title': title, 'status': 'pending',
-                            'assigned_user_id': assigned or None,
-                            'created_by': assigned or '',
-                            'created_at': now.isoformat(), 'completed_at': None,
-                        }
-                        await db.tasks.insert_one(task)
-                        if assigned:
-                            await notify_user(assigned, title)
-
+            res = await _run_payment_reminder_sync()
+            if res['created']:
+                await _notify_new_payment_reminders(res['created'])
+            if res['created'] or res['updated']:
+                logger.info(f"[payment reminders] created {len(res['created'])}, updated {res['updated']}")
         except Exception as e:
             logger.error(f'[payment reminders] {e}')
+        await asyncio.sleep(3600)
 
 
 # ====== Отчёты: ежедневный / еженедельный / ежемесячный ======
@@ -498,20 +539,23 @@ async def build_report(period: str) -> dict:
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     start_str = start.strftime('%Y-%m-%d')
     today_str = now.strftime('%Y-%m-%d')
-    # Верхняя граница — конец сегодняшнего дня. Без неё «выручка за сегодня»
-    # включала все будущие заявки с load_date вперёд (load_date >= today).
+    # Верхняя граница — конец сегодняшнего дня (будущие заявки не считаем).
     end_excl_str = (now + timedelta(days=1)).strftime('%Y-%m-%d')
 
-    orders = await db.orders.find({
-        'load_date': {'$gte': start_str, '$lt': end_excl_str},
-        'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
-    }).to_list(10000)
+    all_orders = await db.orders.find({'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}).to_list(10000)
+
+    # Выручка/маржа — по заявкам, СОЗДАННым в периоде (по created_at).
+    # created_at — ISO-строка (обычно UTC), сравниваем по датовому префиксу
+    # YYYY-MM-DD, чего достаточно и устойчиво к разным форматам в базе.
+    orders = [o for o in all_orders
+              if start_str <= (o.get('created_at') or '')[:10] < end_excl_str]
 
     revenue = sum(float(o.get('client_rate') or 0) for o in orders)
     margin = sum(float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0) for o in orders)
-    delivered = sum(1 for o in orders if o.get('status') == 'done')
-
-    all_orders = await db.orders.find({'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}).to_list(10000)
+    # «Доставлено» — по дате выгрузки в периоде (а не по дате создания),
+    # иначе в дневном отчёте почти всегда 0.
+    delivered = sum(1 for o in all_orders if o.get('status') == 'done'
+                    and start_str <= (o.get('unload_date') or '')[:10] < end_excl_str)
     overdue_carrier = [o for o in all_orders
                        if not o.get('carrier_paid') and o.get('carrier_payment_deadline', '')
                        and o.get('carrier_payment_deadline', '') < today_str]
@@ -600,7 +644,8 @@ def format_report_text(report: dict) -> str:
         _REPORT_HR,
         f"💰  Выручка:  <b>{_byn(report.get('revenue'))}</b>",
         f"📈  Маржа:  <b>{_byn(report.get('margin'))}</b>",
-        f"✅  Доставлено:  <b>{delivered}{f' из {total_orders}' if total_orders else ''}</b>",
+        f"🆕  Создано заявок:  <b>{total_orders}</b>",
+        f"✅  Доставлено:  <b>{delivered}</b>",
         "",
         f"⚠️  Просрочка перевозчикам:  <b>{report.get('overdue_carrier_count', 0)}</b>  ·  {_byn(report.get('overdue_carrier_sum'))}",
         f"🧾  Должники (клиенты):  <b>{report.get('debtors_count', 0)}</b>  ·  {_byn(report.get('debtors_sum'))}",
@@ -2419,6 +2464,22 @@ async def run_report_now(period: str = "daily", current_user: dict = Depends(req
         "sent": result.get("sent", 0),
         "targets": result.get("targets", 0),
         "delivery": result.get("delivery", []),
+        "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
+    }
+
+
+@api_router.post("/tasks/sync_payment_reminders")
+async def sync_payment_reminders_now(current_user: dict = Depends(require_director)):
+    """Прогнать синхронизацию задач-напоминаний об оплате прямо сейчас
+    (обычно раз в час). Возвращает, сколько создано/обновлено и ушло ли
+    сводное сообщение в Telegram."""
+    res = await _run_payment_reminder_sync()
+    delivery = await _notify_new_payment_reminders(res["created"]) if res["created"] else []
+    return {
+        "ok": True,
+        "created": len(res["created"]),
+        "updated": res["updated"],
+        "sent": sum(1 for d in delivery if d.get("ok")),
         "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
     }
 
