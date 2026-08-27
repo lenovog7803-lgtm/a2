@@ -544,11 +544,12 @@ async def build_report(period: str) -> dict:
 
     all_orders = await db.orders.find({'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}).to_list(10000)
 
-    # Выручка/маржа — по заявкам, СОЗДАННым в периоде (по created_at).
-    # created_at — ISO-строка (обычно UTC), сравниваем по датовому префиксу
-    # YYYY-MM-DD, чего достаточно и устойчиво к разным форматам в базе.
+    # База периода: дневной отчёт — по дате СОЗДАНИЯ заявки (created_at),
+    # еженедельный и ежемесячный — по дате ВЫГРУЗКИ (unload_date).
+    # Сравниваем по датовому префиксу YYYY-MM-DD (устойчиво к форматам в базе).
+    basis_field = 'created_at' if period == 'daily' else 'unload_date'
     orders = [o for o in all_orders
-              if start_str <= (o.get('created_at') or '')[:10] < end_excl_str]
+              if start_str <= (o.get(basis_field) or '')[:10] < end_excl_str]
 
     revenue = sum(float(o.get('client_rate') or 0) for o in orders)
     margin = sum(float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0) for o in orders)
@@ -588,6 +589,7 @@ async def build_report(period: str) -> dict:
 
     return {
         'id': str(uuid.uuid4()), 'period': period,
+        'basis': 'created' if basis_field == 'created_at' else 'unload',
         'revenue': revenue, 'margin': margin, 'delivered': delivered,
         'orders_count': len(orders),
         'overdue_carrier_count': len(overdue_carrier),
@@ -637,14 +639,17 @@ def format_report_text(report: dict) -> str:
     period = report.get('period')
     delivered = report.get('delivered', 0)
     total_orders = report.get('orders_count', 0)
+    by_unload = report.get('basis') == 'unload'
+    basis_note = 'по дате выгрузки' if by_unload else 'по дате создания заявок'
+    count_label = 'Заявок (по выгрузке)' if by_unload else 'Создано заявок'
 
     L = [
         f"📊  <b>Отчёт {labels.get(period, period)}</b>",
-        f"<i>{_esc(fmt_date_ru(report.get('generated_at', '')))}</i>",
+        f"<i>{_esc(fmt_date_ru(report.get('generated_at', '')))}  ·  {basis_note}</i>",
         _REPORT_HR,
         f"💰  Выручка:  <b>{_byn(report.get('revenue'))}</b>",
         f"📈  Маржа:  <b>{_byn(report.get('margin'))}</b>",
-        f"🆕  Создано заявок:  <b>{total_orders}</b>",
+        f"🆕  {count_label}:  <b>{total_orders}</b>",
         f"✅  Доставлено:  <b>{delivered}</b>",
         "",
         f"⚠️  Просрочка перевозчикам:  <b>{report.get('overdue_carrier_count', 0)}</b>  ·  {_byn(report.get('overdue_carrier_sum'))}",
