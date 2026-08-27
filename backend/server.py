@@ -486,21 +486,44 @@ async def _run_payment_reminder_sync() -> dict:
                     'created_by': assigned or '',
                     'created_at': now.isoformat(), 'completed_at': None,
                 }
-                await db.tasks.insert_one(task)
+                await db.tasks.insert_one({**task, 'notified_at': None})
                 created.append(task)
 
     return {'created': created, 'updated': updated}
 
 
-async def _notify_new_payment_reminders(created: list) -> list:
-    """Одно сводное сообщение в Telegram по новым напоминаниям об оплате —
-    директорам-подписчикам и на дефолтный chat_id (вместо десятков пингов)."""
-    if not created:
-        return []
-    rows = [f"•  {_esc(t['title'])}" for t in created[:40]]
-    if len(created) > 40:
-        rows.append(f"…и ещё {len(created) - 40}")
-    text = f"🔔 <b>Новые напоминания об оплате · {len(created)}</b>\n" + "\n".join(rows)
+# Напоминания об оплате уходят в Telegram только в рабочее время:
+# по будням (пн–пт), с 09:00 до 16:00 по Минску. Сами задачи в CRM
+# создаются/обновляются круглосуточно — тихо, без сообщений.
+_REMINDER_NOTIFY_FROM_HOUR = int(os.environ.get('PAYMENT_REMINDER_FROM_HOUR', '9'))
+_REMINDER_NOTIFY_TO_HOUR = int(os.environ.get('PAYMENT_REMINDER_TO_HOUR', '16'))
+
+
+def _in_reminder_notify_window(now: datetime) -> bool:
+    return (now.weekday() < 5
+            and _REMINDER_NOTIFY_FROM_HOUR <= now.hour < _REMINDER_NOTIFY_TO_HOUR)
+
+
+async def _notify_pending_payment_reminders(force: bool = False) -> dict:
+    """Одно сводное сообщение в Telegram по ещё не разосланным напоминаниям
+    об оплате (pending, notified_at пустой). По расписанию — только в рабочее
+    окно; force=True (ручной запуск) шлёт всегда. После отправки помечает
+    задачи notified_at, чтобы не слать повторно."""
+    now = datetime.now(_REPORT_TZ)
+    if not force and not _in_reminder_notify_window(now):
+        return {'skipped': 'outside_window', 'count': 0}
+
+    pending = await db.tasks.find({
+        'type': 'payment_reminder', 'status': 'pending',
+        '$or': [{'notified_at': None}, {'notified_at': {'$exists': False}}],
+    }).sort('due_date', 1).to_list(500)
+    if not pending:
+        return {'count': 0}
+
+    rows = [f"•  {_esc(t.get('title') or '')}" for t in pending[:40]]
+    if len(pending) > 40:
+        rows.append(f"…и ещё {len(pending) - 40}")
+    text = f"🔔 <b>Напоминания об оплате · {len(pending)}</b>\n" + "\n".join(rows)
 
     targets: list = list(_DEFAULT_REPORT_CHAT_IDS)
     directors = await db.users.find({'role': {'$in': list(DIRECTOR_ROLES)}}).to_list(20)
@@ -510,25 +533,32 @@ async def _notify_new_payment_reminders(created: list) -> list:
                 targets.append(s['telegram_chat_id'])
 
     seen: set = set()
-    out: list = []
+    delivery: list = []
     for cid in targets:
         if cid in seen:
             continue
         seen.add(cid)
-        out.append(await send_telegram_a2info(cid, text))
-    return out
+        delivery.append(await send_telegram_a2info(cid, text))
+
+    if any(d.get('ok') for d in delivery) or not any(_DEFAULT_REPORT_CHAT_IDS):
+        await db.tasks.update_many(
+            {'id': {'$in': [t['id'] for t in pending]}},
+            {'$set': {'notified_at': now.isoformat()}},
+        )
+    return {'count': len(pending), 'delivery': delivery,
+            'sent': sum(1 for d in delivery if d.get('ok'))}
 
 
 async def _sync_payment_reminders():
-    """Первый проход — почти сразу при старте, дальше раз в час."""
+    """Первый проход — почти сразу при старте, дальше раз в час. Задачи
+    синхронизируются всегда, а рассылка в Telegram — только пн–пт 09–16."""
     await asyncio.sleep(25)
     while True:
         try:
             res = await _run_payment_reminder_sync()
-            if res['created']:
-                await _notify_new_payment_reminders(res['created'])
             if res['created'] or res['updated']:
                 logger.info(f"[payment reminders] created {len(res['created'])}, updated {res['updated']}")
+            await _notify_pending_payment_reminders()
         except Exception as e:
             logger.error(f'[payment reminders] {e}')
         await asyncio.sleep(3600)
@@ -2527,17 +2557,18 @@ async def run_report_now(period: str = "daily", current_user: dict = Depends(req
 
 
 @api_router.post("/tasks/sync_payment_reminders")
-async def sync_payment_reminders_now(current_user: dict = Depends(require_director)):
+async def sync_payment_reminders_now(notify: bool = True, current_user: dict = Depends(require_director)):
     """Прогнать синхронизацию задач-напоминаний об оплате прямо сейчас
-    (обычно раз в час). Возвращает, сколько создано/обновлено и ушло ли
-    сводное сообщение в Telegram."""
+    (обычно раз в час). notify=true — сразу разослать сводку в Telegram,
+    минуя рабочее окно пн–пт 09–16."""
     res = await _run_payment_reminder_sync()
-    delivery = await _notify_new_payment_reminders(res["created"]) if res["created"] else []
+    note = await _notify_pending_payment_reminders(force=True) if notify else {}
     return {
         "ok": True,
         "created": len(res["created"]),
         "updated": res["updated"],
-        "sent": sum(1 for d in delivery if d.get("ok")),
+        "notified": note.get("count", 0),
+        "sent": note.get("sent", 0),
         "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
     }
 
