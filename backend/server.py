@@ -407,6 +407,32 @@ async def notify_user(user_id: str, text: str) -> list:
 
 _REMINDER_WINDOW_DAYS = int(os.environ.get('PAYMENT_REMINDER_WINDOW_DAYS', '3'))
 
+# Государственные праздники РБ (нерабочие), фиксированные даты (месяц, день).
+# Переносимые праздники (Радуница) не учитываются.
+_BY_HOLIDAYS_MD = frozenset({
+    (1, 1), (1, 2), (1, 7), (3, 8), (5, 1), (5, 9), (7, 3), (11, 7), (12, 25),
+})
+
+
+def _is_workday(d) -> bool:
+    """True для будней, кроме гос. праздников РБ. Принимает date или datetime."""
+    return d.weekday() < 5 and (d.month, d.day) not in _BY_HOLIDAYS_MD
+
+
+def business_days_between(start, end) -> int:
+    """Рабочих дней от start (не включая) до end (включая). Отрицательное —
+    если end раньше start (просрочка в рабочих днях). Выходные и праздники
+    не считаются."""
+    if end == start:
+        return 0
+    step = 1 if end > start else -1
+    d, n = start, 0
+    while d != end:
+        d += timedelta(days=step)
+        if _is_workday(d):
+            n += step
+    return n
+
 
 async def _run_payment_reminder_sync() -> dict:
     """Один проход: по каждой неоплаченной заявке, где до срока оплаты
@@ -440,7 +466,8 @@ async def _run_payment_reminder_sync() -> dict:
                 d = datetime.fromisoformat(due_date).date()
             except Exception:
                 continue
-            days_left = (d - today).days
+            # Считаем в рабочих днях — выходные и праздники РБ не учитываем.
+            days_left = business_days_between(today, d)
             if days_left > _REMINDER_WINDOW_DAYS:
                 continue
 
@@ -450,24 +477,24 @@ async def _run_payment_reminder_sync() -> dict:
             })
 
             # Контрагент и сумма к оплате (остаток, если были частичные ПП).
-            if side == 'carrier':
-                who = 'перевозчику'
-                name = o.get('carrier_name') or '—'
-            else:
-                who = 'от клиента'
-                name = o.get('client_name') or '—'
+            name = (o.get('carrier_name') if side == 'carrier' else o.get('client_name')) or '—'
             rate = float(o.get(f'{side}_rate') or 0)
             paid_parts = sum(float(p.get('amount') or 0) for p in (o.get(f'{side}_payments') or []))
             amount = rate - paid_parts if paid_parts else rate
             amt_str = f"{round(amount):,}".replace(',', ' ') + ' BYN'
-            tail = f" — {name} — {amt_str}"
 
-            if due_date <= today_str:
-                overdue = (today - d).days
-                title = (f"Оплати!: {who} по заявке {o['order_number']}{tail}"
-                         + (f" (просрочено {overdue} дн.)" if overdue > 0 else ""))
+            if due_date < today_str:
+                when = f"просрочено {-days_left} раб. дн." if days_left < 0 else "срок прошёл"
+            elif due_date == today_str:
+                when = "сегодня"
             else:
-                title = f"Через {days_left} дн. оплата {who} по заявке {o['order_number']}{tail}"
+                when = f"через {days_left} раб. дн."
+
+            # Клиент нам должен — «ждём оплату»; перевозчику мы платим — «оплатить».
+            if side == 'carrier':
+                title = f"Оплатить перевозчику «{name}» по заявке {o['order_number']} — {amt_str} ({when})"
+            else:
+                title = f"Ждём оплату от клиента «{name}» по заявке {o['order_number']} — {amt_str} ({when})"
 
             if existing:
                 if existing.get('title') != title or existing.get('due_date') != due_date:
@@ -500,7 +527,7 @@ _REMINDER_NOTIFY_TO_HOUR = int(os.environ.get('PAYMENT_REMINDER_TO_HOUR', '16'))
 
 
 def _in_reminder_notify_window(now: datetime) -> bool:
-    return (now.weekday() < 5
+    return (_is_workday(now)
             and _REMINDER_NOTIFY_FROM_HOUR <= now.hour < _REMINDER_NOTIFY_TO_HOUR)
 
 
@@ -2338,11 +2365,12 @@ async def _bg_cal_delete(event_id: str):
 
 
 def add_business_days(start_date: datetime, days: int) -> datetime:
+    """Прибавляет `days` рабочих дней: выходные и гос. праздники РБ пропускаются."""
     current = start_date
     added = 0
     while added < days:
         current += timedelta(days=1)
-        if current.weekday() < 5:
+        if _is_workday(current):
             added += 1
     return current
 
@@ -3279,6 +3307,14 @@ async def add_payment(order_id: str, side: str, payload: PaymentEntry, backgroun
         set_data[date_field] = payload.pp_date
     await db.orders.update_one({"id": order_id}, {"$set": set_data})
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+
+    # Полностью оплачено частичными ПП — закрываем задачу-напоминание,
+    # как это делает mark_payment.
+    if fully_paid:
+        await db.tasks.update_many(
+            {"order_id": order_id, "type": "payment_reminder", "side": side, "status": "pending"},
+            {"$set": {"status": "done", "completed_at": now_iso()}},
+        )
 
     await _sync_kudir_rows_for_payments(updated, side)
 
