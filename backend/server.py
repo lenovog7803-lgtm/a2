@@ -449,13 +449,25 @@ async def _run_payment_reminder_sync() -> dict:
                 'side': side, 'status': 'pending',
             })
 
-            who = 'перевозчику' if side == 'carrier' else 'от клиента'
+            # Контрагент и сумма к оплате (остаток, если были частичные ПП).
+            if side == 'carrier':
+                who = 'перевозчику'
+                name = o.get('carrier_name') or '—'
+            else:
+                who = 'от клиента'
+                name = o.get('client_name') or '—'
+            rate = float(o.get(f'{side}_rate') or 0)
+            paid_parts = sum(float(p.get('amount') or 0) for p in (o.get(f'{side}_payments') or []))
+            amount = rate - paid_parts if paid_parts else rate
+            amt_str = f"{round(amount):,}".replace(',', ' ') + ' BYN'
+            tail = f" — {name} — {amt_str}"
+
             if due_date <= today_str:
                 overdue = (today - d).days
-                title = (f"Оплати!: {who} по заявке {o['order_number']}"
+                title = (f"Оплати!: {who} по заявке {o['order_number']}{tail}"
                          + (f" (просрочено {overdue} дн.)" if overdue > 0 else ""))
             else:
-                title = f"Через {days_left} дн. оплата {who} по заявке {o['order_number']}"
+                title = f"Через {days_left} дн. оплата {who} по заявке {o['order_number']}{tail}"
 
             if existing:
                 if existing.get('title') != title or existing.get('due_date') != due_date:
