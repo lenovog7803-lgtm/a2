@@ -580,23 +580,29 @@ async def send_scheduled_report(period: str):
         await notify_user(d['id'], text)
 
 
+# Отчёты рассылаются по местному времени (Минск, UTC+3, без перехода на
+# летнее время) — в коде всё в UTC, поэтому берём местное отдельно.
+_REPORT_TZ = timezone(timedelta(hours=3))
+_REPORT_HOUR = 21  # 21:00 по Минску — ежедневный/еженедельный/ежемесячный
+
+
 async def _report_scheduler():
     sent_today: set = set()
     while True:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(_REPORT_TZ)
         key_day = now.strftime('%Y-%m-%d')
 
         try:
-            if now.hour == 9 and now.minute < 5 and f'daily-{key_day}' not in sent_today:
+            if now.hour == _REPORT_HOUR and now.minute < 5 and f'daily-{key_day}' not in sent_today:
                 await send_scheduled_report('daily')
                 sent_today.add(f'daily-{key_day}')
 
-            if now.weekday() == 4 and now.hour == 9 and now.minute < 5 and f'weekly-{key_day}' not in sent_today:
+            if now.weekday() == 4 and now.hour == _REPORT_HOUR and now.minute < 5 and f'weekly-{key_day}' not in sent_today:
                 await send_scheduled_report('weekly')
                 sent_today.add(f'weekly-{key_day}')
 
             tomorrow = now + timedelta(days=1)
-            if tomorrow.day == 1 and now.hour == 21 and now.minute < 5 and f'monthly-{key_day}' not in sent_today:
+            if tomorrow.day == 1 and now.hour == _REPORT_HOUR and now.minute < 5 and f'monthly-{key_day}' not in sent_today:
                 await send_scheduled_report('monthly')
                 sent_today.add(f'monthly-{key_day}')
         except Exception as e:
