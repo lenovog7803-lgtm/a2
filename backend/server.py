@@ -363,32 +363,46 @@ async def _trash_purge_loop():
 # менеджеров без передеплоя.
 #   bot_subscribers: {'id': str, 'user_id': str, 'telegram_chat_id': str, 'role': str}
 # ======================================================================
-async def send_telegram_a2info(chat_id: str, text: str):
+async def send_telegram_a2info(chat_id: str, text: str) -> dict:
+    """Возвращает {'ok': bool, ...} — чтобы вызывающий (ручной запуск отчёта)
+    мог показать, дошло ли сообщение и с какой ошибкой."""
     import httpx
     token = os.environ.get('A2_INFO_BOT_TOKEN')
     if not token:
         logger.warning('[a2info bot] no token configured')
-        return
+        return {'chat_id': chat_id, 'ok': False, 'error': 'A2_INFO_BOT_TOKEN не задан'}
     if not chat_id:
-        return
+        return {'chat_id': chat_id, 'ok': False, 'error': 'нет chat_id'}
     async with httpx.AsyncClient() as _client:
         try:
-            await _client.post(
+            r = await _client.post(
                 f'https://api.telegram.org/bot{token}/sendMessage',
                 json={'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'},
                 timeout=10,
             )
+            body = {}
+            try:
+                body = r.json()
+            except Exception:
+                pass
+            if not body.get('ok'):
+                logger.error(f'[a2info bot] send to {chat_id} failed: {r.status_code} {r.text[:300]}')
+            return {'chat_id': chat_id, 'ok': bool(body.get('ok')),
+                    'status': r.status_code, 'error': body.get('description')}
         except Exception as e:
             logger.error(f'[a2info bot] send failed: {e}')
+            return {'chat_id': chat_id, 'ok': False, 'error': str(e)}
 
 
-async def notify_user(user_id: str, text: str):
+async def notify_user(user_id: str, text: str) -> list:
     """Отправить уведомление конкретному пользователю во все его подписанные чаты."""
     if not user_id:
-        return
+        return []
     subs = await db.bot_subscribers.find({'user_id': user_id}).to_list(10)
+    out = []
     for s in subs:
-        await send_telegram_a2info(s.get('telegram_chat_id'), text)
+        out.append(await send_telegram_a2info(s.get('telegram_chat_id'), text))
+    return out
 
 
 async def _sync_payment_reminders():
@@ -468,8 +482,14 @@ async def _sync_payment_reminders():
 
 
 # ====== Отчёты: ежедневный / еженедельный / ежемесячный ======
+# Всё в отчётах считается по местному времени (Минск, UTC+3, без летнего
+# времени) — «сегодня» это сегодня по Минску, и рассылка в 21:00 по Минску.
+_REPORT_TZ = timezone(timedelta(hours=3))
+_REPORT_HOUR = 21
+
+
 async def build_report(period: str) -> dict:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(_REPORT_TZ)  # местное время (Минск) — «сегодня» = сегодня по Минску
     if period == 'daily':
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     elif period == 'weekly':
@@ -477,9 +497,14 @@ async def build_report(period: str) -> dict:
     else:
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     start_str = start.strftime('%Y-%m-%d')
+    today_str = now.strftime('%Y-%m-%d')
+    # Верхняя граница — конец сегодняшнего дня. Без неё «выручка за сегодня»
+    # включала все будущие заявки с load_date вперёд (load_date >= today).
+    end_excl_str = (now + timedelta(days=1)).strftime('%Y-%m-%d')
 
     orders = await db.orders.find({
-        'load_date': {'$gte': start_str}, 'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
+        'load_date': {'$gte': start_str, '$lt': end_excl_str},
+        'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
     }).to_list(10000)
 
     revenue = sum(float(o.get('client_rate') or 0) for o in orders)
@@ -487,7 +512,6 @@ async def build_report(period: str) -> dict:
     delivered = sum(1 for o in orders if o.get('status') == 'done')
 
     all_orders = await db.orders.find({'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}).to_list(10000)
-    today_str = now.strftime('%Y-%m-%d')
     overdue_carrier = [o for o in all_orders
                        if not o.get('carrier_paid') and o.get('carrier_payment_deadline', '')
                        and o.get('carrier_payment_deadline', '') < today_str]
@@ -571,19 +595,37 @@ def format_report_text(report: dict) -> str:
     return '\n'.join(lines)
 
 
-async def send_scheduled_report(period: str):
+# chat_id, куда отчёт уходит всегда — даже если в CRM никто не подписан
+# (поле ввода chat_id из интерфейса убрано). Переопределяется переменной
+# окружения A2_INFO_REPORT_CHAT_IDS (через запятую).
+_DEFAULT_REPORT_CHAT_IDS = [c.strip() for c in os.environ.get(
+    'A2_INFO_REPORT_CHAT_IDS', '558556324').split(',') if c.strip()]
+
+
+async def send_scheduled_report(period: str) -> dict:
     report = await build_report(period)
     await db.reports.insert_one(dict(report))
     text = format_report_text(report)
+
+    targets: list = list(_DEFAULT_REPORT_CHAT_IDS)
     directors = await db.users.find({'role': {'$in': list(DIRECTOR_ROLES)}}).to_list(20)
     for d in directors:
-        await notify_user(d['id'], text)
+        for s in await db.bot_subscribers.find({'user_id': d['id']}).to_list(10):
+            cid = s.get('telegram_chat_id')
+            if cid:
+                targets.append(cid)
 
+    seen: set = set()
+    delivery: list = []
+    for cid in targets:
+        if cid in seen:
+            continue
+        seen.add(cid)
+        delivery.append(await send_telegram_a2info(cid, text))
 
-# Отчёты рассылаются по местному времени (Минск, UTC+3, без перехода на
-# летнее время) — в коде всё в UTC, поэтому берём местное отдельно.
-_REPORT_TZ = timezone(timedelta(hours=3))
-_REPORT_HOUR = 21  # 21:00 по Минску — ежедневный/еженедельный/ежемесячный
+    ok = sum(1 for d in delivery if d.get('ok'))
+    logger.info(f'[report {period}] delivered to {ok}/{len(delivery)} chats')
+    return {'report': report, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
 
 
 async def _report_scheduler():
@@ -2332,12 +2374,20 @@ async def list_reports(period: Optional[str] = None, current_user: dict = Depend
 
 @api_router.post("/reports/run")
 async def run_report_now(period: str = "daily", current_user: dict = Depends(require_director)):
-    """Сформировать отчёт вручную (и разослать директорам в Telegram)."""
+    """Сформировать отчёт вручную и разослать в Telegram. Возвращает статус
+    доставки по каждому chat_id (дошло / ошибка), чтобы было видно, почему
+    отчёт не приходит — нет токена, chat_id не нажал /start и т.п."""
     if period not in ("daily", "weekly", "monthly"):
         raise HTTPException(400, "period must be daily|weekly|monthly")
-    await send_scheduled_report(period)
-    report = await db.reports.find({"period": period}, {"_id": 0}).sort("generated_at", -1).to_list(1)
-    return {"ok": True, "report": report[0] if report else None}
+    result = await send_scheduled_report(period)
+    return {
+        "ok": True,
+        "report": result.get("report"),
+        "sent": result.get("sent", 0),
+        "targets": result.get("targets", 0),
+        "delivery": result.get("delivery", []),
+        "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
+    }
 
 
 _ORDERS_LIGHT_PROJECTION = {
