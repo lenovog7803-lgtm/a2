@@ -529,14 +529,22 @@ _REPORT_TZ = timezone(timedelta(hours=3))
 _REPORT_HOUR = 21
 
 
+_REPORT_PERIODS = ('daily', 'weekly', 'monthly', 'quarterly', 'yearly')
+
+
 async def build_report(period: str) -> dict:
     now = datetime.now(_REPORT_TZ)  # местное время (Минск) — «сегодня» = сегодня по Минску
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if period == 'daily':
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = midnight
     elif period == 'weekly':
         start = now - timedelta(days=7)
-    else:
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif period == 'quarterly':
+        start = midnight.replace(month=((now.month - 1) // 3) * 3 + 1, day=1)
+    elif period == 'yearly':
+        start = midnight.replace(month=1, day=1)
+    else:  # monthly
+        start = midnight.replace(day=1)
     start_str = start.strftime('%Y-%m-%d')
     today_str = now.strftime('%Y-%m-%d')
     # Верхняя граница — конец сегодняшнего дня (будущие заявки не считаем).
@@ -553,6 +561,17 @@ async def build_report(period: str) -> dict:
 
     revenue = sum(float(o.get('client_rate') or 0) for o in orders)
     margin = sum(float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0) for o in orders)
+    tax = margin * TAX_RATE
+    net_profit = margin - tax
+    avg_margin = (margin / len(orders)) if orders else 0.0
+
+    # Оплаты внутри выборки периода: сколько заявок оплачено клиентами / нам
+    # перечислено перевозчикам, из общего числа заявок периода, и на сумму.
+    client_paid_count = sum(1 for o in orders if o.get('client_paid'))
+    carrier_paid_count = sum(1 for o in orders if o.get('carrier_paid'))
+    client_paid_sum = sum(float(o.get('client_rate') or 0) for o in orders if o.get('client_paid'))
+    carrier_paid_sum = sum(float(o.get('carrier_rate') or 0) for o in orders if o.get('carrier_paid'))
+
     # «Доставлено» — по дате выгрузки в периоде (а не по дате создания),
     # иначе в дневном отчёте почти всегда 0.
     delivered = sum(1 for o in all_orders if o.get('status') == 'done'
@@ -591,7 +610,10 @@ async def build_report(period: str) -> dict:
         'id': str(uuid.uuid4()), 'period': period,
         'basis': 'created' if basis_field == 'created_at' else 'unload',
         'revenue': revenue, 'margin': margin, 'delivered': delivered,
+        'tax': tax, 'net_profit': net_profit, 'avg_margin': avg_margin,
         'orders_count': len(orders),
+        'client_paid_count': client_paid_count, 'carrier_paid_count': carrier_paid_count,
+        'client_paid_sum': client_paid_sum, 'carrier_paid_sum': carrier_paid_sum,
         'overdue_carrier_count': len(overdue_carrier),
         'overdue_carrier_sum': sum(float(o.get('carrier_rate') or 0) for o in overdue_carrier),
         'debtors_count': len(debtors),
@@ -634,8 +656,13 @@ def _fmt_leg(x: dict) -> str:
     return line
 
 
+_REPORT_LABELS = {
+    'daily': 'за сегодня', 'weekly': 'за неделю', 'monthly': 'за месяц',
+    'quarterly': 'за квартал', 'yearly': 'за год',
+}
+
+
 def format_report_text(report: dict) -> str:
-    labels = {'daily': 'за сегодня', 'weekly': 'за неделю', 'monthly': 'за месяц'}
     period = report.get('period')
     delivered = report.get('delivered', 0)
     total_orders = report.get('orders_count', 0)
@@ -644,13 +671,17 @@ def format_report_text(report: dict) -> str:
     count_label = 'Заявок (по выгрузке)' if by_unload else 'Создано заявок'
 
     L = [
-        f"📊  <b>Отчёт {labels.get(period, period)}</b>",
+        f"📊  <b>Отчёт {_REPORT_LABELS.get(period, period)}</b>",
         f"<i>{_esc(fmt_date_ru(report.get('generated_at', '')))}  ·  {basis_note}</i>",
         _REPORT_HR,
         f"💰  Выручка:  <b>{_byn(report.get('revenue'))}</b>",
         f"📈  Маржа:  <b>{_byn(report.get('margin'))}</b>",
+        f"🏦  Прибыль (−налог 20%):  <b>{_byn(report.get('net_profit'))}</b>",
         f"🆕  {count_label}:  <b>{total_orders}</b>",
         f"✅  Доставлено:  <b>{delivered}</b>",
+        "",
+        f"💵  Оплачено клиентами:  <b>{report.get('client_paid_count', 0)} из {total_orders}</b>  ·  {_byn(report.get('client_paid_sum'))}",
+        f"📤  Оплачено перевозчикам:  <b>{report.get('carrier_paid_count', 0)} из {total_orders}</b>  ·  {_byn(report.get('carrier_paid_sum'))}",
         "",
         f"⚠️  Просрочка перевозчикам:  <b>{report.get('overdue_carrier_count', 0)}</b>  ·  {_byn(report.get('overdue_carrier_sum'))}",
         f"🧾  Должники (клиенты):  <b>{report.get('debtors_count', 0)}</b>  ·  {_byn(report.get('debtors_sum'))}",
@@ -726,14 +757,24 @@ async def _report_scheduler():
                 await send_scheduled_report('weekly')
                 sent_today.add(f'weekly-{key_day}')
 
+            # Конец месяца / квартала / года — завтра уже другой месяц.
             tomorrow = now + timedelta(days=1)
-            if tomorrow.day == 1 and now.hour == _REPORT_HOUR and now.minute < 5 and f'monthly-{key_day}' not in sent_today:
+            month_end = now.hour == _REPORT_HOUR and now.minute < 5 and tomorrow.month != now.month
+            if month_end and f'monthly-{key_day}' not in sent_today:
                 await send_scheduled_report('monthly')
                 sent_today.add(f'monthly-{key_day}')
+            # Конец квартала — последний день марта/июня/сентября/декабря.
+            if month_end and now.month in (3, 6, 9, 12) and f'quarterly-{key_day}' not in sent_today:
+                await send_scheduled_report('quarterly')
+                sent_today.add(f'quarterly-{key_day}')
+            # Конец года — 31 декабря.
+            if month_end and tomorrow.year != now.year and f'yearly-{key_day}' not in sent_today:
+                await send_scheduled_report('yearly')
+                sent_today.add(f'yearly-{key_day}')
         except Exception as e:
             logger.error(f'[report scheduler] {e}')
 
-        if len(sent_today) > 20:
+        if len(sent_today) > 40:
             sent_today.clear()
 
         await asyncio.sleep(300)
@@ -2460,8 +2501,8 @@ async def run_report_now(period: str = "daily", current_user: dict = Depends(req
     """Сформировать отчёт вручную и разослать в Telegram. Возвращает статус
     доставки по каждому chat_id (дошло / ошибка), чтобы было видно, почему
     отчёт не приходит — нет токена, chat_id не нажал /start и т.п."""
-    if period not in ("daily", "weekly", "monthly"):
-        raise HTTPException(400, "period must be daily|weekly|monthly")
+    if period not in _REPORT_PERIODS:
+        raise HTTPException(400, f"period must be one of {'|'.join(_REPORT_PERIODS)}")
     result = await send_scheduled_report(period)
     return {
         "ok": True,
