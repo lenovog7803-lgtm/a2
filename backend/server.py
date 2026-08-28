@@ -450,16 +450,16 @@ async def _run_payment_reminder_sync() -> dict:
     updated = 0
     closed = 0
 
+    # Только перевозчик — это то, что МЫ должны оплатить. Долги клиентов
+    # (кто должен нам) в задачи не выносим — они видны в отчёте, раздел
+    # «Должники (клиенты)».
     orders = await db.orders.find({
         'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
-        '$or': [
-            {'client_paid': False},
-            {'carrier_paid': False, 'carrier_payment_deadline': {'$ne': ''}},
-        ],
+        'carrier_paid': False, 'carrier_payment_deadline': {'$ne': ''},
     }).to_list(10000)
 
     for o in orders:
-        for side in ('client', 'carrier'):
+        for side in ('carrier',):
             if o.get(f'{side}_paid'):
                 continue
             due = o.get('carrier_payment_deadline') if side == 'carrier' else o.get('unload_date')
@@ -825,9 +825,9 @@ async def send_scheduled_report(period: str) -> dict:
     return {'report': report, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
 
 
-# ====== Утренняя сводка (09:00 по Минску): загрузки/выгрузки на сегодня.
-# Задачи сюда НЕ входят — по каждой задаче приходит отдельное сообщение
-# в назначенное ей время (см. _task_reminder_loop). ======
+# ====== Утренняя сводка (09:00 по Минску): загрузки/выгрузки на сегодня +
+# задачи на сегодня и просроченные. По каждой задаче ещё приходит отдельное
+# сообщение в назначенное ей время (см. _task_reminder_loop). ======
 def _leg_dict(o: dict) -> dict:
     return {
         'order_number': o.get('order_number') or '',
@@ -845,13 +845,27 @@ async def build_morning_briefing() -> dict:
         {'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}).to_list(10000)
     loads = [_leg_dict(o) for o in active if (o.get('load_date') or '')[:10] == today_str]
     unloads = [_leg_dict(o) for o in active if (o.get('unload_date') or '')[:10] == today_str]
+
+    task_docs = await db.tasks.find({
+        'status': 'pending',
+        'type': {'$ne': 'payment_reminder'},
+        'due_date': {'$gt': '', '$lte': today_str},
+    }, {'_id': 0}).sort([('due_date', 1), ('due_time', 1)]).to_list(200)
+    tasks = [{
+        'title': t.get('title') or t.get('description') or 'Задача',
+        'due_date': (t.get('due_date') or '')[:10],
+        'due_time': (t.get('due_time') or '').strip(),
+        'overdue': (t.get('due_date') or '')[:10] < today_str,
+    } for t in task_docs]
+
     return {'date': today_str, 'loads': loads, 'unloads': unloads,
-            'generated_at': now.isoformat()}
+            'tasks': tasks, 'generated_at': now.isoformat()}
 
 
 def format_morning_text(b: dict) -> str:
     loads = b.get('loads') or []
     unloads = b.get('unloads') or []
+    tasks = b.get('tasks') or []
     L = [
         f"☀️  <b>Утро — {_esc(fmt_date_ru(b.get('date', '')))}</b>",
         _REPORT_HR,
@@ -861,6 +875,16 @@ def format_morning_text(b: dict) -> str:
     L.append("")
     L.append(f"🏁  <b>Выгрузки сегодня · {len(unloads)}</b>")
     L += [_fmt_leg(x) for x in unloads] or ["<i>нет</i>"]
+
+    L.append(_REPORT_HR)
+    L.append(f"✅  <b>Задачи · {len(tasks)}</b> <i>(на сегодня и просроченные)</i>")
+    if tasks:
+        for t in tasks:
+            mark = "🔴 " if t.get('overdue') else ""
+            tm = f"{t['due_time']} — " if t.get('due_time') else ""
+            L.append(f"•  {mark}{tm}{_esc(t['title'])}")
+    else:
+        L.append("<i>нет</i>")
     return '\n'.join(L)
 
 
@@ -2723,6 +2747,7 @@ async def run_morning_briefing_now(current_user: dict = Depends(require_director
         "ok": True,
         "loads": len(b.get("loads", [])),
         "unloads": len(b.get("unloads", [])),
+        "tasks": len(b.get("tasks", [])),
         "sent": result.get("sent", 0),
         "targets": result.get("targets", 0),
         "delivery": result.get("delivery", []),
