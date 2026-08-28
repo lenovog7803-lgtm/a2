@@ -683,6 +683,20 @@ async def build_report(period: str) -> dict:
     calls = await db.call_logs.find({'created_at': {'$gte': start_str}}).to_list(10000)
     won = sum(1 for c in calls if c.get('outcome') == 'won')
 
+    # Налог по-кассовому, как в КУДиР: берём заявки, по которым оплата от
+    # клиента поступила в этом периоде (client_paid_date), их маржу
+    # (доход = ставка клиента − ставка перевозчика, не меньше 0) и налог с неё.
+    # Считаем для квартального и годового отчётов.
+    kudir_income = 0.0
+    kudir_paid_count = 0
+    if period in ('quarterly', 'yearly'):
+        for o in all_orders:
+            pd = (o.get('client_paid_date') or '')[:10]
+            if start_str <= pd < end_excl_str:
+                kudir_paid_count += 1
+                kudir_income += max(0.0, float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0))
+    kudir_tax = kudir_income * TAX_RATE
+
     # Завтрашние загрузки/выгрузки — какие заявки и контрагенты (для
     # ежедневного отчёта: "завтра выгрузка по заявке X — клиент …, перевозчик …").
     tomorrow_str = (now + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -710,6 +724,8 @@ async def build_report(period: str) -> dict:
         'basis': 'created' if basis_field == 'created_at' else 'unload',
         'revenue': revenue, 'margin': margin, 'delivered': delivered,
         'tax': tax, 'net_profit': net_profit, 'avg_margin': avg_margin,
+        'kudir_income': kudir_income, 'kudir_tax': kudir_tax, 'kudir_paid_count': kudir_paid_count,
+        'tax_rate': TAX_RATE,
         'orders_count': len(orders),
         'client_paid_count': client_paid_count, 'carrier_paid_count': carrier_paid_count,
         'client_paid_sum': client_paid_sum, 'carrier_paid_sum': carrier_paid_sum,
@@ -786,6 +802,14 @@ def format_report_text(report: dict) -> str:
         f"🧾  Должники (клиенты):  <b>{report.get('debtors_count', 0)}</b>  ·  {_byn(report.get('debtors_sum'))}",
         f"📞  Звонки:  <b>{report.get('calls_total', 0)}</b>  ·  клиентами стали {report.get('calls_won', 0)}",
     ]
+
+    if period in ('quarterly', 'yearly'):
+        rate_pct = round(float(report.get('tax_rate', TAX_RATE)) * 100)
+        L.append(_REPORT_HR)
+        L.append(f"🧮  <b>Налог по КУДиР ({_REPORT_LABELS.get(period, period)})</b>")
+        L.append(f"Оплачено клиентами в периоде:  <b>{report.get('kudir_paid_count', 0)}</b> заявок")
+        L.append(f"Налоговая база (маржа по ним):  <b>{_byn(report.get('kudir_income'))}</b>")
+        L.append(f"<b>Налог к уплате ({rate_pct}%):  {_byn(report.get('kudir_tax'))}</b>")
 
     top = report.get('top_clients') or []
     if top:
