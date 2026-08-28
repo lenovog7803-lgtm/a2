@@ -363,6 +363,31 @@ async def _trash_purge_loop():
 # менеджеров без передеплоя.
 #   bot_subscribers: {'id': str, 'user_id': str, 'telegram_chat_id': str, 'role': str}
 # ======================================================================
+# Приватный режим бота: если список задан (env A2_INFO_ONLY_CHAT_IDS или
+# настройка a2info_only_chat_ids в app_settings), НИ ОДНО сообщение не уходит
+# никуда, кроме этих chat_id — подписки, дефолтные chat_id и исполнители
+# задач фильтруются через него. Пусто = бот открыт всем подписчикам.
+_only_chat_cache: dict = {'ids': None, 'ts': 0.0}
+
+
+async def _get_only_chat_ids() -> list:
+    env = [c.strip() for c in os.environ.get('A2_INFO_ONLY_CHAT_IDS', '').split(',') if c.strip()]
+    if env:
+        return env
+    now_ts = time.time()
+    if _only_chat_cache['ids'] is not None and now_ts - _only_chat_cache['ts'] < 60:
+        return _only_chat_cache['ids']
+    try:
+        doc = await db.app_settings.find_one({'key': 'a2info_only_chat_ids'})
+        val = (doc or {}).get('value') or ''
+        ids = [c.strip() for c in str(val).split(',') if c.strip()]
+    except Exception:
+        ids = []
+    _only_chat_cache['ids'] = ids
+    _only_chat_cache['ts'] = now_ts
+    return ids
+
+
 async def send_telegram_a2info(chat_id: str, text: str) -> dict:
     """Возвращает {'ok': bool, ...} — чтобы вызывающий (ручной запуск отчёта)
     мог показать, дошло ли сообщение и с какой ошибкой."""
@@ -373,6 +398,9 @@ async def send_telegram_a2info(chat_id: str, text: str) -> dict:
         return {'chat_id': chat_id, 'ok': False, 'error': 'A2_INFO_BOT_TOKEN не задан'}
     if not chat_id:
         return {'chat_id': chat_id, 'ok': False, 'error': 'нет chat_id'}
+    only = await _get_only_chat_ids()
+    if only and str(chat_id) not in only:
+        return {'chat_id': chat_id, 'ok': False, 'error': 'приватный режим — chat_id не в списке'}
     async with httpx.AsyncClient() as _client:
         try:
             r = await _client.post(
@@ -551,8 +579,11 @@ def _in_reminder_notify_window(now: datetime) -> bool:
 
 
 async def _report_recipients() -> list:
-    """chat_id получателей рассылок А2 Инфо СРМ: дефолтные из env +
-    подписки директоров, без дублей."""
+    """chat_id получателей рассылок А2 Инфо СРМ. В приватном режиме — только
+    заданный список; иначе дефолтные из env + подписки директоров, без дублей."""
+    only = await _get_only_chat_ids()
+    if only:
+        return list(only)
     seen: set = set()
     out: list = []
     for cid in _DEFAULT_REPORT_CHAT_IDS:
@@ -2737,6 +2768,35 @@ async def subscribe_bot(payload: dict, current_user: dict = Depends(_require_use
 async def get_bot_subscription(current_user: dict = Depends(_require_user)):
     sub = await db.bot_subscribers.find_one({"user_id": current_user["id"]}, {"_id": 0})
     return {"subscribed": bool(sub), "chat_id": sub.get("telegram_chat_id") if sub else None}
+
+
+@api_router.get("/bot/private")
+async def get_bot_private(current_user: dict = Depends(require_director)):
+    """Приватный режим: если задан список chat_id — бот пишет только туда."""
+    only = await _get_only_chat_ids()
+    env_locked = bool([c for c in os.environ.get('A2_INFO_ONLY_CHAT_IDS', '').split(',') if c.strip()])
+    return {"private": bool(only), "chat_ids": only, "env_locked": env_locked}
+
+
+@api_router.post("/bot/private")
+async def set_bot_private(payload: dict, current_user: dict = Depends(require_director)):
+    """Включить/выключить приватный режим. {'chat_ids': ['123', ...]} или
+    {'chat_ids': ''} чтобы вернуть бота всем подписчикам. Игнорируется, если
+    режим зафиксирован переменной окружения A2_INFO_ONLY_CHAT_IDS."""
+    if [c for c in os.environ.get('A2_INFO_ONLY_CHAT_IDS', '').split(',') if c.strip()]:
+        raise HTTPException(400, "Приватный список задан переменной окружения — меняйте его на сервере")
+    raw = payload.get("chat_ids")
+    if isinstance(raw, list):
+        ids = [str(c).strip() for c in raw if str(c).strip()]
+    else:
+        ids = [c.strip() for c in str(raw or "").split(",") if c.strip()]
+    await db.app_settings.update_one(
+        {"key": "a2info_only_chat_ids"},
+        {"$set": {"key": "a2info_only_chat_ids", "value": ",".join(ids), "updated_at": now_iso()}},
+        upsert=True,
+    )
+    _only_chat_cache["ids"] = None  # сбросить кэш
+    return {"ok": True, "private": bool(ids), "chat_ids": ids}
 
 
 # ====== Отчёты — история (скрытая страница, только директор) ======
