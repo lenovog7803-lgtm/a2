@@ -683,18 +683,20 @@ async def build_report(period: str) -> dict:
     calls = await db.call_logs.find({'created_at': {'$gte': start_str}}).to_list(10000)
     won = sum(1 for c in calls if c.get('outcome') == 'won')
 
-    # Налог по-кассовому, как в КУДиР: берём заявки, по которым оплата от
-    # клиента поступила в этом периоде (client_paid_date), их маржу
-    # (доход = ставка клиента − ставка перевозчика, не меньше 0) и налог с неё.
-    # Считаем для квартального и годового отчётов.
+    # Налог — строго по факту и по книге КУДиР: суммируем доход (графа 4,
+    # income_amount) по строкам книги с датой в периоде. Строки книги уже
+    # ведутся по фактической дате каждой оплаты, включая частичные ПП
+    # (пропорционально марже), поэтому здесь никаких приближений по
+    # client_paid_date. Считаем для квартального и годового отчётов.
     kudir_income = 0.0
-    kudir_paid_count = 0
+    kudir_rows_count = 0
     if period in ('quarterly', 'yearly'):
-        for o in all_orders:
-            pd = (o.get('client_paid_date') or '')[:10]
-            if start_str <= pd < end_excl_str:
-                kudir_paid_count += 1
-                kudir_income += max(0.0, float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0))
+        kudir_rows = await db.kudir_entries.find({
+            'row_type': 'income',
+            'entry_date': {'$gte': start_str, '$lt': end_excl_str},
+        }, {'_id': 0, 'income_amount': 1}).to_list(50000)
+        kudir_rows_count = len(kudir_rows)
+        kudir_income = sum(float(e.get('income_amount') or 0) for e in kudir_rows)
     kudir_tax = kudir_income * TAX_RATE
 
     # Завтрашние загрузки/выгрузки — какие заявки и контрагенты (для
@@ -724,7 +726,7 @@ async def build_report(period: str) -> dict:
         'basis': 'created' if basis_field == 'created_at' else 'unload',
         'revenue': revenue, 'margin': margin, 'delivered': delivered,
         'tax': tax, 'net_profit': net_profit, 'avg_margin': avg_margin,
-        'kudir_income': kudir_income, 'kudir_tax': kudir_tax, 'kudir_paid_count': kudir_paid_count,
+        'kudir_income': kudir_income, 'kudir_tax': kudir_tax, 'kudir_rows_count': kudir_rows_count,
         'tax_rate': TAX_RATE,
         'orders_count': len(orders),
         'client_paid_count': client_paid_count, 'carrier_paid_count': carrier_paid_count,
@@ -807,8 +809,9 @@ def format_report_text(report: dict) -> str:
         rate_pct = round(float(report.get('tax_rate', TAX_RATE)) * 100)
         L.append(_REPORT_HR)
         L.append(f"🧮  <b>Налог по КУДиР ({_REPORT_LABELS.get(period, period)})</b>")
-        L.append(f"Оплачено клиентами в периоде:  <b>{report.get('kudir_paid_count', 0)}</b> заявок")
-        L.append(f"Налоговая база (маржа по ним):  <b>{_byn(report.get('kudir_income'))}</b>")
+        L.append(f"<i>по фактическим датам оплат в книге</i>")
+        L.append(f"Строк дохода в книге за период:  <b>{report.get('kudir_rows_count', 0)}</b>")
+        L.append(f"Доход по книге (графа 4):  <b>{_byn(report.get('kudir_income'))}</b>")
         L.append(f"<b>Налог к уплате ({rate_pct}%):  {_byn(report.get('kudir_tax'))}</b>")
 
     top = report.get('top_clients') or []
