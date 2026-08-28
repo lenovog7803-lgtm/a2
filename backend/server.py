@@ -819,26 +819,78 @@ async def send_scheduled_report(period: str) -> dict:
     report = await build_report(period)
     await db.reports.insert_one(dict(report))
     text = format_report_text(report)
-
-    targets: list = list(_DEFAULT_REPORT_CHAT_IDS)
-    directors = await db.users.find({'role': {'$in': list(DIRECTOR_ROLES)}}).to_list(20)
-    for d in directors:
-        for s in await db.bot_subscribers.find({'user_id': d['id']}).to_list(10):
-            cid = s.get('telegram_chat_id')
-            if cid:
-                targets.append(cid)
-
-    seen: set = set()
-    delivery: list = []
-    for cid in targets:
-        if cid in seen:
-            continue
-        seen.add(cid)
-        delivery.append(await send_telegram_a2info(cid, text))
-
+    delivery = await _broadcast_a2info(text)
     ok = sum(1 for d in delivery if d.get('ok'))
     logger.info(f'[report {period}] delivered to {ok}/{len(delivery)} chats')
     return {'report': report, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
+
+
+# ====== Утренняя сводка (09:00 по Минску): загрузки/выгрузки на сегодня
+# и задачи на сегодня, не связанные с оплатой ======
+def _leg_dict(o: dict) -> dict:
+    return {
+        'order_number': o.get('order_number') or '',
+        'client_name': o.get('client_name') or '',
+        'carrier_name': o.get('carrier_name') or '',
+        'route_from': o.get('route_from') or '',
+        'route_to': o.get('route_to') or '',
+    }
+
+
+async def build_morning_briefing() -> dict:
+    now = datetime.now(_REPORT_TZ)
+    today_str = now.strftime('%Y-%m-%d')
+    active = await db.orders.find(
+        {'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}).to_list(10000)
+    loads = [_leg_dict(o) for o in active if (o.get('load_date') or '')[:10] == today_str]
+    unloads = [_leg_dict(o) for o in active if (o.get('unload_date') or '')[:10] == today_str]
+
+    task_docs = await db.tasks.find({
+        'status': 'pending',
+        'type': {'$ne': 'payment_reminder'},
+        'due_date': {'$gt': '', '$lte': today_str},
+    }, {'_id': 0}).sort('due_date', 1).to_list(200)
+    tasks = [{
+        'title': t.get('title') or t.get('description') or 'Задача',
+        'due_date': (t.get('due_date') or '')[:10],
+        'overdue': (t.get('due_date') or '')[:10] < today_str,
+    } for t in task_docs]
+
+    return {'date': today_str, 'loads': loads, 'unloads': unloads,
+            'tasks': tasks, 'generated_at': now.isoformat()}
+
+
+def format_morning_text(b: dict) -> str:
+    loads = b.get('loads') or []
+    unloads = b.get('unloads') or []
+    tasks = b.get('tasks') or []
+    L = [
+        f"☀️  <b>Утро — {_esc(fmt_date_ru(b.get('date', '')))}</b>",
+        _REPORT_HR,
+        f"📦  <b>Загрузки сегодня · {len(loads)}</b>",
+    ]
+    L += [_fmt_leg(x) for x in loads] or ["<i>нет</i>"]
+    L.append("")
+    L.append(f"🏁  <b>Выгрузки сегодня · {len(unloads)}</b>")
+    L += [_fmt_leg(x) for x in unloads] or ["<i>нет</i>"]
+
+    L.append(_REPORT_HR)
+    L.append(f"✅  <b>Задачи на сегодня · {len(tasks)}</b>")
+    if tasks:
+        for t in tasks:
+            mark = "🔴 " if t.get('overdue') else ""
+            L.append(f"•  {mark}{_esc(t['title'])}")
+    else:
+        L.append("<i>нет</i>")
+    return '\n'.join(L)
+
+
+async def send_morning_briefing() -> dict:
+    b = await build_morning_briefing()
+    delivery = await _broadcast_a2info(format_morning_text(b))
+    ok = sum(1 for d in delivery if d.get('ok'))
+    logger.info(f'[morning briefing] delivered to {ok}/{len(delivery)} chats')
+    return {'briefing': b, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
 
 
 async def _report_scheduler():
@@ -848,6 +900,12 @@ async def _report_scheduler():
         key_day = now.strftime('%Y-%m-%d')
 
         try:
+            # 09:00 по Минску — утренняя сводка (загрузки/выгрузки на сегодня
+            # + задачи на сегодня, не связанные с оплатой).
+            if now.hour == 9 and now.minute < 5 and f'morning-{key_day}' not in sent_today:
+                await send_morning_briefing()
+                sent_today.add(f'morning-{key_day}')
+
             if now.hour == _REPORT_HOUR and now.minute < 5 and f'daily-{key_day}' not in sent_today:
                 await send_scheduled_report('daily')
                 sent_today.add(f'daily-{key_day}')
@@ -2607,6 +2665,23 @@ async def run_report_now(period: str = "daily", current_user: dict = Depends(req
     return {
         "ok": True,
         "report": result.get("report"),
+        "sent": result.get("sent", 0),
+        "targets": result.get("targets", 0),
+        "delivery": result.get("delivery", []),
+        "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
+    }
+
+
+@api_router.post("/reports/morning")
+async def run_morning_briefing_now(current_user: dict = Depends(require_director)):
+    """Отправить утреннюю сводку (обычно в 09:00) прямо сейчас."""
+    result = await send_morning_briefing()
+    b = result.get("briefing", {})
+    return {
+        "ok": True,
+        "loads": len(b.get("loads", [])),
+        "unloads": len(b.get("unloads", [])),
+        "tasks": len(b.get("tasks", [])),
         "sent": result.get("sent", 0),
         "targets": result.get("targets", 0),
         "delivery": result.get("delivery", []),
