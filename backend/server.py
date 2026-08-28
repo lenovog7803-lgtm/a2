@@ -406,6 +406,9 @@ async def notify_user(user_id: str, text: str) -> list:
 
 
 _REMINDER_WINDOW_DAYS = int(os.environ.get('PAYMENT_REMINDER_WINDOW_DAYS', '3'))
+# Просрочку старше этого (в рабочих днях) больше не считаем «напоминанием» —
+# это долг, он и так виден в разделе «Должники» отчёта.
+_REMINDER_MAX_OVERDUE_DAYS = int(os.environ.get('PAYMENT_REMINDER_MAX_OVERDUE_DAYS', '30'))
 
 # Государственные праздники РБ (нерабочие), фиксированные даты (месяц, день).
 # Переносимые праздники (Радуница) не учитываются.
@@ -445,6 +448,7 @@ async def _run_payment_reminder_sync() -> dict:
     today_str = now.strftime('%Y-%m-%d')
     created: list = []
     updated = 0
+    closed = 0
 
     orders = await db.orders.find({
         'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
@@ -468,8 +472,6 @@ async def _run_payment_reminder_sync() -> dict:
                 continue
             # Считаем в рабочих днях — выходные и праздники РБ не учитываем.
             days_left = business_days_between(today, d)
-            if days_left > _REMINDER_WINDOW_DAYS:
-                continue
 
             existing = await db.tasks.find_one({
                 'order_id': o['id'], 'type': 'payment_reminder',
@@ -480,8 +482,25 @@ async def _run_payment_reminder_sync() -> dict:
             name = (o.get('carrier_name') if side == 'carrier' else o.get('client_name')) or '—'
             rate = float(o.get(f'{side}_rate') or 0)
             paid_parts = sum(float(p.get('amount') or 0) for p in (o.get(f'{side}_payments') or []))
-            amount = rate - paid_parts if paid_parts else rate
-            amt_str = f"{round(amount):,}".replace(',', ' ') + ' BYN'
+            remaining = rate - paid_parts
+
+            # Не напоминаем, если: срок ещё далеко; просрочка слишком давняя
+            # (это уже долг — см. «Должники» в отчёте); либо по ПП уже всё
+            # оплачено (флаг оплаты мог не выставиться, но деньги проведены —
+            # тогда remaining <= 0). В двух последних случаях закрываем задачу.
+            too_early = days_left > _REMINDER_WINDOW_DAYS
+            too_old = days_left < -_REMINDER_MAX_OVERDUE_DAYS
+            covered = remaining <= 0.01
+            if too_early or too_old or covered:
+                if existing and (too_old or covered):
+                    await db.tasks.update_one(
+                        {'id': existing['id']},
+                        {'$set': {'status': 'done', 'completed_at': now.isoformat()}},
+                    )
+                    closed += 1
+                continue
+
+            amt_str = f"{round(remaining):,}".replace(',', ' ') + ' BYN'
 
             if due_date < today_str:
                 when = f"просрочено {-days_left} раб. дн." if days_left < 0 else "срок прошёл"
@@ -516,7 +535,7 @@ async def _run_payment_reminder_sync() -> dict:
                 await db.tasks.insert_one({**task, 'notified_at': None})
                 created.append(task)
 
-    return {'created': created, 'updated': updated}
+    return {'created': created, 'updated': updated, 'closed': closed}
 
 
 # Напоминания об оплате уходят в Telegram только в рабочее время:
@@ -529,6 +548,29 @@ _REMINDER_NOTIFY_TO_HOUR = int(os.environ.get('PAYMENT_REMINDER_TO_HOUR', '16'))
 def _in_reminder_notify_window(now: datetime) -> bool:
     return (_is_workday(now)
             and _REMINDER_NOTIFY_FROM_HOUR <= now.hour < _REMINDER_NOTIFY_TO_HOUR)
+
+
+async def _report_recipients() -> list:
+    """chat_id получателей рассылок А2 Инфо СРМ: дефолтные из env +
+    подписки директоров, без дублей."""
+    seen: set = set()
+    out: list = []
+    for cid in _DEFAULT_REPORT_CHAT_IDS:
+        if cid and cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    directors = await db.users.find({'role': {'$in': list(DIRECTOR_ROLES)}}).to_list(20)
+    for d in directors:
+        for s in await db.bot_subscribers.find({'user_id': d['id']}).to_list(10):
+            cid = s.get('telegram_chat_id')
+            if cid and cid not in seen:
+                seen.add(cid)
+                out.append(cid)
+    return out
+
+
+async def _broadcast_a2info(text: str) -> list:
+    return [await send_telegram_a2info(cid, text) for cid in await _report_recipients()]
 
 
 async def _notify_pending_payment_reminders(force: bool = False) -> dict:
@@ -552,20 +594,7 @@ async def _notify_pending_payment_reminders(force: bool = False) -> dict:
         rows.append(f"…и ещё {len(pending) - 40}")
     text = f"🔔 <b>Напоминания об оплате · {len(pending)}</b>\n" + "\n".join(rows)
 
-    targets: list = list(_DEFAULT_REPORT_CHAT_IDS)
-    directors = await db.users.find({'role': {'$in': list(DIRECTOR_ROLES)}}).to_list(20)
-    for dd in directors:
-        for s in await db.bot_subscribers.find({'user_id': dd['id']}).to_list(10):
-            if s.get('telegram_chat_id'):
-                targets.append(s['telegram_chat_id'])
-
-    seen: set = set()
-    delivery: list = []
-    for cid in targets:
-        if cid in seen:
-            continue
-        seen.add(cid)
-        delivery.append(await send_telegram_a2info(cid, text))
+    delivery = await _broadcast_a2info(text)
 
     if any(d.get('ok') for d in delivery) or not any(_DEFAULT_REPORT_CHAT_IDS):
         await db.tasks.update_many(
@@ -583,8 +612,9 @@ async def _sync_payment_reminders():
     while True:
         try:
             res = await _run_payment_reminder_sync()
-            if res['created'] or res['updated']:
-                logger.info(f"[payment reminders] created {len(res['created'])}, updated {res['updated']}")
+            if res['created'] or res['updated'] or res.get('closed'):
+                logger.info(f"[payment reminders] created {len(res['created'])}, "
+                            f"updated {res['updated']}, closed {res.get('closed', 0)}")
             await _notify_pending_payment_reminders()
         except Exception as e:
             logger.error(f'[payment reminders] {e}')
@@ -2595,6 +2625,7 @@ async def sync_payment_reminders_now(notify: bool = True, current_user: dict = D
         "ok": True,
         "created": len(res["created"]),
         "updated": res["updated"],
+        "closed": res.get("closed", 0),
         "notified": note.get("count", 0),
         "sent": note.get("sent", 0),
         "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
