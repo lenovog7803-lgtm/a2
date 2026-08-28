@@ -363,10 +363,13 @@ async def _trash_purge_loop():
 # менеджеров без передеплоя.
 #   bot_subscribers: {'id': str, 'user_id': str, 'telegram_chat_id': str, 'role': str}
 # ======================================================================
-# Приватный режим бота: если список задан (env A2_INFO_ONLY_CHAT_IDS или
-# настройка a2info_only_chat_ids в app_settings), НИ ОДНО сообщение не уходит
-# никуда, кроме этих chat_id — подписки, дефолтные chat_id и исполнители
-# задач фильтруются через него. Пусто = бот открыт всем подписчикам.
+# Приватный режим бота: НИ ОДНО сообщение не уходит никуда, кроме этих
+# chat_id — подписки, дефолтные chat_id и исполнители задач фильтруются
+# через него. По умолчанию бот приватный (пишет только директору). Порядок:
+#   env A2_INFO_ONLY_CHAT_IDS → app_settings.a2info_only_chat_ids →
+#   _DEFAULT_ONLY_CHAT_IDS. Чтобы открыть бота всем — записать в app_settings
+#   пустую строку явно (ключ есть, value='').
+_DEFAULT_ONLY_CHAT_IDS = ['8994243991']
 _only_chat_cache: dict = {'ids': None, 'ts': 0.0}
 
 
@@ -379,10 +382,12 @@ async def _get_only_chat_ids() -> list:
         return _only_chat_cache['ids']
     try:
         doc = await db.app_settings.find_one({'key': 'a2info_only_chat_ids'})
-        val = (doc or {}).get('value') or ''
-        ids = [c.strip() for c in str(val).split(',') if c.strip()]
+        if doc is None:
+            ids = list(_DEFAULT_ONLY_CHAT_IDS)
+        else:
+            ids = [c.strip() for c in str(doc.get('value') or '').split(',') if c.strip()]
     except Exception:
-        ids = []
+        ids = list(_DEFAULT_ONLY_CHAT_IDS)
     _only_chat_cache['ids'] = ids
     _only_chat_cache['ts'] = now_ts
     return ids
