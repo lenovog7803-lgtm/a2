@@ -825,8 +825,9 @@ async def send_scheduled_report(period: str) -> dict:
     return {'report': report, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
 
 
-# ====== Утренняя сводка (09:00 по Минску): загрузки/выгрузки на сегодня
-# и задачи на сегодня, не связанные с оплатой ======
+# ====== Утренняя сводка (09:00 по Минску): загрузки/выгрузки на сегодня.
+# Задачи сюда НЕ входят — по каждой задаче приходит отдельное сообщение
+# в назначенное ей время (см. _task_reminder_loop). ======
 def _leg_dict(o: dict) -> dict:
     return {
         'order_number': o.get('order_number') or '',
@@ -844,26 +845,13 @@ async def build_morning_briefing() -> dict:
         {'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}).to_list(10000)
     loads = [_leg_dict(o) for o in active if (o.get('load_date') or '')[:10] == today_str]
     unloads = [_leg_dict(o) for o in active if (o.get('unload_date') or '')[:10] == today_str]
-
-    task_docs = await db.tasks.find({
-        'status': 'pending',
-        'type': {'$ne': 'payment_reminder'},
-        'due_date': {'$gt': '', '$lte': today_str},
-    }, {'_id': 0}).sort('due_date', 1).to_list(200)
-    tasks = [{
-        'title': t.get('title') or t.get('description') or 'Задача',
-        'due_date': (t.get('due_date') or '')[:10],
-        'overdue': (t.get('due_date') or '')[:10] < today_str,
-    } for t in task_docs]
-
     return {'date': today_str, 'loads': loads, 'unloads': unloads,
-            'tasks': tasks, 'generated_at': now.isoformat()}
+            'generated_at': now.isoformat()}
 
 
 def format_morning_text(b: dict) -> str:
     loads = b.get('loads') or []
     unloads = b.get('unloads') or []
-    tasks = b.get('tasks') or []
     L = [
         f"☀️  <b>Утро — {_esc(fmt_date_ru(b.get('date', '')))}</b>",
         _REPORT_HR,
@@ -873,15 +861,6 @@ def format_morning_text(b: dict) -> str:
     L.append("")
     L.append(f"🏁  <b>Выгрузки сегодня · {len(unloads)}</b>")
     L += [_fmt_leg(x) for x in unloads] or ["<i>нет</i>"]
-
-    L.append(_REPORT_HR)
-    L.append(f"✅  <b>Задачи на сегодня · {len(tasks)}</b>")
-    if tasks:
-        for t in tasks:
-            mark = "🔴 " if t.get('overdue') else ""
-            L.append(f"•  {mark}{_esc(t['title'])}")
-    else:
-        L.append("<i>нет</i>")
     return '\n'.join(L)
 
 
@@ -891,6 +870,63 @@ async def send_morning_briefing() -> dict:
     ok = sum(1 for d in delivery if d.get('ok'))
     logger.info(f'[morning briefing] delivered to {ok}/{len(delivery)} chats')
     return {'briefing': b, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
+
+
+async def _task_recipients(assigned_user_id: Optional[str]) -> list:
+    """Получатели уведомления по задаче: стандартная рассылка + личные
+    подписки исполнителя задачи."""
+    ids = await _report_recipients()
+    seen = set(ids)
+    if assigned_user_id:
+        for s in await db.bot_subscribers.find({'user_id': assigned_user_id}).to_list(10):
+            cid = s.get('telegram_chat_id')
+            if cid and cid not in seen:
+                seen.add(cid)
+                ids.append(cid)
+    return ids
+
+
+async def _task_reminder_loop():
+    """Каждые 5 минут: по задачам (кроме напоминаний об оплате), у которых
+    due_date == сегодня и наступило назначенное время (due_time, по умолчанию
+    09:00), отправляет одно сообщение в Telegram и ставит notified_at, чтобы
+    не повторяться. 'Поставил задачу на 11:00 — в 11:00 пришло.'"""
+    await asyncio.sleep(40)
+    while True:
+        try:
+            now = datetime.now(_REPORT_TZ)
+            today_str = now.strftime('%Y-%m-%d')
+            now_hm = now.strftime('%H:%M')
+
+            due = await db.tasks.find({
+                'status': 'pending',
+                'type': {'$ne': 'payment_reminder'},
+                'due_date': {'$gt': '', '$lte': today_str},
+                '$or': [{'notified_at': None}, {'notified_at': {'$exists': False}}],
+            }, {'_id': 0}).to_list(300)
+
+            for t in due:
+                tdate = (t.get('due_date') or '')[:10]
+                ttime = (t.get('due_time') or '').strip() or '09:00'
+                # сегодняшние — по времени; вчерашние и раньше (просроченные) —
+                # сразу при ближайшем проходе.
+                if tdate == today_str and ttime > now_hm:
+                    continue
+
+                title = t.get('title') or t.get('description') or 'Задача'
+                when = f"{tdate} {ttime}".strip()
+                overdue = tdate < today_str
+                head = "📌 <b>Задача" + (" (просрочена)" if overdue else " на сегодня") + "</b>"
+                text = f"{head}\n{_esc(when)} — {_esc(title)}"
+
+                delivery = [await send_telegram_a2info(cid, text)
+                            for cid in await _task_recipients(t.get('assigned_user_id'))]
+                if any(d.get('ok') for d in delivery) or not any(_DEFAULT_REPORT_CHAT_IDS):
+                    await db.tasks.update_one(
+                        {'id': t['id']}, {'$set': {'notified_at': now.isoformat()}})
+        except Exception as e:
+            logger.error(f'[task reminders] {e}')
+        await asyncio.sleep(300)
 
 
 async def _report_scheduler():
@@ -979,6 +1015,7 @@ async def _deferred_init():
     asyncio.create_task(_check_stale_managers())
     asyncio.create_task(_sync_payment_reminders())
     asyncio.create_task(_report_scheduler())
+    asyncio.create_task(_task_reminder_loop())
 
     # Debug: print last 30 carriers to inspect field names
     try:
@@ -2600,7 +2637,12 @@ async def create_task(payload: TaskCreate, background_tasks: BackgroundTasks,
 
 @api_router.put("/tasks/{task_id}", response_model=Task)
 async def update_task(task_id: str, payload: TaskUpdate, background_tasks: BackgroundTasks):
-    await db.tasks.update_one({"id": task_id}, {"$set": payload.dict(exclude_none=True)})
+    changes = payload.dict(exclude_none=True)
+    # Перенесли срок/время задачи — сбрасываем отметку об отправке в Telegram,
+    # чтобы уведомление пришло заново к новому времени.
+    if "due_date" in changes or "due_time" in changes:
+        changes["notified_at"] = None
+    await db.tasks.update_one({"id": task_id}, {"$set": changes})
     doc = await db.tasks.find_one({"id": task_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")
@@ -2681,7 +2723,6 @@ async def run_morning_briefing_now(current_user: dict = Depends(require_director
         "ok": True,
         "loads": len(b.get("loads", [])),
         "unloads": len(b.get("unloads", [])),
-        "tasks": len(b.get("tasks", [])),
         "sent": result.get("sent", 0),
         "targets": result.get("targets", 0),
         "delivery": result.get("delivery", []),
