@@ -369,7 +369,7 @@ async def _trash_purge_loop():
 #   env A2_INFO_ONLY_CHAT_IDS → app_settings.a2info_only_chat_ids →
 #   _DEFAULT_ONLY_CHAT_IDS. Чтобы открыть бота всем — записать в app_settings
 #   пустую строку явно (ключ есть, value='').
-_DEFAULT_ONLY_CHAT_IDS = ['8994243991']
+_DEFAULT_ONLY_CHAT_IDS = ['558556324']  # chat_id директора (не ID бота!)
 _only_chat_cache: dict = {'ids': None, 'ts': 0.0}
 
 
