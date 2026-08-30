@@ -1016,46 +1016,73 @@ async def _task_reminder_loop():
         await asyncio.sleep(300)
 
 
-async def _report_scheduler():
-    sent_today: set = set()
+async def _keepalive_loop():
+    """Пинг самого себя каждые ~13 минут — не даёт бесплатному дино Render
+    уснуть, пока он работает (иначе вечерние рассылки без трафика не идут).
+    Разбудить уже уснувший дино не может — для этого нужен внешний пингер."""
+    import httpx
+    base = os.environ.get('SELF_URL', 'https://logistics-crm-backend.onrender.com').rstrip('/')
     while True:
-        now = datetime.now(_REPORT_TZ)
-        key_day = now.strftime('%Y-%m-%d')
-
+        await asyncio.sleep(780)
         try:
-            # 09:00 по Минску — утренняя сводка (загрузки/выгрузки на сегодня
-            # + задачи на сегодня, не связанные с оплатой).
-            if now.hour == 9 and now.minute < 5 and f'morning-{key_day}' not in sent_today:
-                await send_morning_briefing()
-                sent_today.add(f'morning-{key_day}')
+            async with httpx.AsyncClient() as _c:
+                await _c.get(f'{base}/health', timeout=10)
+        except Exception:
+            pass
 
-            if now.hour == _REPORT_HOUR and now.minute < 5 and f'daily-{key_day}' not in sent_today:
-                await send_scheduled_report('daily')
-                sent_today.add(f'daily-{key_day}')
 
-            if now.weekday() == 4 and now.hour == _REPORT_HOUR and now.minute < 5 and f'weekly-{key_day}' not in sent_today:
-                await send_scheduled_report('weekly')
-                sent_today.add(f'weekly-{key_day}')
+async def _report_already_sent(period: str, not_before: datetime) -> bool:
+    """Есть ли уже отчёт этого типа, сформированный не раньше not_before.
+    Дедуп через коллекцию reports — переживает рестарт и «сон» Render."""
+    return bool(await db.reports.find_one(
+        {'period': period, 'generated_at': {'$gte': not_before.isoformat()}}, {'_id': 1}))
 
-            # Конец месяца / квартала / года — завтра уже другой месяц.
-            tomorrow = now + timedelta(days=1)
-            month_end = now.hour == _REPORT_HOUR and now.minute < 5 and tomorrow.month != now.month
-            if month_end and f'monthly-{key_day}' not in sent_today:
-                await send_scheduled_report('monthly')
-                sent_today.add(f'monthly-{key_day}')
-            # Конец квартала — последний день марта/июня/сентября/декабря.
-            if month_end and now.month in (3, 6, 9, 12) and f'quarterly-{key_day}' not in sent_today:
-                await send_scheduled_report('quarterly')
-                sent_today.add(f'quarterly-{key_day}')
-            # Конец года — 31 декабря.
-            if month_end and tomorrow.year != now.year and f'yearly-{key_day}' not in sent_today:
-                await send_scheduled_report('yearly')
-                sent_today.add(f'yearly-{key_day}')
+
+async def _report_scheduler():
+    """Терпимо к «сну» Render: окна расширены, дедуп по факту отправки, а не
+    по точной минуте. Если сервис проснулся позже 21:00 — отчёт всё равно
+    уйдёт; недельный, пропущенный в пятницу, досылается в субботу."""
+    while True:
+        try:
+            now = datetime.now(_REPORT_TZ)
+            key_day = now.strftime('%Y-%m-%d')
+            midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
+
+            # Утренняя сводка — с 09:00 до полудня (маркер в app_settings,
+            # чтобы не повторять после рестарта).
+            if 9 <= now.hour < 12:
+                m = await db.app_settings.find_one({'key': 'last_morning_briefing'})
+                if (m or {}).get('value') != key_day:
+                    await send_morning_briefing()
+                    await db.app_settings.update_one(
+                        {'key': 'last_morning_briefing'},
+                        {'$set': {'key': 'last_morning_briefing', 'value': key_day}}, upsert=True)
+
+            # Вечерние отчёты — с 21:00 и до конца суток.
+            if now.hour >= _REPORT_HOUR:
+                if not await _report_already_sent('daily', noon):
+                    await send_scheduled_report('daily')
+
+                # Недельный: пятница вечером; суббота — досылка, если пропустили.
+                if now.weekday() in (4, 5):
+                    friday = (now - timedelta(days=now.weekday() - 4)).replace(
+                        hour=0, minute=0, second=0, microsecond=0)
+                    if now >= friday.replace(hour=_REPORT_HOUR) and \
+                            not await _report_already_sent('weekly', friday):
+                        await send_scheduled_report('weekly')
+
+                # Конец месяца/квартала/года — в последний день вечером.
+                tomorrow = now + timedelta(days=1)
+                if tomorrow.month != now.month:
+                    if not await _report_already_sent('monthly', midnight):
+                        await send_scheduled_report('monthly')
+                    if now.month in (3, 6, 9, 12) and not await _report_already_sent('quarterly', midnight):
+                        await send_scheduled_report('quarterly')
+                    if tomorrow.year != now.year and not await _report_already_sent('yearly', midnight):
+                        await send_scheduled_report('yearly')
         except Exception as e:
             logger.error(f'[report scheduler] {e}')
-
-        if len(sent_today) > 40:
-            sent_today.clear()
 
         await asyncio.sleep(300)
 
@@ -1103,6 +1130,7 @@ async def _deferred_init():
     asyncio.create_task(_sync_payment_reminders())
     asyncio.create_task(_report_scheduler())
     asyncio.create_task(_task_reminder_loop())
+    asyncio.create_task(_keepalive_loop())
 
     # Debug: print last 30 carriers to inspect field names
     try:
