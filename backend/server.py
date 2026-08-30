@@ -973,44 +973,54 @@ async def _task_recipients(assigned_user_id: Optional[str]) -> list:
     return ids
 
 
+async def _run_task_reminders() -> dict:
+    """Один проход: по задачам (кроме напоминаний об оплате) со сроком
+    <= сегодня, у которых наступило назначенное время (due_time, по
+    умолчанию 09:00) и notified_at пустой — отправляет одно сообщение в
+    Telegram и ставит notified_at."""
+    now = datetime.now(_REPORT_TZ)
+    today_str = now.strftime('%Y-%m-%d')
+    now_hm = now.strftime('%H:%M')
+    sent = 0
+    tried = 0
+
+    due = await db.tasks.find({
+        'status': 'pending',
+        'type': {'$ne': 'payment_reminder'},
+        'due_date': {'$gt': '', '$lte': today_str},
+        '$or': [{'notified_at': None}, {'notified_at': {'$exists': False}}],
+    }, {'_id': 0}).to_list(300)
+
+    for t in due:
+        tdate = (t.get('due_date') or '')[:10]
+        ttime = (t.get('due_time') or '').strip() or '09:00'
+        # сегодняшние — по времени; вчерашние и раньше (просроченные) —
+        # сразу при ближайшем проходе.
+        if tdate == today_str and ttime > now_hm:
+            continue
+
+        tried += 1
+        title = t.get('title') or t.get('description') or 'Задача'
+        when = f"{tdate} {ttime}".strip()
+        overdue = tdate < today_str
+        head = "📌 <b>Задача" + (" (просрочена)" if overdue else " на сегодня") + "</b>"
+        text = f"{head}\n{_esc(when)} — {_esc(title)}"
+
+        delivery = [await send_telegram_a2info(cid, text)
+                    for cid in await _task_recipients(t.get('assigned_user_id'))]
+        if any(d.get('ok') for d in delivery) or not any(_DEFAULT_REPORT_CHAT_IDS):
+            await db.tasks.update_one(
+                {'id': t['id']}, {'$set': {'notified_at': now.isoformat()}})
+            sent += 1
+    return {'due': len(due), 'tried': tried, 'sent': sent}
+
+
 async def _task_reminder_loop():
-    """Каждые 5 минут: по задачам (кроме напоминаний об оплате), у которых
-    due_date == сегодня и наступило назначенное время (due_time, по умолчанию
-    09:00), отправляет одно сообщение в Telegram и ставит notified_at, чтобы
-    не повторяться. 'Поставил задачу на 11:00 — в 11:00 пришло.'"""
+    """'Поставил задачу на 11:00 — в 11:00 пришло.' Раз в 5 минут."""
     await asyncio.sleep(40)
     while True:
         try:
-            now = datetime.now(_REPORT_TZ)
-            today_str = now.strftime('%Y-%m-%d')
-            now_hm = now.strftime('%H:%M')
-
-            due = await db.tasks.find({
-                'status': 'pending',
-                'type': {'$ne': 'payment_reminder'},
-                'due_date': {'$gt': '', '$lte': today_str},
-                '$or': [{'notified_at': None}, {'notified_at': {'$exists': False}}],
-            }, {'_id': 0}).to_list(300)
-
-            for t in due:
-                tdate = (t.get('due_date') or '')[:10]
-                ttime = (t.get('due_time') or '').strip() or '09:00'
-                # сегодняшние — по времени; вчерашние и раньше (просроченные) —
-                # сразу при ближайшем проходе.
-                if tdate == today_str and ttime > now_hm:
-                    continue
-
-                title = t.get('title') or t.get('description') or 'Задача'
-                when = f"{tdate} {ttime}".strip()
-                overdue = tdate < today_str
-                head = "📌 <b>Задача" + (" (просрочена)" if overdue else " на сегодня") + "</b>"
-                text = f"{head}\n{_esc(when)} — {_esc(title)}"
-
-                delivery = [await send_telegram_a2info(cid, text)
-                            for cid in await _task_recipients(t.get('assigned_user_id'))]
-                if any(d.get('ok') for d in delivery) or not any(_DEFAULT_REPORT_CHAT_IDS):
-                    await db.tasks.update_one(
-                        {'id': t['id']}, {'$set': {'notified_at': now.isoformat()}})
+            await _run_task_reminders()
         except Exception as e:
             logger.error(f'[task reminders] {e}')
         await asyncio.sleep(300)
@@ -2891,6 +2901,14 @@ async def sync_payment_reminders_now(notify: bool = True, current_user: dict = D
         "sent": note.get("sent", 0),
         "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
     }
+
+
+@api_router.post("/tasks/run_reminders")
+async def run_task_reminders_now(current_user: dict = Depends(require_director)):
+    """Прогнать рассылку напоминаний по задачам (по времени) прямо сейчас —
+    на случай, если фоновый цикл пропустил из-за «сна» сервера."""
+    res = await _run_task_reminders()
+    return {"ok": True, **res, "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN"))}
 
 
 _ORDERS_LIGHT_PROJECTION = {
