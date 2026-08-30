@@ -2814,10 +2814,10 @@ async def get_bot_subscription(current_user: dict = Depends(_require_user)):
 
 
 @api_router.get("/bot/diag")
-async def bot_diag():
-    """Диагностика рассылки (без авторизации, ничего секретного не отдаёт):
-    настроен ли токен, приватный ли режим, сколько получателей, сколько
-    напоминаний по задачам сейчас 'к отправке'."""
+async def bot_diag(probe: int = 0, current_user: dict = Depends(require_director)):
+    """Диагностика рассылки А2 Инфо СРМ: токен, приватный режим, число
+    получателей, сколько напоминаний по задачам 'к отправке'. ?probe=1 —
+    отправить тестовое сообщение первому получателю и показать ответ Telegram."""
     now = datetime.now(_REPORT_TZ)
     today_str = now.strftime('%Y-%m-%d')
     now_hm = now.strftime('%H:%M')
@@ -2830,19 +2830,17 @@ async def bot_diag():
     ready = sum(1 for t in due
                 if not ((t.get('due_date') or '')[:10] == today_str
                         and ((t.get('due_time') or '').strip() or '09:00') > now_hm))
-    # тестовая отправка, чтобы увидеть реальный ответ Telegram
-    probe = None
-    if recips:
-        probe = await send_telegram_a2info(recips[0], "🩺 Проверка связи А2 Инфо СРМ")
-    return {
+    result = {
         "server_time_minsk": now.isoformat(),
         "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
         "private": bool(await _get_only_chat_ids()),
         "recipients_count": len(recips),
         "task_reminders_pending": len(due),
         "task_reminders_ready_now": ready,
-        "probe": probe,
     }
+    if probe and recips:
+        result["probe"] = await send_telegram_a2info(recips[0], "🩺 Проверка связи А2 Инфо СРМ")
+    return result
 
 
 @api_router.get("/bot/private")
