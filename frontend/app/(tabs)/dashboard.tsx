@@ -11,13 +11,16 @@ const monthLabel = (ym: string) => { if(!ym) return ym; const [y,m] = ym.split('
 const fmt = (n: number) => Math.round(n||0).toLocaleString('ru-RU');
 const fmtShort = (n: number) => n>=1e6 ? (n/1e6).toFixed(1)+'M' : n>=1e3 ? Math.round(n/1e3)+'K' : String(Math.round(n));
 
-const PERIOD_OPTIONS = [
-  { id:'all', label:'Все время' },
-  { id:'2026-06', label:'Июнь 2026' }, { id:'2026-05', label:'Май 2026' },
-  { id:'2026-04', label:'Апр 2026' },  { id:'2026-03', label:'Мар 2026' },
-  { id:'2026-02', label:'Фев 2026' },  { id:'2026-01', label:'Янв 2026' },
-  { id:'2025-12', label:'Дек 2025' },  { id:'2025-11', label:'Ноя 2025' },
-];
+const PERIOD_OPTIONS = (() => {
+  const now = new Date();
+  const opts = [{ id: 'all', label: 'Все время' }];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    opts.push({ id: ym, label: monthLabel(ym) });
+  }
+  return opts;
+})();
 
 const STATUS_COLORS: Record<string, { color: string; bg: string; label: string }> = {
   new:         { color:'#1366F0', bg:'rgba(19,102,240,0.12)',  label:'Новая' },
