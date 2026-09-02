@@ -5907,14 +5907,18 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             raise HTTPException(404, "Клиент не найден")
         cp_name = payload.counterparty_name or cp_doc.get("name", "")
 
+        # Заявки, оплаченные клиентом наличными (client_cash), вне системы
+        # ПП-учёта — по ним никогда не будет записи в client_pp_ledger,
+        # поэтому в акт сверки (построенный на этом журнале) их не включаем,
+        # иначе они всегда будут висеть как "начислено, но не оплачено".
         orders = await db.orders.find({
             "$and": [{"$or": [{"client_id": cid}, {"client_name": cp_name}]}, _order_in_period_filter(date_from, date_to)],
-            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"}, "client_cash": {"$ne": True},
         }).sort("load_date", 1).to_list(10000)
 
         orders_before = await db.orders.find({
             "$and": [{"$or": [{"client_id": cid}, {"client_name": cp_name}]}, _order_before_period_filter(date_from)],
-            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"}, "client_cash": {"$ne": True},
         }, {"_id": 0, "id": 1, "client_rate": 1, "client_paid": 1}).to_list(10000)
 
         # Оплаты клиента для акта сверки ведутся в отдельном, накапливаемом
@@ -5950,14 +5954,18 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             raise HTTPException(404, "Перевозчик не найден")
         cp_name = payload.counterparty_name or cp_doc.get("company_name", cp_doc.get("name", ""))
 
+        # Заявки, оплаченные перевозчику наличными (carrier_cash), вне системы
+        # ПП-учёта — по ним никогда не будет записи в carrier_pp_ledger,
+        # поэтому в акт сверки (построенный на этом журнале) их не включаем,
+        # иначе они всегда будут висеть как "начислено, но не оплачено".
         orders = await db.orders.find({
             "$and": [{"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}]}, _order_in_period_filter(date_from, date_to)],
-            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"}, "carrier_cash": {"$ne": True},
         }).sort("load_date", 1).to_list(10000)
 
         orders_before = await db.orders.find({
             "$and": [{"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}]}, _order_before_period_filter(date_from)],
-            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
+            "deleted": {"$ne": True}, "status": {"$ne": "cancelled"}, "carrier_cash": {"$ne": True},
         }, {"_id": 0, "id": 1, "carrier_rate": 1, "carrier_paid": 1}).to_list(10000)
 
         # Наши оплаты перевозчику для акта сверки ведутся в отдельном,
