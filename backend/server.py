@@ -253,6 +253,9 @@ async def ensure_indexes():
     await db.client_pp_ledger.create_index("client_id", background=True)
     await db.client_pp_ledger.create_index([("pp_date", 1)], background=True)
 
+    await db.carrier_pp_ledger.create_index("carrier_id", background=True)
+    await db.carrier_pp_ledger.create_index([("pp_date", 1)], background=True)
+
     try:
         await db.users.create_index("login", unique=True, background=True)
     except Exception as e:
@@ -5829,6 +5832,40 @@ async def delete_client_pp_entry(client_id: str, entry_id: str):
     return {"ok": True, "deleted": result.deleted_count}
 
 
+@api_router.get("/carrier_pp_ledger/{carrier_id}")
+async def get_carrier_pp_ledger(carrier_id: str):
+    entries = await db.carrier_pp_ledger.find(
+        {"carrier_id": carrier_id}, {"_id": 0}
+    ).sort("pp_date", 1).to_list(1000)
+    return {"entries": entries}
+
+
+@api_router.post("/carrier_pp_ledger/{carrier_id}")
+async def add_carrier_pp_entry(carrier_id: str, payload: PPLedgerEntry):
+    carrier = await db.carriers.find_one({"id": carrier_id})
+    if not carrier:
+        raise HTTPException(404, "Перевозчик не найден")
+
+    entry = {
+        "id": str(uuid.uuid4()),
+        "carrier_id": carrier_id,
+        "carrier_name": carrier.get("company_name", carrier.get("name", "")),
+        "pp_number": payload.pp_number,
+        "pp_date": payload.pp_date,
+        "amount": payload.amount,
+        "created_at": now_iso(),
+    }
+    await db.carrier_pp_ledger.insert_one(dict(entry))
+    entry.pop("_id", None)
+    return entry
+
+
+@api_router.delete("/carrier_pp_ledger/{carrier_id}/{entry_id}")
+async def delete_carrier_pp_entry(carrier_id: str, entry_id: str):
+    result = await db.carrier_pp_ledger.delete_one({"id": entry_id, "carrier_id": carrier_id})
+    return {"ok": True, "deleted": result.deleted_count}
+
+
 @api_router.post("/reconciliation/generate")
 async def generate_reconciliation(payload: ReconciliationRequest):
     now = datetime.now(timezone.utc)
@@ -5918,62 +5955,31 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
         }).sort("load_date", 1).to_list(10000)
 
-        payments = await db.payments_out.find({
-            "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
-            "date": {"$gte": date_from, "$lte": date_to},
-        }).sort("date", 1).to_list(10000)
-
         orders_before = await db.orders.find({
             "$and": [{"$or": [{"carrier_id": cid}, {"carrier_name": cp_name}]}, _order_before_period_filter(date_from)],
             "deleted": {"$ne": True}, "status": {"$ne": "cancelled"},
         }, {"_id": 0, "id": 1, "carrier_rate": 1, "carrier_paid": 1}).to_list(10000)
-        pmts_before = await db.payments_out.find({
-            "$or": [{"carrier_id": cid}, {"carrier_name": cp_name}],
-            "date": {"$lt": date_from},
-        }, {"_id": 0, "amount": 1, "order_id": 1}).to_list(10000)
 
-        paid_before_order_ids = {p.get("order_id") for p in pmts_before if p.get("order_id")}
-        paid_before = (
-            sum(float(o.get("carrier_rate") or 0) for o in orders_before
-                if o.get("carrier_paid") and o.get("id") not in paid_before_order_ids)
-            + sum(float(p.get("amount") or 0) for p in pmts_before if not p.get("order_id"))
-        )
+        # Наши оплаты перевозчику для акта сверки ведутся в отдельном,
+        # накапливаемом журнале carrier_pp_ledger — независимо от заявок,
+        # чтобы платежи не терялись/не задваивались при правках заявок
+        # (см. клиентскую ветку выше — тот же случай).
+        ledger_before = await db.carrier_pp_ledger.find({
+            "carrier_id": cid, "pp_date": {"$lt": date_from},
+        }, {"_id": 0}).to_list(10000)
+        paid_before = sum(float(e.get("amount") or 0) for e in ledger_before)
         opening_balance = sum(float(o.get("carrier_rate") or 0) for o in orders_before) - paid_before
 
         # Табличная шапка в шаблоне: левая колонка — под именем контрагента
         # (его платежи, ПП и своя дата), правая — под нашим ИП (наши заявки).
-        paid_order_ids = {p.get("order_id") for p in payments if p.get("order_id")}
-        raw_entries = []
-        for o in orders:
-            if not o.get("carrier_paid") or o.get("id") in paid_order_ids:
-                continue
-            raw_entries.append({
-                "pp": (o.get("carrier_pp_number") or "").strip(),
-                "date": o.get("carrier_pp_date") or o.get("carrier_paid_date") or o.get("load_date") or "",
-                "sum": float(o.get("carrier_rate") or 0),
-                "order_number": o.get("order_number", ""),
-            })
-        for p in payments:
-            raw_entries.append({"pp": (p.get("pp_number") or "").strip(), "date": p.get("date") or "", "sum": float(p.get("amount") or 0), "order_number": p.get("order_number", "")})
-
-        # Одна платёжка может закрывать несколько заявок сразу — если номер
-        # ПП совпадает, схлопываем в одну строку с суммарной суммой
-        # независимо от даты (см. клиентскую ветку выше — тот же случай).
-        merged: dict = {}
-        loose = []
-        for e in raw_entries:
-            if e["pp"]:
-                key = e["pp"]
-                row = merged.setdefault(key, {"pp": e["pp"], "date": e["date"], "sum": 0.0})
-                if e["date"] and (not row["date"] or e["date"] < row["date"]):
-                    row["date"] = e["date"]
-                row["sum"] += e["sum"]
-            else:
-                loose.append(e)
-        left_entries = [{"date": v["date"], "doc": f"ПП {v['pp']} от {_fmt(v['date'])}", "sum": v["sum"]} for v in merged.values()]
-        left_entries += [{"date": e["date"], "doc": (f"Оплата (заявка {e['order_number']})" if e["order_number"] else "Оплата"), "sum": e["sum"]} for e in loose]
-        left_entries.sort(key=lambda e: e["date"])
-        left_rows = [{"date": _fmt(e["date"]), "doc": e["doc"], "sum": f"{e['sum']:.2f}"} for e in left_entries]
+        ledger_entries = await db.carrier_pp_ledger.find({
+            "carrier_id": cid, "pp_date": {"$gte": date_from, "$lte": date_to},
+        }, {"_id": 0}).sort("pp_date", 1).to_list(10000)
+        left_rows = [
+            {"date": _fmt(e.get("pp_date")), "doc": f"ПП № {e.get('pp_number', '')}", "sum": f"{float(e.get('amount') or 0):.2f}"}
+            for e in ledger_entries
+        ]
+        total_paid = sum(float(e.get("amount") or 0) for e in ledger_entries)
 
         right_rows = [
             {"date": _fmt(o.get("load_date")), "doc": o.get("order_number", ""),
@@ -5981,7 +5987,6 @@ async def generate_reconciliation(payload: ReconciliationRequest):
             for o in orders
         ]
         total_charged = sum(float(o.get("carrier_rate") or 0) for o in orders)
-        total_paid    = sum(e["sum"] for e in left_entries)
 
     closing_balance = opening_balance + total_charged - total_paid
     # closing_balance > 0 значит "начислено больше, чем оплачено" — для клиента
