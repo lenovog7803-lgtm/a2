@@ -3918,20 +3918,75 @@ async def unlock_kudir_entry(entry_id: str, current_user: dict = Depends(require
     return {'ok': True}
 
 
+_kudir_resync_tasks: set = set()
+
+
+async def _run_kudir_resync(order_ids: list):
+    await db.app_settings.update_one(
+        {'key': 'kudir_resync'},
+        {'$set': {'key': 'kudir_resync', 'status': 'running', 'total': len(order_ids),
+                  'done': 0, 'errors': 0, 'started_at': now_iso(), 'finished_at': None}},
+        upsert=True)
+    done = errors = 0
+    for oid in order_ids:
+        try:
+            await _sync_kudir_row(oid, 'client')
+            await _sync_kudir_row(oid, 'carrier')
+        except Exception as e:
+            errors += 1
+            logger.error(f'[kudir resync] order {oid}: {e}')
+        done += 1
+        if done % 40 == 0:
+            await db.app_settings.update_one(
+                {'key': 'kudir_resync'}, {'$set': {'done': done, 'errors': errors}})
+    await db.app_settings.update_one(
+        {'key': 'kudir_resync'},
+        {'$set': {'status': 'done', 'done': done, 'errors': errors, 'finished_at': now_iso()}})
+    try:
+        await manager.broadcast({'type': 'kudir_resynced', 'orders_processed': done})
+    except Exception:
+        pass
+
+
 @api_router.post("/kudir/resync")
 async def resync_kudir(current_user: dict = Depends(require_director)):
-    """One-off sweep over every live order: re-runs _sync_kudir_row for both
-    sides, so rule changes (client-cash rows dropped, carrier-cash cost not
-    deducted, «Акт б/н» wording, cross-order PP grouping) apply to rows
-    created before those rules existed — not only to orders touched going
-    forward. Hand-corrected rows (manually_edited) are left untouched."""
-    orders = await db.orders.find(
-        {'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}, {'_id': 1, 'id': 1}
-    ).to_list(20000)
-    for o in orders:
-        await _sync_kudir_row(o['id'], 'client')
-        await _sync_kudir_row(o['id'], 'carrier')
-    return {'ok': True, 'orders_processed': len(orders)}
+    """Kicks off a background sweep that re-runs _sync_kudir_row for both
+    sides of every order that could own a book row, so rule changes
+    (client-cash rows dropped, carrier-cash cost not deducted, «Акт б/н»
+    wording, cross-order PP grouping) reach rows created before those rules
+    existed. Hand-corrected rows (manually_edited) are left untouched.
+
+    Runs in the background — sweeping thousands of orders one _sync_kudir_row
+    at a time blows past the 25 s client timeout — and reports progress via
+    GET /kudir/resync/status."""
+    existing = await db.app_settings.find_one({'key': 'kudir_resync'})
+    if existing and existing.get('status') == 'running':
+        return {'ok': True, 'started': False, 'already_running': True,
+                'done': existing.get('done', 0), 'total': existing.get('total', 0)}
+
+    # Only orders that could actually own a KUDiR row — a paid PP, a payments
+    # array, or a cash flag. The rest can't change, so skip them.
+    q = {
+        'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
+        '$or': [
+            {'client_pp_number': {'$nin': [None, '']}},
+            {'carrier_pp_number': {'$nin': [None, '']}},
+            {'client_payments': {'$exists': True, '$ne': []}},
+            {'carrier_payments': {'$exists': True, '$ne': []}},
+            {'client_cash': True}, {'carrier_cash': True},
+        ],
+    }
+    order_ids = [o['id'] for o in await db.orders.find(q, {'_id': 0, 'id': 1}).to_list(50000)]
+    t = asyncio.create_task(_run_kudir_resync(order_ids))
+    _kudir_resync_tasks.add(t)
+    t.add_done_callback(_kudir_resync_tasks.discard)
+    return {'ok': True, 'started': True, 'orders_queued': len(order_ids)}
+
+
+@api_router.get("/kudir/resync/status")
+async def resync_kudir_status(current_user: dict = Depends(require_director)):
+    m = await db.app_settings.find_one({'key': 'kudir_resync'}, {'_id': 0, 'key': 0})
+    return m or {'status': 'idle'}
 
 
 @api_router.get("/kudir/export")
