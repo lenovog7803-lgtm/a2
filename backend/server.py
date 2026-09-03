@@ -6367,6 +6367,26 @@ async def create_backup_manual(current_user: dict = Depends(require_director)):
     return {"ok": True}
 
 
+@api_router.get("/backup/{backup_id}/peek")
+async def peek_backup_docs(backup_id: str, collection: str, field: str = "id",
+                           value: str = "", current_user: dict = Depends(require_director)):
+    """Read-only: pull matching docs out of one backup's snapshot without a
+    destructive full restore. Used to recover a single field someone cleared
+    by accident (e.g. a PP number, which isn't in order_logs)."""
+    if collection not in _BACKUP_COLLECTIONS:
+        raise HTTPException(400, f"collection must be one of {_BACKUP_COLLECTIONS}")
+    doc = await db.backups.find_one({"id": backup_id}, {"_id": 0, f"collections.{collection}": 1,
+                                                        "created_at": 1, "reason": 1})
+    if not doc:
+        raise HTTPException(404, "Бэкап не найден")
+    rows = (doc.get("collections", {}) or {}).get(collection, []) or []
+    if value:
+        rows = [r for r in rows if str(r.get(field, "")) == value
+                or value.lower() in str(r.get(field, "")).lower()]
+    return {"backup_id": backup_id, "created_at": doc.get("created_at"),
+            "reason": doc.get("reason"), "collection": collection, "matched": len(rows), "docs": rows[:50]}
+
+
 class RestoreRequest(BaseModel):
     confirm_word: str
 
