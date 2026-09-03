@@ -3228,9 +3228,11 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     # payment, but the "дозаполнить ПП" screen for already-paid orders saves
     # through this generic endpoint instead — so a PP number/date filled in
     # later (or a payment unmarked) here needs to trigger the same
-    # create/remove logic. Safe to call on every save; it just recomputes.
-    await _sync_kudir_row(order_id, "client")
-    await _sync_kudir_row(order_id, "carrier")
+    # create/remove logic. Deferred to a background task so a plain field
+    # save (e.g. the carrier act number) returns immediately instead of
+    # waiting on the book recompute — which can be slow under DB load.
+    background_tasks.add_task(_sync_kudir_row, order_id, "client")
+    background_tasks.add_task(_sync_kudir_row, order_id, "carrier")
     background_tasks.add_task(_bg_push_order, doc)
     background_tasks.add_task(_bg_cal_update, doc)
     await manager.broadcast({"type": "order_updated", "order_id": order_id, "patch": update_data})
@@ -3925,10 +3927,19 @@ async def _run_kudir_resync(order_ids: list):
     await db.app_settings.update_one(
         {'key': 'kudir_resync'},
         {'$set': {'key': 'kudir_resync', 'status': 'running', 'total': len(order_ids),
-                  'done': 0, 'errors': 0, 'started_at': now_iso(), 'finished_at': None}},
+                  'done': 0, 'errors': 0, 'cancel': False,
+                  'started_at': now_iso(), 'finished_at': None}},
         upsert=True)
     done = errors = 0
     for oid in order_ids:
+        if done % 10 == 0:
+            st = await db.app_settings.find_one({'key': 'kudir_resync'}, {'_id': 0, 'cancel': 1})
+            if st and st.get('cancel'):
+                await db.app_settings.update_one(
+                    {'key': 'kudir_resync'},
+                    {'$set': {'status': 'cancelled', 'done': done, 'errors': errors,
+                              'cancel': False, 'finished_at': now_iso()}})
+                return
         try:
             await _sync_kudir_row(oid, 'client')
             await _sync_kudir_row(oid, 'carrier')
@@ -3936,9 +3947,13 @@ async def _run_kudir_resync(order_ids: list):
             errors += 1
             logger.error(f'[kudir resync] order {oid}: {e}')
         done += 1
-        if done % 40 == 0:
+        if done % 25 == 0:
             await db.app_settings.update_one(
                 {'key': 'kudir_resync'}, {'$set': {'done': done, 'errors': errors}})
+        # Throttle: this is a one-off background migration, not something the
+        # user waits on — yield the DB/event loop to interactive requests so
+        # saving an order stays snappy while it runs.
+        await asyncio.sleep(0.08)
     await db.app_settings.update_one(
         {'key': 'kudir_resync'},
         {'$set': {'status': 'done', 'done': done, 'errors': errors, 'finished_at': now_iso()}})
@@ -3987,6 +4002,15 @@ async def resync_kudir(current_user: dict = Depends(require_director)):
 async def resync_kudir_status(current_user: dict = Depends(require_director)):
     m = await db.app_settings.find_one({'key': 'kudir_resync'}, {'_id': 0, 'key': 0})
     return m or {'status': 'idle'}
+
+
+@api_router.post("/kudir/resync/cancel")
+async def cancel_kudir_resync(current_user: dict = Depends(require_director)):
+    """Signals a running background resync to stop at its next checkpoint
+    (every 10 orders). No-op if nothing is running."""
+    await db.app_settings.update_one(
+        {'key': 'kudir_resync'}, {'$set': {'cancel': True}}, upsert=True)
+    return {'ok': True}
 
 
 @api_router.get("/kudir/export")
