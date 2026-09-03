@@ -3276,11 +3276,20 @@ async def _create_kudir_income_row(order: dict):
     import re as _re
     # Оплата от клиента налом (client_cash) в КУДиР не отражается вовсе.
     if order.get('client_cash'):
+        await db.kudir_entries.delete_many({
+            'row_type': 'income', 'order_ids': order['id'], 'manually_edited': {'$ne': True}})
         return
     if not order.get('client_pp_number') or not order.get('client_paid_date'):
         return
     date_str = order['client_paid_date'][:10]
     group = await _kudir_payment_group(order, 'client_pp_number', 'client_paid_date')
+    # Заявки этой же группы ПП, оплаченные клиентом налом, в доход не идут —
+    # выкидываем их до подсчёта суммы/маржи.
+    group = [o for o in group if not o.get('client_cash')]
+    if not group:
+        await db.kudir_entries.delete_many({
+            'row_type': 'income', 'order_ids': order['id'], 'manually_edited': {'$ne': True}})
+        return
     group_ids = [o['id'] for o in group]
     order_numbers = sorted(o.get('order_number') or '' for o in group)
     orders_label = ', '.join(n for n in order_numbers if n)
@@ -3454,9 +3463,12 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
 
     import re as _re
     # Оплата от клиента налом в КУДиР не отражается — снимаем строки этой
-    # заявки, если что-то осталось от прежнего безналичного состояния.
+    # заявки (в т.ч. групповые, где она соседствует с другими), если что-то
+    # осталось от прежнего безналичного состояния. `order_ids` скаляром —
+    # это match-по-вхождению, ловит и одиночные, и групповые строки.
     if order.get('client_cash'):
-        await db.kudir_entries.delete_many({'row_type': 'income', 'order_ids': [order['id']]})
+        await db.kudir_entries.delete_many({
+            'row_type': 'income', 'order_ids': order['id'], 'manually_edited': {'$ne': True}})
         return
     payments = [p for p in (order.get('client_payments') or [])
                 if not str(p.get('id', '')).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
@@ -3492,6 +3504,8 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
                 'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
             }, {'_id': 0}).to_list(50)
             for sib in siblings:
+                if sib.get('client_cash'):
+                    continue  # налом от клиента — в доход не идёт
                 for sp in (sib.get('client_payments') or []):
                     if (sp.get('pp_number') or '').strip() == pp_number and (sp.get('pp_date') or '')[:10] == date_str:
                         members.append((sib, sp))
@@ -3906,15 +3920,17 @@ async def unlock_kudir_entry(entry_id: str, current_user: dict = Depends(require
 
 @api_router.post("/kudir/resync")
 async def resync_kudir(current_user: dict = Depends(require_director)):
-    """One-off sweep: re-runs _sync_kudir_rows_for_payments for every order
-    still on the payments-array format, so the cross-order PP+date grouping
-    added there applies to rows created before that logic existed instead of
-    only to orders touched going forward."""
+    """One-off sweep over every live order: re-runs _sync_kudir_row for both
+    sides, so rule changes (client-cash rows dropped, carrier-cash cost not
+    deducted, «Акт б/н» wording, cross-order PP grouping) apply to rows
+    created before those rules existed — not only to orders touched going
+    forward. Hand-corrected rows (manually_edited) are left untouched."""
     orders = await db.orders.find(
-        {'deleted': {'$ne': True}, 'client_payments': {'$exists': True, '$ne': []}}, {'_id': 0}
-    ).to_list(5000)
+        {'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}, {'_id': 1, 'id': 1}
+    ).to_list(20000)
     for o in orders:
-        await _sync_kudir_rows_for_payments(o, 'client')
+        await _sync_kudir_row(o['id'], 'client')
+        await _sync_kudir_row(o['id'], 'carrier')
     return {'ok': True, 'orders_processed': len(orders)}
 
 
