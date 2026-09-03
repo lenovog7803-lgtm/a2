@@ -760,6 +760,30 @@ async def build_report(period: str) -> dict:
         client_totals[n] = client_totals.get(n, 0) + float(o.get('client_rate') or 0)
     top_clients = sorted(client_totals.items(), key=lambda x: -x[1])[:5]
 
+    # Разбивка живых денег по контрагентам за период — из накопительных
+    # журналов ПП (client_pp_ledger / carrier_pp_ledger), а не из заявок:
+    # именно эти журналы кормят акты сверки, так что суммы совпадают с ними.
+    # Только для недельного/месячного/квартального отчёта.
+    income_breakdown: list = []
+    expense_breakdown: list = []
+    if period in ('weekly', 'monthly', 'quarterly'):
+        income_by_client: dict = {}
+        ci_entries = await db.client_pp_ledger.find(
+            {'pp_date': {'$gte': start_str, '$lt': end_excl_str}}, {'_id': 0}).to_list(20000)
+        for e in ci_entries:
+            name = e.get('client_name') or '—'
+            income_by_client[name] = income_by_client.get(name, 0) + float(e.get('amount') or 0)
+
+        expense_by_carrier: dict = {}
+        co_entries = await db.carrier_pp_ledger.find(
+            {'pp_date': {'$gte': start_str, '$lt': end_excl_str}}, {'_id': 0}).to_list(20000)
+        for e in co_entries:
+            name = e.get('carrier_name') or '—'
+            expense_by_carrier[name] = expense_by_carrier.get(name, 0) + float(e.get('amount') or 0)
+
+        income_breakdown = sorted(income_by_client.items(), key=lambda x: -x[1])
+        expense_breakdown = sorted(expense_by_carrier.items(), key=lambda x: -x[1])
+
     return {
         'id': str(uuid.uuid4()), 'period': period,
         'basis': 'created' if basis_field == 'created_at' else 'unload',
@@ -776,6 +800,8 @@ async def build_report(period: str) -> dict:
         'debtors_sum': sum(float(o.get('client_rate') or 0) for o in debtors),
         'calls_total': len(calls), 'calls_won': won,
         'top_clients': [[n, s] for n, s in top_clients],
+        'income_breakdown': [[n, s] for n, s in income_breakdown],
+        'expense_breakdown': [[n, s] for n, s in expense_breakdown],
         'tomorrow_date': tomorrow_str,
         'tomorrow_loads': tomorrow_loads,
         'tomorrow_unloads': tomorrow_unloads,
@@ -858,6 +884,22 @@ def format_report_text(report: dict) -> str:
         L.append("")
         L.append("🏆  <b>Топ клиентов</b>")
         L += [f"{i}.  {_esc(n)}  —  {_byn(s)}" for i, (n, s) in enumerate(top, 1)]
+
+    if period in ('weekly', 'monthly', 'quarterly'):
+        income = report.get('income_breakdown') or []
+        expense = report.get('expense_breakdown') or []
+        if income:
+            L.append(_REPORT_HR)
+            L.append(f"📥  <b>Пришло от клиентов</b>  ·  {_byn(sum(s for _, s in income))}")
+            L += [f"•  {_esc(n)}  —  {_byn(s)}" for n, s in income[:15]]
+            if len(income) > 15:
+                L.append(f"<i>…и ещё {len(income) - 15}</i>")
+        if expense:
+            L.append(_REPORT_HR)
+            L.append(f"📤  <b>Ушло перевозчикам</b>  ·  {_byn(sum(s for _, s in expense))}")
+            L += [f"•  {_esc(n)}  —  {_byn(s)}" for n, s in expense[:15]]
+            if len(expense) > 15:
+                L.append(f"<i>…и ещё {len(expense) - 15}</i>")
 
     if period == 'daily':
         loads = report.get('tomorrow_loads') or []
@@ -3212,11 +3254,29 @@ async def _kudir_payment_group(order: dict, pp_field: str, date_field: str) -> l
     return group or [order]
 
 
+def _kudir_carrier_cost(o: dict) -> float:
+    """Стоимость перевозчика, которую можно поставить в расход КУДиР.
+    Если перевозчику заплачено налом (carrier_cash) — платёж мимо кассы,
+    в расход он не идёт, значит доход клиента облагается налогом целиком
+    (маржа = вся сумма от клиента, а не client_rate − carrier_rate)."""
+    if o.get('carrier_cash'):
+        return 0.0
+    return float(o.get('carrier_rate') or 0)
+
+
+def _kudir_carrier_note(o: dict) -> str:
+    base = f"{float(o.get('carrier_rate') or 0):.2f} — перевозчику {o.get('carrier_name')}"
+    return base + (" (нал, в расход не берётся)" if o.get('carrier_cash') else "")
+
+
 async def _create_kudir_income_row(order: dict):
     """Строка дохода в КУДиР — создаётся/пересчитывается при отметке оплаты
     клиентом с номером ПП. Заявки с одинаковым client_pp_number + датой
     схлопываются в одну строку с суммарной маржой (как в акте сверки)."""
     import re as _re
+    # Оплата от клиента налом (client_cash) в КУДиР не отражается вовсе.
+    if order.get('client_cash'):
+        return
     if not order.get('client_pp_number') or not order.get('client_paid_date'):
         return
     date_str = order['client_paid_date'][:10]
@@ -3228,14 +3288,11 @@ async def _create_kudir_income_row(order: dict):
     # loss on one order in the group would silently offset a gain on
     # another (they only share this row because they share a PP+date, not
     # because they're related), understating the group's real income.
-    total_margin = sum(max(0.0, float(o.get('client_rate') or 0) - float(o.get('carrier_rate') or 0)) for o in group)
+    total_margin = sum(max(0.0, float(o.get('client_rate') or 0) - _kudir_carrier_cost(o)) for o in group)
     total_paid = sum(float(o.get('client_rate') or 0) for o in group)
     client_names = sorted({o.get('client_name') or '' for o in group} - {''})
     client_label = client_names[0] if len(client_names) <= 1 else ', '.join(client_names)
-    carrier_notes = sorted({
-        f"{float(o.get('carrier_rate') or 0):.2f} — перевозчику {o.get('carrier_name')}"
-        for o in group if o.get('carrier_name')
-    })
+    carrier_notes = sorted({_kudir_carrier_note(o) for o in group if o.get('carrier_name')})
 
     # Client-side act — this business's own act numbering is fixed 1:1 to
     # the order number (акт № совпадает с номером заявки), unlike the
@@ -3286,11 +3343,15 @@ async def _create_kudir_transit_row(order: dict):
     total_transit = sum(float(o.get('carrier_rate') or 0) for o in group)
 
     def _act_part(o):
-        if o.get('carrier_act_number') and o.get('carrier_act_date'):
-            return f"№ {o['carrier_act_number']} от {fmt_date_ru(o['carrier_act_date'][:10])}"
-        if o.get('carrier_act_number'):
-            return f"№ {o['carrier_act_number']}"
-        return None
+        num = (o.get('carrier_act_number') or '').strip()
+        if not num:
+            return None
+        # «Б/Н» / «БН» — акт без номера: в книге это «Акт б/н от …»,
+        # а не «Акт № Б/Н от …».
+        label = 'б/н' if num.upper() in ('Б/Н', 'БН') else f"№ {num}"
+        if o.get('carrier_act_date'):
+            return f"{label} от {fmt_date_ru(o['carrier_act_date'][:10])}"
+        return label
     act_parts = [p for p in (_act_part(o) for o in group) if p]
     act_ref = f"; Акт {', '.join(act_parts)}" if act_parts else ''
 
@@ -3392,6 +3453,11 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
         return
 
     import re as _re
+    # Оплата от клиента налом в КУДиР не отражается — снимаем строки этой
+    # заявки, если что-то осталось от прежнего безналичного состояния.
+    if order.get('client_cash'):
+        await db.kudir_entries.delete_many({'row_type': 'income', 'order_ids': [order['id']]})
+        return
     payments = [p for p in (order.get('client_payments') or [])
                 if not str(p.get('id', '')).startswith(_LEGACY_PAYMENT_ID_PREFIX)]
     if not payments:
@@ -3457,14 +3523,13 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
         client_names = sorted({mo.get('client_name') or '' for mo, _ in members} - {''})
         client_label = client_names[0] if len(client_names) <= 1 else ', '.join(client_names)
         carrier_notes = sorted({
-            f"{float(mo.get('carrier_rate') or 0):.2f} — перевозчику {mo.get('carrier_name')}"
-            for mo, _ in members if mo.get('carrier_name')
+            _kudir_carrier_note(mo) for mo, _ in members if mo.get('carrier_name')
         })
         total_margin = 0.0
         partial = False
         for mo, mp in members:
             rate = float(mo.get('client_rate') or 0)
-            margin = max(0.0, rate - float(mo.get('carrier_rate') or 0))
+            margin = max(0.0, rate - _kudir_carrier_cost(mo))
             amt = float(mp.get('amount') or 0)
             share = (amt / rate) if rate else 0
             total_margin += margin * share
@@ -3505,15 +3570,20 @@ async def _sync_kudir_row(order_id: str, side: str):
     if not order:
         return
 
+    # Оплата от клиента налом (client_cash) в КУДиР не попадает вовсе —
+    # ведём себя так, будто ПП нет: строку, оставшуюся от прежнего
+    # безналичного состояния, снимет блок удаления ниже.
+    suppress = side == 'client' and bool(order.get('client_cash'))
+
     # Multi-payment orders (payments/{side} endpoints) skip the legacy
     # single-PP merge-by-group logic entirely — they get one row per
     # payment instead, kept in sync here so the generic order-update
     # endpoint's retroactive resync (below) doesn't clobber them.
-    if order.get(f'{side}_payments'):
+    if order.get(f'{side}_payments') and not suppress:
         await _sync_kudir_rows_for_payments(order, side)
         return
 
-    if order.get(paid_field) and order.get(pp_field) and order.get(date_field):
+    if not suppress and order.get(paid_field) and order.get(pp_field) and order.get(date_field):
         await create_fn(order)
         return
 
