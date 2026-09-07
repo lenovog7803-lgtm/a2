@@ -1570,6 +1570,11 @@ class Order(BaseModel):
     # instead of flagging a cash payment as an error.
     client_cash: Optional[bool] = False
     carrier_cash: Optional[bool] = False
+    # Снимок платёжных полей стороны на момент снятия отметки (per side:
+    # {"client": {...}, "carrier": {...}}). Позволяет вернуть ПП одним
+    # нажатием — POST /orders/{id}/payments/{side}/restore. Затирается при
+    # новой отметке оплаты и при явном возврате.
+    payment_undo: Optional[dict] = None
 
 
 class OrderPayload(BaseModel):
@@ -3196,14 +3201,34 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
             deadline_str, reminder_str, carrier_name, order_number,
             carrier_rate, reminder_days_before, deadline_display,
         )
+    # --- Снимок для отмены снятия оплаты ----------------------------------
+    # Если этот save снимает оплату стороны (paid True->False) или стирает её
+    # номер ПП, кладём прежние значения в payment_undo.<side> прямо на
+    # заявку — чтобы вернуть одним нажатием. Новая отметка оплаты этот
+    # снимок затирает.
+    undo_ops: dict = {}
+    for _s in ("client", "carrier"):
+        _pf, _ppf, _ppd, _pdt, _pays, _cash = (
+            f"{_s}_paid", f"{_s}_pp_number", f"{_s}_pp_date",
+            f"{_s}_paid_date", f"{_s}_payments", f"{_s}_cash")
+        _had = bool(old_doc.get(_pf) or old_doc.get(_ppf) or old_doc.get(_pays))
+        _clears_paid = _pf in update_data and not update_data.get(_pf) and old_doc.get(_pf)
+        _clears_pp = _ppf in update_data and not update_data.get(_ppf) and old_doc.get(_ppf)
+        if _had and (_clears_paid or _clears_pp):
+            undo_ops[f"payment_undo.{_s}"] = {
+                _pf: old_doc.get(_pf), _ppf: old_doc.get(_ppf), _ppd: old_doc.get(_ppd),
+                _pdt: old_doc.get(_pdt), _pays: old_doc.get(_pays), _cash: old_doc.get(_cash),
+                "at": now_iso(), "by": (current_user or {}).get("name") or "",
+            }
+        elif update_data.get(_pf) and not old_doc.get(_pf):
+            undo_ops[f"payment_undo.{_s}"] = None  # свежая отметка — старый снимок неактуален
+
     if update_data:
         await db.orders.update_one({"id": order_id}, {"$set": update_data})
         # Log changes
         actor = (current_user or {}).get("name") or "admin"
         log_entries = []
-        skip_log = {"calendar_event_id", "calendar_event_url", "doc_url_client", "doc_url_carrier", "doc_url_act",
-                    "client_paid_date", "carrier_paid_date",
-                    "client_pp_number", "client_pp_date", "carrier_pp_number", "carrier_pp_date"}
+        skip_log = {"calendar_event_id", "calendar_event_url", "doc_url_client", "doc_url_carrier", "doc_url_act"}
         for field, new_val in update_data.items():
             if field in skip_log:
                 continue
@@ -3221,6 +3246,18 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
                 })
         if log_entries:
             await db.order_logs.insert_many(log_entries)
+
+    if undo_ops:
+        _set = {k: v for k, v in undo_ops.items() if v is not None}
+        _unset = {k: "" for k, v in undo_ops.items() if v is None}
+        _mongo: dict = {}
+        if _set:
+            _mongo["$set"] = _set
+        if _unset:
+            _mongo["$unset"] = _unset
+        if _mongo:
+            await db.orders.update_one({"id": order_id}, _mongo)
+
     doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Order not found")
@@ -3734,7 +3771,10 @@ async def add_payment(order_id: str, side: str, payload: PaymentEntry, backgroun
     set_data = {field: payments, paid_field: fully_paid}
     if fully_paid and not order.get(date_field):
         set_data[date_field] = payload.pp_date
-    await db.orders.update_one({"id": order_id}, {"$set": set_data})
+    _ops = {"$set": set_data}
+    if (order.get("payment_undo") or {}).get(side):
+        _ops["$unset"] = {f"payment_undo.{side}": ""}  # снова вносим ПП — снимок отмены больше не нужен
+    await db.orders.update_one({"id": order_id}, _ops)
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
 
     # Полностью оплачено частичными ПП — закрываем задачу-напоминание,
@@ -3771,7 +3811,20 @@ async def delete_payment(order_id: str, side: str, payment_id: str, background_t
     total = sum(float(p.get("amount") or 0) for p in payments)
     fully_paid = bool(payments) and abs(total - expected) < 0.01
 
-    await db.orders.update_one({"id": order_id}, {"$set": {field: payments, paid_field: fully_paid}})
+    _mongo_ops: dict = {"$set": {field: payments, paid_field: fully_paid}}
+    # Первое удаление в серии (фронт снимает много-ПП оплату по одному ПП за
+    # раз) фиксирует полный прежний список — чтобы «Вернуть» восстановил всё.
+    _old_payments = _get_payments(order, side)
+    if _old_payments and not (order.get("payment_undo") or {}).get(side):
+        _mongo_ops["$set"][f"payment_undo.{side}"] = {
+            paid_field: order.get(paid_field), f"{side}_payments": _old_payments,
+            f"{side}_pp_number": order.get(f"{side}_pp_number"),
+            f"{side}_pp_date": order.get(f"{side}_pp_date"),
+            f"{side}_paid_date": order.get(f"{side}_paid_date"),
+            f"{side}_cash": order.get(f"{side}_cash"),
+            "at": now_iso(), "by": (current_user or {}).get("name") or "",
+        }
+    await db.orders.update_one({"id": order_id}, _mongo_ops)
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
 
     await _sync_kudir_rows_for_payments(updated, side)
@@ -3779,6 +3832,37 @@ async def delete_payment(order_id: str, side: str, payment_id: str, background_t
     background_tasks.add_task(_bg_push_order, updated)
     await manager.broadcast({"type": "payment_marked", "order_id": order_id, "side": side})
     return {"ok": True, "payments": payments, "total": total, "expected": expected, "fully_paid": fully_paid}
+
+
+@api_router.post("/orders/{order_id}/payments/{side}/restore")
+async def restore_payment(order_id: str, side: str, background_tasks: BackgroundTasks,
+                          current_user: Optional[dict] = Depends(_get_user_from_token)):
+    """Возврат оплаты стороны из снимка payment_undo.<side> — восстанавливает
+    номер ПП, даты, список частичных ПП и флаг «оплачено», как было до
+    случайного снятия. Снимок после возврата стирается."""
+    if side not in ("client", "carrier"):
+        raise HTTPException(400, "side must be 'client' or 'carrier'")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Заявка не найдена")
+    snap = (order.get("payment_undo") or {}).get(side)
+    if not snap:
+        raise HTTPException(404, "Нечего возвращать — снимок отмены не найден")
+
+    restore_fields = {k: v for k, v in snap.items()
+                      if k.startswith(f"{side}_") and k not in ("at", "by")}
+    await db.orders.update_one({"id": order_id}, {
+        "$set": restore_fields,
+        "$unset": {f"payment_undo.{side}": ""},
+    })
+    updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if updated.get(f"{side}_payments"):
+        await _sync_kudir_rows_for_payments(updated, side)
+    else:
+        await _sync_kudir_row(order_id, side)
+    background_tasks.add_task(_bg_push_order, updated)
+    await manager.broadcast({"type": "payment_marked", "order_id": order_id, "side": side})
+    return Order(**updated)
 
 
 def _has_pp(order: dict, side: str) -> bool:
