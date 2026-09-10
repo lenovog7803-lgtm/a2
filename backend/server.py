@@ -9,6 +9,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument as _ReturnDocument
 import os, uuid, asyncio, hashlib, secrets, time, html as _html
 import jwt as _jwt
 from pathlib import Path
@@ -1004,6 +1005,94 @@ async def send_morning_briefing() -> dict:
     return {'briefing': b, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
 
 
+# ====== Автопарк: утренняя сводка + напоминания (тот же бот А2 Инфо) ======
+async def build_fleet_briefing() -> dict:
+    now = datetime.now(_REPORT_TZ)
+    today = now.strftime('%Y-%m-%d')
+    tomorrow = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+    trips = await db.fleet_trips.find({'deleted': {'$ne': True}}, {'_id': 0}).to_list(3000)
+    trip_by_id = {t['id']: t for t in trips}
+    vehicles = {v['id']: v for v in await db.fleet_vehicles.find({}, {'_id': 0}).to_list(2000)}
+    drivers = {d['id']: d for d in await db.fleet_drivers.find({}, {'_id': 0}).to_list(2000)}
+    orders = await db.fleet_orders.find(
+        {'trip_id': {'$in': list(trip_by_id)}}, {'_id': 0}).to_list(20000)
+
+    def leg(o):
+        t = trip_by_id.get(o['trip_id'], {})
+        v = vehicles.get(t.get('vehicle_id') or '', {})
+        d = drivers.get(t.get('driver_id') or '', {})
+        return {
+            'order_number': o.get('order_number') or '',
+            'client_name': o.get('client_name') or '',
+            'route': f"{o.get('city_from') or o.get('loading_address') or ''} → {o.get('city_to') or o.get('unloading_address') or ''}".strip(' →'),
+            'vehicle': v.get('plate') or v.get('model') or '',
+            'driver': d.get('name') or '',
+        }
+
+    loads_today = [leg(o) for o in orders if (o.get('load_date') or '')[:10] == today]
+    loads_tomorrow = [leg(o) for o in orders if (o.get('load_date') or '')[:10] == tomorrow]
+    unloads_today = [leg(o) for o in orders if (o.get('unload_date') or '')[:10] == today]
+
+    overdue = []
+    to_invoice = []
+    for o in orders:
+        if _fleet_order_is_paid(o):
+            continue
+        rem = _f(o.get('rate')) - _fleet_order_paid_amount(o)
+        if rem <= 0.01:
+            continue
+        due = _fleet_order_due(o)
+        row = {'order_number': o.get('order_number') or '', 'client_name': o.get('client_name') or '',
+               'amount': round(rem, 2), 'due_date': due}
+        if due and due < today:
+            row['days'] = (datetime.strptime(today, '%Y-%m-%d') - datetime.strptime(due, '%Y-%m-%d')).days
+            overdue.append(row)
+        # пора выставлять счёт: груз выгружен, но денег нет и счёта ещё не слали
+        if (o.get('unload_date') or '')[:10] and (o.get('unload_date') or '')[:10] <= today \
+                and not o.get('doc_url_order') and not o.get('invoice_number'):
+            to_invoice.append(row)
+    overdue.sort(key=lambda x: -x.get('days', 0))
+
+    return {'date': today, 'loads_today': loads_today, 'loads_tomorrow': loads_tomorrow,
+            'unloads_today': unloads_today, 'overdue': overdue, 'to_invoice': to_invoice,
+            'generated_at': now.isoformat()}
+
+
+def format_fleet_briefing_text(b: dict) -> str:
+    def block(title, rows, render):
+        L = [f"{title} · {len(rows)}"]
+        L += [render(x) for x in rows] or ["<i>нет</i>"]
+        return L
+    lt = lambda x: f"•  <b>{_esc(x['order_number'])}</b> {_esc(x['route'])} — {_esc(x['client_name'])}" + (f" · {_esc(x['vehicle'])}" if x.get('vehicle') else '')
+    L = [f"🚚  <b>Автопарк — {_esc(fmt_date_ru(b.get('date', '')))}</b>", _REPORT_HR]
+    L += block("📦  <b>Загрузки сегодня</b>", b.get('loads_today') or [], lt)
+    L.append("")
+    L += block("🌅  <b>Загрузки завтра</b>", b.get('loads_tomorrow') or [], lt)
+    L.append("")
+    L += block("🏁  <b>Выгрузки сегодня</b>", b.get('unloads_today') or [], lt)
+    ov = b.get('overdue') or []
+    if ov:
+        L.append(_REPORT_HR)
+        L.append(f"🔴  <b>Просрочка оплаты · {len(ov)}</b>")
+        for x in ov[:15]:
+            L.append(f"•  {_esc(x['client_name'])} — {x['amount']:.0f} Br, +{x.get('days', 0)} дн ({_esc(x['order_number'])})")
+    inv = b.get('to_invoice') or []
+    if inv:
+        L.append(_REPORT_HR)
+        L.append(f"🧾  <b>Пора выставить счёт · {len(inv)}</b>")
+        for x in inv[:15]:
+            L.append(f"•  {_esc(x['client_name'])} — {x['amount']:.0f} Br ({_esc(x['order_number'])})")
+    return '\n'.join(L)
+
+
+async def send_fleet_briefing() -> dict:
+    b = await build_fleet_briefing()
+    delivery = await _broadcast_a2info(format_fleet_briefing_text(b))
+    ok = sum(1 for d in delivery if d.get('ok'))
+    logger.info(f'[fleet briefing] delivered to {ok}/{len(delivery)} chats')
+    return {'briefing': b, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
+
+
 async def _task_recipients(assigned_user_id: Optional[str]) -> list:
     """Получатели уведомления по задаче: стандартная рассылка + личные
     подписки исполнителя задачи."""
@@ -1113,6 +1202,15 @@ async def _report_scheduler():
                     await db.app_settings.update_one(
                         {'key': 'last_morning_briefing'},
                         {'$set': {'key': 'last_morning_briefing', 'value': key_day}}, upsert=True)
+                fm = await db.app_settings.find_one({'key': 'last_fleet_briefing'})
+                if (fm or {}).get('value') != key_day:
+                    try:
+                        await send_fleet_briefing()
+                    except Exception as _fe:
+                        logger.error(f'[fleet briefing] {_fe}')
+                    await db.app_settings.update_one(
+                        {'key': 'last_fleet_briefing'},
+                        {'$set': {'key': 'last_fleet_briefing', 'value': key_day}}, upsert=True)
 
             # Вечерние отчёты — с 21:00 и до конца суток.
             if now.hour >= _REPORT_HOUR:
@@ -2965,6 +3063,32 @@ async def run_morning_briefing_now(current_user: dict = Depends(require_director
     }
 
 
+@api_router.post("/fleet/briefing")
+async def run_fleet_briefing_now(current_user: dict = Depends(require_director)):
+    """Отправить сводку по автопарку в Telegram прямо сейчас."""
+    result = await send_fleet_briefing()
+    b = result.get("briefing", {})
+    return {
+        "ok": True,
+        "loads_today": len(b.get("loads_today", [])),
+        "loads_tomorrow": len(b.get("loads_tomorrow", [])),
+        "unloads_today": len(b.get("unloads_today", [])),
+        "overdue": len(b.get("overdue", [])),
+        "to_invoice": len(b.get("to_invoice", [])),
+        "sent": result.get("sent", 0),
+        "targets": result.get("targets", 0),
+        "delivery": result.get("delivery", []),
+        "token_configured": bool(os.environ.get("A2_INFO_BOT_TOKEN")),
+    }
+
+
+@api_router.get("/fleet/briefing/preview")
+async def preview_fleet_briefing(current_user: dict = Depends(require_director)):
+    """Текст сводки автопарка без отправки — для кнопки «Показать» в CRM."""
+    b = await build_fleet_briefing()
+    return {"text": format_fleet_briefing_text(b), "briefing": b}
+
+
 @api_router.post("/tasks/sync_payment_reminders")
 async def sync_payment_reminders_now(notify: bool = True, current_user: dict = Depends(require_director)):
     """Прогнать синхронизацию задач-напоминаний об оплате прямо сейчас
@@ -4612,6 +4736,9 @@ class _UpdateUserPayload(BaseModel):
     permissions: Optional[dict] = None
     status: Optional[str] = None
     daily_call_goal: Optional[int] = None
+    # Доступ к разделу «Свой автопарк» — отдельный флаг, не завязан на роль,
+    # чтобы обычные менеджеры его не видели (см. require_fleet_access).
+    fleet_access: Optional[bool] = None
 
 
 @api_router.put("/users/{user_id}")
@@ -4642,6 +4769,8 @@ async def update_user(user_id: str, payload: _UpdateUserPayload, current_user: d
             await db.sessions.update_many({"user_id": user_id}, {"$set": {"active": False}})
     if payload.daily_call_goal is not None:
         update_data["daily_call_goal"] = payload.daily_call_goal
+    if payload.fleet_access is not None:
+        update_data["fleet_access"] = bool(payload.fleet_access)
     if update_data:
         await db.users.update_one({"id": user_id}, {"$set": update_data})
     user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
@@ -6497,6 +6626,957 @@ async def restore_backup(backup_id: str, payload: RestoreRequest, current_user: 
             await db[cname].insert_many(docs_list)
         restored[cname] = len(docs_list)
     return {"ok": True, "restored_at": now_iso(), "restored": restored}
+
+
+# ============================================================================
+# Свой автопарк (fleet) — параллельный раздел рядом с экспедированием, со
+# своими коллекциями (fleet_*). Иерархия: Рейс → 2 направления
+# (прямой/обратка) → несколько Заказов внутри каждого направления.
+# ============================================================================
+
+FLEET_TEMPLATES = {
+    'order': {'template_id': None, 'folder_id': None},  # заполнить когда пришлют шаблон
+    'act': {'template_id': None, 'folder_id': None},
+}
+
+
+def require_fleet_access(current_user: dict = Depends(_require_user)) -> dict:
+    if current_user.get("role") not in DIRECTOR_ROLES and not current_user.get("fleet_access"):
+        raise HTTPException(403, "Нет доступа к разделу «Свой автопарк»")
+    return current_user
+
+
+def _f(x) -> float:
+    try:
+        return float(x or 0)
+    except Exception:
+        return 0.0
+
+
+def _fleet_order_paid_amount(o: dict) -> float:
+    """Сколько по заказу уже пришло от клиента — сумма частичных ПП, а если
+    их нет, но стоит галка paid — считаем оплаченной вся ставка."""
+    pays = o.get('payments') or []
+    if pays:
+        return round(sum(_f(p.get('amount')) for p in pays), 2)
+    return round(_f(o.get('rate')), 2) if o.get('paid') else 0.0
+
+
+def _fleet_order_is_paid(o: dict) -> bool:
+    rate = _f(o.get('rate'))
+    if rate <= 0:
+        return bool(o.get('paid'))
+    return _fleet_order_paid_amount(o) + 0.01 >= rate
+
+
+def _fleet_order_due(o: dict) -> str:
+    """Крайняя дата оплаты клиентом = дата выгрузки + срок оплаты (дней)."""
+    base = (o.get('unload_date') or o.get('load_date') or '')[:10]
+    days = int(_f(o.get('pay_deferral_days')))
+    if not base:
+        return ''
+    try:
+        d = datetime.strptime(base, '%Y-%m-%d') + timedelta(days=days)
+        return d.strftime('%Y-%m-%d')
+    except Exception:
+        return ''
+
+
+def _fleet_driver_salary(trip: dict, revenue: float, km: float) -> float:
+    """ЗП водителя за рейс: по км, процент от выручки или фикс."""
+    mode = (trip.get('driver_salary_mode') or '').strip()
+    rate = _f(trip.get('driver_salary_rate'))
+    if mode == 'per_km':
+        return round(rate * km, 2)
+    if mode == 'percent':
+        return round(rate / 100.0 * revenue, 2)
+    if mode == 'fixed':
+        return round(rate, 2)
+    return round(_f(trip.get('driver_salary_amount')), 2)
+
+
+def _fleet_trip_finance(trip: dict, orders: list) -> dict:
+    """Единый расчёт денег по рейсу — выручка, расходы (топливо + прочее +
+    ЗП водителя), что из расходов оплачено, долг водителю."""
+    revenue = sum(_f(o.get('rate')) for o in orders)
+    received = sum(_fleet_order_paid_amount(o) for o in orders)
+    km = max(0.0, _f(trip.get('odo_end')) - _f(trip.get('odo_start')))
+    salary = _fleet_driver_salary(trip, revenue, km)
+
+    fuel = _f(trip.get('fuel_cost'))
+    fuel_paid = fuel if trip.get('fuel_paid') else 0.0
+    exps = trip.get('expenses') or []
+    exp_total = sum(_f(e.get('amount')) for e in exps)
+    exp_paid = sum(_f(e.get('amount')) for e in exps if e.get('paid'))
+
+    advance = _f(trip.get('driver_advance'))
+    payouts = sum(_f(p.get('amount')) for p in (trip.get('driver_payouts') or []))
+    driver_paid = round(advance + payouts, 2)
+    driver_debt = round(salary - driver_paid, 2)
+
+    expenses_total = round(fuel + exp_total + salary, 2)
+    expenses_paid = round(fuel_paid + exp_paid + driver_paid, 2)
+    return {
+        'revenue': round(revenue, 2),
+        'received': round(received, 2),
+        'debt_client': round(revenue - received, 2),
+        'km': km,
+        'driver_salary_amount': salary,
+        'driver_paid': driver_paid,
+        'driver_debt': driver_debt,
+        'expenses_total': expenses_total,
+        'expenses_paid': expenses_paid,
+        'expenses_unpaid': round(expenses_total - expenses_paid, 2),
+        'profit': round(revenue - expenses_total, 2),
+    }
+
+
+async def _recalc_fleet_trip(trip_id: str):
+    """Пересчитать даты, сумму, финансы и статус рейса по всем заказам внутри."""
+    orders = await db.fleet_orders.find({'trip_id': trip_id}, {'_id': 0}).to_list(2000)
+    trip = await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0}) or {}
+    load_dates = [o['load_date'] for o in orders if o.get('load_date')]
+    unload_dates = [o['unload_date'] for o in orders if o.get('unload_date')]
+    fin = _fleet_trip_finance(trip, orders)
+    upd = {
+        'total_amount': fin['revenue'],
+        'received_amount': fin['received'],
+        'expenses_total': fin['expenses_total'],
+        'expenses_unpaid': fin['expenses_unpaid'],
+        'driver_salary_amount': fin['driver_salary_amount'],
+        'driver_debt': fin['driver_debt'],
+        'profit': fin['profit'],
+        'first_load_date': min(load_dates) if load_dates else '',
+        'last_unload_date': max(unload_dates) if unload_dates else '',
+    }
+    # Все загрузки доставлены → рейс автоматически «Доставлен»; появилась
+    # недоставленная — возвращаем «В пути».
+    cur = trip.get('status') or 'active'
+    if orders and all(o.get('cargo_status') == 'delivered' for o in orders):
+        if cur != 'delivered':
+            upd['status'] = 'delivered'
+    elif cur == 'delivered':
+        upd['status'] = 'in_transit'
+    await db.fleet_trips.update_one({'id': trip_id}, {'$set': upd})
+
+
+# ---- Рейсы ----
+async def _ensure_trip_number(trip: dict) -> int:
+    """Присвоить рейсу сквозной номер, если его нет (старые рейсы)."""
+    if trip.get('trip_number'):
+        return int(trip['trip_number'])
+    last = await db.fleet_trips.find(
+        {'trip_number': {'$gt': 0}}, {'_id': 0, 'trip_number': 1}
+    ).sort('trip_number', -1).limit(1).to_list(1)
+    tn = (int(last[0]['trip_number']) + 1) if last else 1
+    await db.fleet_trips.update_one({'id': trip['id']}, {'$set': {'trip_number': tn}})
+    trip['trip_number'] = tn
+    return tn
+
+
+@api_router.get("/fleet/trips")
+async def list_fleet_trips(user: dict = Depends(require_fleet_access)):
+    trips = await db.fleet_trips.find({'deleted': {'$ne': True}}, {'_id': 0}).sort('created_at', 1).to_list(1000)
+    for t in trips:
+        if not t.get('trip_number'):
+            await _ensure_trip_number(t)
+    trips.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+    return {'trips': trips}
+
+
+def _trip_month(t: dict) -> str:
+    return (t.get('first_load_date') or t.get('created_at') or '')[:7]
+
+
+@api_router.get("/fleet/dashboard")
+async def fleet_dashboard(month: Optional[str] = None, user: dict = Depends(require_fleet_access)):
+    """Сводка по автопарку — по образцу дашборда экспедирования.
+    month=YYYY-MM — только рейсы этого месяца (по дате первой загрузки)."""
+    all_trips = await db.fleet_trips.find({'deleted': {'$ne': True}}, {'_id': 0}).to_list(2000)
+    months = sorted({_trip_month(t) for t in all_trips if _trip_month(t)}, reverse=True)
+    trips = [t for t in all_trips if _trip_month(t) == month] if month else all_trips
+    trip_ids = [t['id'] for t in trips]
+    orders = await db.fleet_orders.find({'trip_id': {'$in': trip_ids}}, {'_id': 0}).to_list(20000)
+
+    n = _f
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+    by_status = {'active': 0, 'in_transit': 0, 'delivered': 0}
+    for t in trips:
+        by_status[t.get('status') or 'active'] = by_status.get(t.get('status') or 'active', 0) + 1
+
+    revenue = sum(n(o.get('rate')) for o in orders)
+    paid_sum = sum(_fleet_order_paid_amount(o) for o in orders)
+    debt_sum = revenue - paid_sum
+    delivered = sum(1 for o in orders if o.get('cargo_status') == 'delivered')
+
+    fuel = sum(n(t.get('fuel_cost')) for t in trips)
+    liters = sum(n(t.get('fuel_liters')) for t in trips)
+    km = sum(max(0.0, n(t.get('odo_end')) - n(t.get('odo_start'))) for t in trips)
+
+    orders_by_trip: dict = {}
+    for o in orders:
+        orders_by_trip.setdefault(o.get('trip_id'), []).append(o)
+
+    # Финансы по каждому рейсу — единый расчёт (топливо + прочее + ЗП).
+    salary_total = exp_other = exp_unpaid = 0.0
+    driver_debts: dict = {}
+    per_trip = []
+    drivers = {d['id']: d for d in await db.fleet_drivers.find({}, {'_id': 0}).to_list(2000)}
+    for t in trips:
+        tos = orders_by_trip.get(t['id'], [])
+        fin = _fleet_trip_finance(t, tos)
+        salary_total += fin['driver_salary_amount']
+        exp_other += sum(n(e.get('amount')) for e in (t.get('expenses') or []))
+        exp_unpaid += fin['expenses_unpaid']
+        if fin['driver_debt'] > 0.01:
+            did = t.get('driver_id') or ''
+            dd = driver_debts.setdefault(did, {'id': did, 'name': (drivers.get(did) or {}).get('name') or '—', 'sum': 0.0})
+            dd['sum'] += fin['driver_debt']
+        per_trip.append({
+            'id': t['id'], 'trip_number': t.get('trip_number') or 0,
+            'name': t.get('name') or '', 'status': t.get('status') or 'active',
+            'route': f"{t.get('route_from', '')} → {t.get('route_to', '')}".strip(' →'),
+            'orders': len(tos),
+            'revenue': fin['revenue'], 'expenses': fin['expenses_total'], 'profit': fin['profit'],
+            'margin_pct': round(fin['profit'] / fin['revenue'] * 100) if fin['revenue'] else 0,
+        })
+    per_trip.sort(key=lambda x: (-(x['trip_number'] or 0)))
+    expenses = round(fuel + exp_other + salary_total, 2)
+
+    # Клиенты: выручка / долг / просрочка (дата выгрузки + срок оплаты).
+    client_agg: dict = {}
+    overdue_rows = []
+    for o in orders:
+        cid = o.get('client_id') or ''
+        key = cid or (o.get('client_name') or '—')
+        a = client_agg.setdefault(key, {'id': cid, 'name': o.get('client_name') or '—', 'rev': 0.0, 'debt': 0.0})
+        a['rev'] += n(o.get('rate'))
+        rem = n(o.get('rate')) - _fleet_order_paid_amount(o)
+        if not _fleet_order_is_paid(o) and rem > 0.01:
+            a['debt'] += rem
+            due = _fleet_order_due(o)
+            if due and due < today:
+                overdue_rows.append({
+                    'order_id': o.get('id'), 'order_number': o.get('order_number') or '',
+                    'client_id': cid, 'client_name': o.get('client_name') or '—',
+                    'amount': round(rem, 2), 'due_date': due,
+                    'days': (datetime.strptime(today, '%Y-%m-%d') - datetime.strptime(due, '%Y-%m-%d')).days,
+                })
+    overdue_rows.sort(key=lambda x: -x['days'])
+
+    return {
+        'trips_total': len(trips),
+        'trips_by_status': by_status,
+        'orders_total': len(orders),
+        'delivered': delivered,
+        'revenue': revenue, 'paid_sum': paid_sum, 'debt_sum': debt_sum,
+        'expenses': expenses, 'fuel_cost': fuel, 'other_expenses': round(exp_other, 2),
+        'driver_salary_total': round(salary_total, 2),
+        'expenses_unpaid': round(exp_unpaid, 2),
+        'profit': round(revenue - expenses, 2),
+        'km': km, 'liters': liters,
+        'cost_per_km': (expenses / km) if km else 0.0,
+        'revenue_per_km': (revenue / km) if km else 0.0,
+        'fuel_per_100': (liters / km * 100) if km else 0.0,
+        'trips': per_trip,
+        'overdue': overdue_rows[:20],
+        'overdue_total': round(sum(r['amount'] for r in overdue_rows), 2),
+        'driver_debts': sorted(
+            [{'id': d['id'], 'name': d['name'], 'sum': round(d['sum'], 2)} for d in driver_debts.values()],
+            key=lambda x: -x['sum']),
+        'driver_debt_total': round(sum(d['sum'] for d in driver_debts.values()), 2),
+        'top_clients': [
+            {'id': a['id'], 'name': a['name'], 'sum': round(a['rev'], 2)}
+            for a in sorted(client_agg.values(), key=lambda x: -x['rev']) if a['rev'] > 0
+        ][:8],
+        'debtors': [
+            {'id': a['id'], 'name': a['name'], 'sum': round(a['debt'], 2)}
+            for a in sorted(client_agg.values(), key=lambda x: -x['debt']) if a['debt'] > 0
+        ][:12],
+        'months': months,
+        'month': month or '',
+    }
+
+
+@api_router.post("/fleet/trips")
+async def create_fleet_trip(payload: dict, user: dict = Depends(require_fleet_access)):
+    # Сквозной номер рейса: Р1, Р2, … — из него собирается номер каждой
+    # загрузки: Р{номер рейса}-{NNN}/{год создания}.
+    last = await db.fleet_trips.find({}, {'_id': 0, 'trip_number': 1}).sort('trip_number', -1).limit(1).to_list(1)
+    next_num = (int(last[0].get('trip_number') or 0) + 1) if last else 1
+    trip = {
+        'id': str(uuid.uuid4()),
+        'trip_number': next_num,
+        'name': payload.get('name', ''),
+        'route_from': payload.get('route_from', ''),
+        'route_to': payload.get('route_to', ''),
+        # Машина и водитель на весь рейс — подставляются по умолчанию в
+        # каждый заказ обоих направлений (можно переопределить в заказе).
+        'vehicle_id': payload.get('vehicle_id', ''),
+        'driver_id': payload.get('driver_id', ''),
+        'status': payload.get('status', 'active'),  # active | in_transit | delivered
+        'driver_salary_mode': payload.get('driver_salary_mode', ''),
+        'driver_salary_rate': _f(payload.get('driver_salary_rate')),
+        'driver_advance': _f(payload.get('driver_advance')),
+        'order_counter': 0,
+        'first_load_date': '', 'last_unload_date': '', 'total_amount': 0.0,
+        'created_by': user.get('id', ''), 'created_at': now_iso(), 'deleted': False,
+    }
+    await db.fleet_trips.insert_one(dict(trip))
+    trip.pop('_id', None)
+    return trip
+
+
+async def _heal_order_numbers(trip: dict) -> None:
+    """Чинит номера заявок вида Р0-… / пустые — присваивает по позиции в рейсе."""
+    tn = await _ensure_trip_number(trip)
+    seq_orders = await db.fleet_orders.find({'trip_id': trip['id']}, {'_id': 0}).sort('created_at', 1).to_list(5000)
+    bad = [o for o in seq_orders if not o.get('order_number') or str(o.get('order_number')).startswith(('Р0-', 'Р-'))]
+    if not bad:
+        return
+    for i, o in enumerate(seq_orders, 1):
+        if o in bad:
+            yr = (o.get('created_at') or now_iso())[:4]
+            new_no = f"Р{tn}-{i:03d}/{yr}"
+            await db.fleet_orders.update_one({'id': o['id']}, {'$set': {'order_number': new_no}})
+    await db.fleet_trips.update_one({'id': trip['id']}, {'$set': {'order_counter': max(trip.get('order_counter') or 0, len(seq_orders))}})
+
+
+@api_router.get("/fleet/trips/{trip_id}")
+async def get_fleet_trip(trip_id: str, user: dict = Depends(require_fleet_access)):
+    trip = await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0})
+    if not trip:
+        raise HTTPException(404, "Рейс не найден")
+    await _heal_order_numbers(trip)
+    orders = await db.fleet_orders.find({'trip_id': trip_id}, {'_id': 0}).sort('load_date', 1).to_list(2000)
+    for o in orders:
+        o['paid_amount'] = _fleet_order_paid_amount(o)
+        o['paid'] = _fleet_order_is_paid(o)
+        o['due_date'] = _fleet_order_due(o)
+    return {
+        'trip': trip,
+        'finance': _fleet_trip_finance(trip, orders),
+        'forward': [o for o in orders if o.get('direction') == 'forward'],
+        'backward': [o for o in orders if o.get('direction') == 'backward'],
+    }
+
+
+@api_router.patch("/fleet/trips/{trip_id}")
+async def update_fleet_trip(trip_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    payload.pop('id', None)
+    payload.pop('_id', None)
+    await db.fleet_trips.update_one({'id': trip_id}, {'$set': payload})
+    return await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0})
+
+
+@api_router.delete("/fleet/trips/{trip_id}")
+async def delete_fleet_trip(trip_id: str, user: dict = Depends(require_fleet_access)):
+    await db.fleet_trips.update_one({'id': trip_id}, {'$set': {'deleted': True}})
+    return {'ok': True}
+
+
+# ---- Заказы внутри рейса ----
+@api_router.post("/fleet/trips/{trip_id}/orders")
+async def create_fleet_order(trip_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    trip = await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0})
+    if not trip:
+        raise HTTPException(404, "Рейс не найден")
+    # Старые рейсы могли быть созданы без сквозного номера — присваиваем на лету.
+    if not trip.get('trip_number'):
+        _last = await db.fleet_trips.find(
+            {'trip_number': {'$exists': True}}, {'_id': 0, 'trip_number': 1}
+        ).sort('trip_number', -1).limit(1).to_list(1)
+        _tn = (int(_last[0].get('trip_number') or 0) + 1) if _last else 1
+        await db.fleet_trips.update_one({'id': trip_id}, {'$set': {'trip_number': _tn}})
+        trip['trip_number'] = _tn
+    # Номер загрузки: Р{номер рейса}-{NNN}/{год}. Счётчик на рейсе не
+    # переиспользуется после удаления заказа.
+    upd = await db.fleet_trips.find_one_and_update(
+        {'id': trip_id}, {'$inc': {'order_counter': 1}},
+        projection={'_id': 0, 'order_counter': 1, 'trip_number': 1},
+        return_document=_ReturnDocument.AFTER,
+    )
+    seq = int((upd or {}).get('order_counter') or 1)
+    tnum = (upd or {}).get('trip_number') or trip.get('trip_number') or 1
+    order_number = f"Р{tnum}-{seq:03d}/{datetime.now(timezone.utc).year}"
+    order = {
+        'id': str(uuid.uuid4()), 'trip_id': trip_id,
+        'order_number': order_number,
+        'direction': payload.get('direction') or 'forward',  # 'forward' | 'backward'
+        'client_id': payload.get('client_id', ''), 'client_name': payload.get('client_name', ''),
+        'vehicle_id': payload.get('vehicle_id', ''), 'driver_id': payload.get('driver_id', ''),
+        'loading_address': payload.get('loading_address', ''),
+        'unloading_address': payload.get('unloading_address', ''),
+        'weight_tons': float(payload.get('weight_tons') or 0),
+        'pallets_count': int(payload.get('pallets_count') or 0),
+        'volume_m3': float(payload.get('volume_m3') or 0),
+        'load_date': payload.get('load_date', ''), 'unload_date': payload.get('unload_date', ''),
+        'rate': float(payload.get('rate') or 0),
+        'status': 'new', 'doc_url_order': '', 'doc_url_act': '',
+        'created_at': now_iso(),
+    }
+    await db.fleet_orders.insert_one(dict(order))
+    await _recalc_fleet_trip(trip_id)
+    order.pop('_id', None)
+    return order
+
+
+@api_router.get("/fleet/orders/{order_id}")
+async def get_fleet_order(order_id: str, user: dict = Depends(require_fleet_access)):
+    order = await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+    if not order:
+        raise HTTPException(404, "Заказ не найден")
+    trip_full = await db.fleet_trips.find_one({'id': order.get('trip_id')}, {'_id': 0})
+    if trip_full:
+        await _heal_order_numbers(trip_full)
+        order = await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+    trip = {k: (trip_full or {}).get(k) for k in ('name', 'route_from', 'route_to', 'trip_number', 'vehicle_id', 'driver_id')}
+    order['trip_name'] = trip.get('name') or ''
+    order['trip'] = trip
+    order['paid_amount'] = _fleet_order_paid_amount(order)
+    order['paid'] = _fleet_order_is_paid(order)
+    order['due_date'] = _fleet_order_due(order)
+    _today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    order['overdue'] = bool(order['due_date'] and not order['paid'] and order['due_date'] < _today)
+    return order
+
+
+@api_router.patch("/fleet/orders/{order_id}")
+async def update_fleet_order(order_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    order = await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+    if not order:
+        raise HTTPException(404, "Заказ не найден")
+    payload.pop('id', None)
+    payload.pop('trip_id', None)
+    payload.pop('_id', None)
+    for k in ('weight_tons', 'volume_m3', 'rate'):
+        if k in payload:
+            payload[k] = float(payload[k] or 0)
+    if 'pallets_count' in payload:
+        payload['pallets_count'] = int(payload['pallets_count'] or 0)
+    # Если правят частичные ПП — пересобираем признак paid и дату оплаты.
+    merged = {**order, **payload}
+    if 'payments' in payload or 'rate' in payload:
+        payload['paid'] = _fleet_order_is_paid(merged)
+        pays = merged.get('payments') or []
+        if pays and payload['paid']:
+            payload['payment_date'] = max((p.get('date') or '') for p in pays) or merged.get('payment_date')
+    await db.fleet_orders.update_one({'id': order_id}, {'$set': payload})
+    await _recalc_fleet_trip(order['trip_id'])
+    return await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+
+
+@api_router.delete("/fleet/orders/{order_id}")
+async def delete_fleet_order(order_id: str, user: dict = Depends(require_fleet_access)):
+    order = await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+    if not order:
+        raise HTTPException(404, "Заказ не найден")
+    await db.fleet_orders.delete_one({'id': order_id})
+    await _recalc_fleet_trip(order['trip_id'])
+    return {'ok': True}
+
+
+# ---- Справочники: клиенты / машины / водители (отдельные базы автопарка) ----
+@api_router.get("/fleet/clients")
+async def list_fleet_clients(user: dict = Depends(require_fleet_access)):
+    return {'clients': await db.fleet_clients.find({}, {'_id': 0}).sort('name', 1).to_list(2000)}
+
+
+@api_router.get("/fleet/clients/{client_id}")
+async def get_fleet_client(client_id: str, user: dict = Depends(require_fleet_access)):
+    client = await db.fleet_clients.find_one({'id': client_id}, {'_id': 0})
+    if not client:
+        raise HTTPException(404, "Клиент не найден")
+    return client
+
+
+@api_router.get("/fleet/clients/{client_id}/orders")
+async def fleet_client_orders(client_id: str, user: dict = Depends(require_fleet_access)):
+    """Все заказы (загрузки) этого клиента по всем рейсам — для карточки клиента."""
+    orders = await db.fleet_orders.find({'client_id': client_id}, {'_id': 0}).sort('load_date', -1).to_list(5000)
+    trip_ids = list({o.get('trip_id') for o in orders if o.get('trip_id')})
+    trips = {t['id']: t for t in await db.fleet_trips.find(
+        {'id': {'$in': trip_ids}}, {'_id': 0, 'id': 1, 'name': 1}).to_list(2000)}
+    for o in orders:
+        o['trip_name'] = (trips.get(o.get('trip_id')) or {}).get('name', '')
+    return {'orders': orders}
+
+
+@api_router.post("/fleet/clients")
+async def create_fleet_client(payload: dict, user: dict = Depends(require_fleet_access)):
+    payload.pop('id', None)
+    payload.pop('_id', None)
+    client = {'id': str(uuid.uuid4()), **payload, 'created_at': now_iso()}
+    await db.fleet_clients.insert_one(dict(client))
+    client.pop('_id', None)
+    return client
+
+
+@api_router.patch("/fleet/clients/{client_id}")
+async def update_fleet_client(client_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    payload.pop('id', None)
+    payload.pop('_id', None)
+    await db.fleet_clients.update_one({'id': client_id}, {'$set': payload})
+    return await db.fleet_clients.find_one({'id': client_id}, {'_id': 0})
+
+
+@api_router.delete("/fleet/clients/{client_id}")
+async def delete_fleet_client(client_id: str, user: dict = Depends(require_fleet_access)):
+    await db.fleet_clients.delete_one({'id': client_id})
+    return {'ok': True}
+
+
+@api_router.get("/fleet/vehicles")
+async def list_fleet_vehicles(user: dict = Depends(require_fleet_access)):
+    return {'vehicles': await db.fleet_vehicles.find({}, {'_id': 0}).sort('created_at', -1).to_list(2000)}
+
+
+@api_router.post("/fleet/vehicles")
+async def create_fleet_vehicle(payload: dict, user: dict = Depends(require_fleet_access)):
+    payload.pop('id', None)
+    payload.pop('_id', None)
+    vehicle = {'id': str(uuid.uuid4()), **payload, 'created_at': now_iso()}
+    await db.fleet_vehicles.insert_one(dict(vehicle))
+    vehicle.pop('_id', None)
+    return vehicle
+
+
+@api_router.patch("/fleet/vehicles/{vehicle_id}")
+async def update_fleet_vehicle(vehicle_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    payload.pop('id', None)
+    payload.pop('_id', None)
+    await db.fleet_vehicles.update_one({'id': vehicle_id}, {'$set': payload})
+    return await db.fleet_vehicles.find_one({'id': vehicle_id}, {'_id': 0})
+
+
+@api_router.delete("/fleet/vehicles/{vehicle_id}")
+async def delete_fleet_vehicle(vehicle_id: str, user: dict = Depends(require_fleet_access)):
+    await db.fleet_vehicles.delete_one({'id': vehicle_id})
+    return {'ok': True}
+
+
+@api_router.get("/fleet/drivers")
+async def list_fleet_drivers(user: dict = Depends(require_fleet_access)):
+    return {'drivers': await db.fleet_drivers.find({}, {'_id': 0}).sort('created_at', -1).to_list(2000)}
+
+
+@api_router.post("/fleet/drivers")
+async def create_fleet_driver(payload: dict, user: dict = Depends(require_fleet_access)):
+    payload.pop('id', None)
+    payload.pop('_id', None)
+    driver = {'id': str(uuid.uuid4()), **payload, 'created_at': now_iso()}
+    await db.fleet_drivers.insert_one(dict(driver))
+    driver.pop('_id', None)
+    return driver
+
+
+@api_router.patch("/fleet/drivers/{driver_id}")
+async def update_fleet_driver(driver_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    payload.pop('id', None)
+    payload.pop('_id', None)
+    await db.fleet_drivers.update_one({'id': driver_id}, {'$set': payload})
+    return await db.fleet_drivers.find_one({'id': driver_id}, {'_id': 0})
+
+
+@api_router.delete("/fleet/drivers/{driver_id}")
+async def delete_fleet_driver(driver_id: str, user: dict = Depends(require_fleet_access)):
+    await db.fleet_drivers.delete_one({'id': driver_id})
+    return {'ok': True}
+
+
+# ============================================================================
+# Финансы автопарка — частичные оплаты клиента, выплаты водителю, дубли,
+# комментарии, аналитика, акт сверки, выгрузка в Excel.
+# ============================================================================
+
+# ---- Частичные оплаты от клиента по заказу ----
+@api_router.post("/fleet/orders/{order_id}/payments")
+async def add_fleet_order_payment(order_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    order = await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+    if not order:
+        raise HTTPException(404, "Заказ не найден")
+    pay = {
+        'id': str(uuid.uuid4()),
+        'amount': _f(payload.get('amount')),
+        'pp_number': str(payload.get('pp_number') or '').strip(),
+        'date': (payload.get('date') or now_iso())[:10],
+        'cash': bool(payload.get('cash')),
+        'note': str(payload.get('note') or '').strip(),
+        'created_at': now_iso(),
+    }
+    pays = (order.get('payments') or []) + [pay]
+    merged = {**order, 'payments': pays}
+    upd = {'payments': pays, 'paid': _fleet_order_is_paid(merged)}
+    if upd['paid']:
+        upd['payment_date'] = max((p.get('date') or '') for p in pays)
+    await db.fleet_orders.update_one({'id': order_id}, {'$set': upd})
+    await _recalc_fleet_trip(order['trip_id'])
+    return await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+
+
+@api_router.delete("/fleet/orders/{order_id}/payments/{pay_id}")
+async def del_fleet_order_payment(order_id: str, pay_id: str, user: dict = Depends(require_fleet_access)):
+    order = await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+    if not order:
+        raise HTTPException(404, "Заказ не найден")
+    pays = [p for p in (order.get('payments') or []) if p.get('id') != pay_id]
+    merged = {**order, 'payments': pays}
+    upd = {'payments': pays, 'paid': _fleet_order_is_paid(merged)}
+    if not upd['paid']:
+        upd['payment_date'] = ''
+    await db.fleet_orders.update_one({'id': order_id}, {'$set': upd})
+    await _recalc_fleet_trip(order['trip_id'])
+    return await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+
+
+# ---- Выплаты водителю по рейсу (аванс + история) ----
+@api_router.post("/fleet/trips/{trip_id}/driver_payout")
+async def add_fleet_driver_payout(trip_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    trip = await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0})
+    if not trip:
+        raise HTTPException(404, "Рейс не найден")
+    payout = {
+        'id': str(uuid.uuid4()),
+        'amount': _f(payload.get('amount')),
+        'date': (payload.get('date') or now_iso())[:10],
+        'note': str(payload.get('note') or '').strip(),
+        'kind': payload.get('kind') or 'payout',  # 'advance' | 'payout'
+        'created_at': now_iso(),
+    }
+    payouts = (trip.get('driver_payouts') or []) + [payout]
+    await db.fleet_trips.update_one({'id': trip_id}, {'$set': {'driver_payouts': payouts}})
+    await _recalc_fleet_trip(trip_id)
+    return await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0})
+
+
+@api_router.delete("/fleet/trips/{trip_id}/driver_payout/{payout_id}")
+async def del_fleet_driver_payout(trip_id: str, payout_id: str, user: dict = Depends(require_fleet_access)):
+    trip = await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0})
+    if not trip:
+        raise HTTPException(404, "Рейс не найден")
+    payouts = [p for p in (trip.get('driver_payouts') or []) if p.get('id') != payout_id]
+    await db.fleet_trips.update_one({'id': trip_id}, {'$set': {'driver_payouts': payouts}})
+    await _recalc_fleet_trip(trip_id)
+    return await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0})
+
+
+# ---- Мелочи: дублирование рейса и заказа ----
+@api_router.post("/fleet/trips/{trip_id}/duplicate")
+async def duplicate_fleet_trip(trip_id: str, user: dict = Depends(require_fleet_access)):
+    src = await db.fleet_trips.find_one({'id': trip_id}, {'_id': 0})
+    if not src:
+        raise HTTPException(404, "Рейс не найден")
+    last = await db.fleet_trips.find({}, {'_id': 0, 'trip_number': 1}).sort('trip_number', -1).limit(1).to_list(1)
+    next_num = (int((last[0] or {}).get('trip_number') or 0) + 1) if last else 1
+    new_trip = {
+        'id': str(uuid.uuid4()),
+        'trip_number': next_num,
+        'name': (src.get('name') or '') + ' (копия)',
+        'route_from': src.get('route_from', ''), 'route_to': src.get('route_to', ''),
+        'vehicle_id': src.get('vehicle_id', ''), 'driver_id': src.get('driver_id', ''),
+        'driver_salary_mode': src.get('driver_salary_mode', ''),
+        'driver_salary_rate': _f(src.get('driver_salary_rate')),
+        'status': 'active', 'order_counter': 0,
+        'first_load_date': '', 'last_unload_date': '', 'total_amount': 0.0,
+        'created_by': user.get('id', ''), 'created_at': now_iso(), 'deleted': False,
+    }
+    await db.fleet_trips.insert_one(dict(new_trip))
+    # копируем заказы без денег/статусов оплаты
+    src_orders = await db.fleet_orders.find({'trip_id': trip_id}, {'_id': 0}).sort('created_at', 1).to_list(5000)
+    for i, o in enumerate(src_orders, 1):
+        clone = {
+            'id': str(uuid.uuid4()), 'trip_id': new_trip['id'],
+            'order_number': f"Р{next_num}-{i:03d}/{datetime.now(timezone.utc).year}",
+            'direction': o.get('direction') or 'forward',
+            'client_id': o.get('client_id', ''), 'client_name': o.get('client_name', ''),
+            'vehicle_id': new_trip['vehicle_id'], 'driver_id': new_trip['driver_id'],
+            'loading_address': o.get('loading_address', ''), 'unloading_address': o.get('unloading_address', ''),
+            'city_from': o.get('city_from', ''), 'city_to': o.get('city_to', ''),
+            'cargo_name': o.get('cargo_name', ''),
+            'weight_tons': _f(o.get('weight_tons')), 'pallets_count': int(_f(o.get('pallets_count'))),
+            'volume_m3': _f(o.get('volume_m3')), 'pallet_size': o.get('pallet_size', ''),
+            'load_date': '', 'unload_date': '',
+            'rate': _f(o.get('rate')), 'pay_deferral_days': int(_f(o.get('pay_deferral_days'))),
+            'status': 'new', 'cargo_status': 'active', 'paid': False, 'payments': [],
+            'doc_url_order': '', 'doc_url_act': '', 'created_at': now_iso(),
+        }
+        await db.fleet_orders.insert_one(dict(clone))
+    await db.fleet_trips.update_one({'id': new_trip['id']}, {'$set': {'order_counter': len(src_orders)}})
+    await _recalc_fleet_trip(new_trip['id'])
+    return await db.fleet_trips.find_one({'id': new_trip['id']}, {'_id': 0})
+
+
+@api_router.post("/fleet/orders/{order_id}/duplicate")
+async def duplicate_fleet_order(order_id: str, user: dict = Depends(require_fleet_access)):
+    src = await db.fleet_orders.find_one({'id': order_id}, {'_id': 0})
+    if not src:
+        raise HTTPException(404, "Заказ не найден")
+    trip_id = src['trip_id']
+    upd = await db.fleet_trips.find_one_and_update(
+        {'id': trip_id}, {'$inc': {'order_counter': 1}},
+        projection={'_id': 0, 'order_counter': 1, 'trip_number': 1},
+        return_document=_ReturnDocument.AFTER,
+    )
+    seq = int((upd or {}).get('order_counter') or 1)
+    tnum = (upd or {}).get('trip_number') or 1
+    clone = {**src}
+    clone.pop('_id', None)
+    clone.update({
+        'id': str(uuid.uuid4()),
+        'order_number': f"Р{tnum}-{seq:03d}/{datetime.now(timezone.utc).year}",
+        'paid': False, 'payments': [], 'payment_date': '', 'cargo_status': 'active',
+        'status': 'new', 'doc_url_order': '', 'doc_url_act': '',
+        'created_at': now_iso(),
+    })
+    await db.fleet_orders.insert_one(dict(clone))
+    await _recalc_fleet_trip(trip_id)
+    clone.pop('_id', None)
+    return clone
+
+
+# ---- Мелочи: комментарии к рейсу и заказу ----
+@api_router.post("/fleet/{entity}/{entity_id}/comments")
+async def add_fleet_comment(entity: str, entity_id: str, payload: dict, user: dict = Depends(require_fleet_access)):
+    col = {'trips': db.fleet_trips, 'orders': db.fleet_orders}.get(entity)
+    if col is None:
+        raise HTTPException(404, "Раздел не найден")
+    doc = await col.find_one({'id': entity_id}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, "Не найдено")
+    c = {
+        'id': str(uuid.uuid4()),
+        'text': str(payload.get('text') or '').strip(),
+        'author': user.get('name') or user.get('login') or '',
+        'created_at': now_iso(),
+    }
+    if not c['text']:
+        raise HTTPException(400, "Пустой комментарий")
+    comments = (doc.get('comments') or []) + [c]
+    await col.update_one({'id': entity_id}, {'$set': {'comments': comments}})
+    return {'comments': comments}
+
+
+@api_router.delete("/fleet/{entity}/{entity_id}/comments/{comment_id}")
+async def del_fleet_comment(entity: str, entity_id: str, comment_id: str, user: dict = Depends(require_fleet_access)):
+    col = {'trips': db.fleet_trips, 'orders': db.fleet_orders}.get(entity)
+    if col is None:
+        raise HTTPException(404, "Раздел не найден")
+    doc = await col.find_one({'id': entity_id}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, "Не найдено")
+    comments = [c for c in (doc.get('comments') or []) if c.get('id') != comment_id]
+    await col.update_one({'id': entity_id}, {'$set': {'comments': comments}})
+    return {'comments': comments}
+
+
+# ---- Аналитика автопарка ----
+@api_router.get("/fleet/analytics")
+async def fleet_analytics(date_from: Optional[str] = None, date_to: Optional[str] = None,
+                          user: dict = Depends(require_fleet_access)):
+    """P&L по машинам и водителям, помесячная прибыль, порожний пробег,
+    самые убыточные рейсы. Период — по дате первой загрузки рейса."""
+    trips = await db.fleet_trips.find({'deleted': {'$ne': True}}, {'_id': 0}).to_list(5000)
+
+    def in_range(t):
+        d = (t.get('first_load_date') or t.get('created_at') or '')[:10]
+        if date_from and d < date_from:
+            return False
+        if date_to and d > date_to:
+            return False
+        return True
+
+    trips = [t for t in trips if in_range(t)]
+    trip_ids = [t['id'] for t in trips]
+    orders = await db.fleet_orders.find({'trip_id': {'$in': trip_ids}}, {'_id': 0}).to_list(20000)
+    by_trip: dict = {}
+    for o in orders:
+        by_trip.setdefault(o['trip_id'], []).append(o)
+
+    vehicles = {v['id']: v for v in await db.fleet_vehicles.find({}, {'_id': 0}).to_list(2000)}
+    drivers = {d['id']: d for d in await db.fleet_drivers.find({}, {'_id': 0}).to_list(2000)}
+
+    veh_pnl: dict = {}
+    drv_pnl: dict = {}
+    month_pnl: dict = {}
+    laden = 0.0
+    total_km = 0.0
+    trip_rows = []
+    for t in trips:
+        tos = by_trip.get(t['id'], [])
+        fin = _fleet_trip_finance(t, tos)
+        km = fin['km']
+        total_km += km
+        # порожний пробег: если у рейса нет обратных заказов — обратка пустая
+        has_back = any(o.get('direction') == 'backward' for o in tos)
+        laden += km if has_back else km * 0.5
+        vid = t.get('vehicle_id') or ''
+        did = t.get('driver_id') or ''
+        vk = veh_pnl.setdefault(vid, {'name': (vehicles.get(vid) or {}).get('plate') or (vehicles.get(vid) or {}).get('model') or '—', 'revenue': 0.0, 'expenses': 0.0, 'profit': 0.0, 'km': 0.0, 'trips': 0})
+        vk['revenue'] += fin['revenue']; vk['expenses'] += fin['expenses_total']
+        vk['profit'] += fin['profit']; vk['km'] += km; vk['trips'] += 1
+        dk = drv_pnl.setdefault(did, {'name': (drivers.get(did) or {}).get('name') or '—', 'revenue': 0.0, 'expenses': 0.0, 'profit': 0.0, 'salary': 0.0, 'trips': 0})
+        dk['revenue'] += fin['revenue']; dk['expenses'] += fin['expenses_total']
+        dk['profit'] += fin['profit']; dk['salary'] += fin['driver_salary_amount']; dk['trips'] += 1
+        mk = (t.get('first_load_date') or t.get('created_at') or '')[:7]
+        if mk:
+            m = month_pnl.setdefault(mk, {'month': mk, 'revenue': 0.0, 'expenses': 0.0, 'profit': 0.0})
+            m['revenue'] += fin['revenue']; m['expenses'] += fin['expenses_total']; m['profit'] += fin['profit']
+        trip_rows.append({
+            'id': t['id'], 'trip_number': t.get('trip_number') or 0,
+            'name': t.get('name') or '', 'route': f"{t.get('route_from', '')} → {t.get('route_to', '')}".strip(' →'),
+            'revenue': fin['revenue'], 'expenses': fin['expenses_total'], 'profit': fin['profit'],
+        })
+
+    def rnd(d):
+        for k, v in list(d.items()):
+            if isinstance(v, float):
+                d[k] = round(v, 2)
+        return d
+
+    return {
+        'date_from': date_from or '', 'date_to': date_to or '',
+        'by_vehicle': [rnd(v) for v in sorted(veh_pnl.values(), key=lambda x: -x['profit'])],
+        'by_driver': [rnd(v) for v in sorted(drv_pnl.values(), key=lambda x: -x['profit'])],
+        'by_month': [rnd(m) for m in sorted(month_pnl.values(), key=lambda x: x['month'])],
+        'loss_trips': sorted([r for r in trip_rows if r['profit'] < 0], key=lambda x: x['profit'])[:10],
+        'total_km': round(total_km, 1),
+        'laden_km': round(laden, 1),
+        'empty_km_pct': round((1 - laden / total_km) * 100, 1) if total_km else 0.0,
+        'trips_total': len(trips),
+    }
+
+
+# ---- Акт сверки с клиентом ----
+@api_router.get("/fleet/clients/{client_id}/reconciliation")
+async def fleet_client_reconciliation(client_id: str, date_from: Optional[str] = None,
+                                      date_to: Optional[str] = None, user: dict = Depends(require_fleet_access)):
+    client = await db.fleet_clients.find_one({'id': client_id}, {'_id': 0})
+    if not client:
+        raise HTTPException(404, "Клиент не найден")
+    orders = await db.fleet_orders.find({'client_id': client_id}, {'_id': 0}).sort('unload_date', 1).to_list(10000)
+    rows = []
+    total_charged = 0.0
+    total_paid = 0.0
+    for o in orders:
+        d = (o.get('unload_date') or o.get('load_date') or '')[:10]
+        if date_from and d < date_from:
+            continue
+        if date_to and d > date_to:
+            continue
+        charged = _f(o.get('rate'))
+        paid = _fleet_order_paid_amount(o)
+        total_charged += charged
+        total_paid += paid
+        rows.append({
+            'date': d, 'order_number': o.get('order_number') or '',
+            'route': f"{o.get('city_from') or o.get('loading_address') or ''} → {o.get('city_to') or o.get('unloading_address') or ''}".strip(' →'),
+            'charged': round(charged, 2), 'paid': round(paid, 2),
+        })
+    return {
+        'client': {'id': client['id'], 'name': client.get('name') or '', 'unp': client.get('unp') or ''},
+        'date_from': date_from or '', 'date_to': date_to or '',
+        'rows': rows,
+        'total_charged': round(total_charged, 2),
+        'total_paid': round(total_paid, 2),
+        'balance': round(total_charged - total_paid, 2),
+        'generated_at': now_iso(),
+    }
+
+
+# ---- Выгрузка рейсов в Excel ----
+@api_router.get("/fleet/export")
+async def fleet_export_xlsx(month: Optional[str] = None, token: Optional[str] = None,
+                            current_user: Optional[dict] = Depends(_get_user_from_token)):
+    # Скачивается переходом по ссылке (без заголовка Authorization) — токен
+    # принимается query-параметром, как в /kudir/export.
+    user = current_user
+    if not user and token:
+        try:
+            tp = _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            user = await db.users.find_one({"id": tp.get("sub")}, {"_id": 0})
+        except Exception:
+            user = None
+    if not user or (user.get("role") not in DIRECTOR_ROLES and not user.get("fleet_access")):
+        raise HTTPException(403, "Нет доступа к разделу «Свой автопарк»")
+
+    import openpyxl
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+
+    trips = await db.fleet_trips.find({'deleted': {'$ne': True}}, {'_id': 0}).to_list(5000)
+    if month:
+        trips = [t for t in trips if (t.get('first_load_date') or t.get('created_at') or '')[:7] == month]
+    trips.sort(key=lambda t: -(t.get('trip_number') or 0))
+    trip_ids = [t['id'] for t in trips]
+    orders = await db.fleet_orders.find({'trip_id': {'$in': trip_ids}}, {'_id': 0}).to_list(20000)
+    by_trip: dict = {}
+    for o in orders:
+        by_trip.setdefault(o['trip_id'], []).append(o)
+    vehicles = {v['id']: v for v in await db.fleet_vehicles.find({}, {'_id': 0}).to_list(2000)}
+    drivers = {d['id']: d for d in await db.fleet_drivers.find({}, {'_id': 0}).to_list(2000)}
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Рейсы"
+    head = ['Рейс', 'Название', 'Маршрут', 'Машина', 'Водитель', 'Статус',
+            'Первая загрузка', 'Последняя выгрузка', 'Заказов', 'Выручка',
+            'Расходы', 'Прибыль', 'Получено', 'Долг клиента', 'Долг водителю']
+    ws.append(head)
+    for t in trips:
+        tos = by_trip.get(t['id'], [])
+        fin = _fleet_trip_finance(t, tos)
+        v = vehicles.get(t.get('vehicle_id') or '') or {}
+        d = drivers.get(t.get('driver_id') or '') or {}
+        ws.append([
+            f"Р{t.get('trip_number') or ''}", t.get('name') or '',
+            f"{t.get('route_from', '')} → {t.get('route_to', '')}".strip(' →'),
+            v.get('plate') or v.get('model') or '', d.get('name') or '',
+            t.get('status') or 'active',
+            t.get('first_load_date') or '', t.get('last_unload_date') or '',
+            len(tos), fin['revenue'], fin['expenses_total'], fin['profit'],
+            fin['received'], fin['debt_client'], fin['driver_debt'],
+        ])
+    ws2 = wb.create_sheet("Заказы")
+    ws2.append(['Заказ', 'Рейс', 'Направление', 'Клиент', 'Маршрут', 'Дата загрузки',
+                'Дата выгрузки', 'Ставка', 'Оплачено', 'Статус оплаты', 'Срок оплаты'])
+    tnum_by_id = {t['id']: t.get('trip_number') for t in trips}
+    for o in orders:
+        ws2.append([
+            o.get('order_number') or '', f"Р{tnum_by_id.get(o['trip_id']) or ''}",
+            'обратка' if o.get('direction') == 'backward' else 'прямой',
+            o.get('client_name') or '',
+            f"{o.get('city_from') or o.get('loading_address') or ''} → {o.get('city_to') or o.get('unloading_address') or ''}".strip(' →'),
+            o.get('load_date') or '', o.get('unload_date') or '',
+            _f(o.get('rate')), _fleet_order_paid_amount(o),
+            'оплачен' if _fleet_order_is_paid(o) else 'не оплачен',
+            _fleet_order_due(o),
+        ])
+    for w in (ws, ws2):
+        for col in w.columns:
+            width = max((len(str(c.value or '')) for c in col), default=10)
+            w.column_dimensions[col[0].column_letter].width = min(width + 2, 42)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"Автопарк — рейсы{(' ' + month) if month else ''}.xlsx"
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=\"fleet.xlsx\"; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
+# ---- Документы автопарка — заглушка (шаблоны и реквизиты юрлица придут позже) ----
+@api_router.post("/fleet/orders/{order_id}/generate_doc")
+async def generate_fleet_doc(order_id: str, kind: str, user: dict = Depends(require_fleet_access)):
+    cfg = FLEET_TEMPLATES.get(kind)
+    if not cfg or not cfg.get('template_id'):
+        raise HTTPException(400, f"Шаблон для '{kind}' ещё не подключён — добавьте template_id в FLEET_TEMPLATES")
+    # логика генерации будет добавлена по образцу основного бизнеса, когда
+    # придут реквизиты нового юрлица и шаблоны документов.
+    raise HTTPException(501, "Генерация документов автопарка ещё не настроена")
 
 
 @api_router.get("/")
