@@ -3330,7 +3330,13 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     # номер ПП, кладём прежние значения в payment_undo.<side> прямо на
     # заявку — чтобы вернуть одним нажатием. Новая отметка оплаты этот
     # снимок затирает.
-    undo_ops: dict = {}
+    # Built as one whole-field replace, not dotted payment_undo.<side> sets —
+    # an order whose payment_undo is explicitly null (every order created
+    # since this field shipped defaults to None, which Mongo stores as a
+    # real null) makes Mongo reject `$set: {"payment_undo.client": ...}`
+    # with "Cannot create field 'client' in element {payment_undo: null}".
+    _pu = dict(old_doc.get("payment_undo") or {})
+    _pu_dirty = False
     for _s in ("client", "carrier"):
         _pf, _ppf, _ppd, _pdt, _pays, _cash = (
             f"{_s}_paid", f"{_s}_pp_number", f"{_s}_pp_date",
@@ -3339,13 +3345,15 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
         _clears_paid = _pf in update_data and not update_data.get(_pf) and old_doc.get(_pf)
         _clears_pp = _ppf in update_data and not update_data.get(_ppf) and old_doc.get(_ppf)
         if _had and (_clears_paid or _clears_pp):
-            undo_ops[f"payment_undo.{_s}"] = {
+            _pu[_s] = {
                 _pf: old_doc.get(_pf), _ppf: old_doc.get(_ppf), _ppd: old_doc.get(_ppd),
                 _pdt: old_doc.get(_pdt), _pays: old_doc.get(_pays), _cash: old_doc.get(_cash),
                 "at": now_iso(), "by": (current_user or {}).get("name") or "",
             }
+            _pu_dirty = True
         elif update_data.get(_pf) and not old_doc.get(_pf):
-            undo_ops[f"payment_undo.{_s}"] = None  # свежая отметка — старый снимок неактуален
+            if _pu.pop(_s, None) is not None:  # свежая отметка — старый снимок неактуален
+                _pu_dirty = True
 
     if update_data:
         await db.orders.update_one({"id": order_id}, {"$set": update_data})
@@ -3371,16 +3379,8 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
         if log_entries:
             await db.order_logs.insert_many(log_entries)
 
-    if undo_ops:
-        _set = {k: v for k, v in undo_ops.items() if v is not None}
-        _unset = {k: "" for k, v in undo_ops.items() if v is None}
-        _mongo: dict = {}
-        if _set:
-            _mongo["$set"] = _set
-        if _unset:
-            _mongo["$unset"] = _unset
-        if _mongo:
-            await db.orders.update_one({"id": order_id}, _mongo)
+    if _pu_dirty:
+        await db.orders.update_one({"id": order_id}, {"$set": {"payment_undo": _pu}})
 
     doc = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not doc:
@@ -3938,9 +3938,12 @@ async def delete_payment(order_id: str, side: str, payment_id: str, background_t
     _mongo_ops: dict = {"$set": {field: payments, paid_field: fully_paid}}
     # Первое удаление в серии (фронт снимает много-ПП оплату по одному ПП за
     # раз) фиксирует полный прежний список — чтобы «Вернуть» восстановил всё.
+    # Written as a whole-field payment_undo replace, not a dotted
+    # payment_undo.<side> set — see the matching comment in update_order.
     _old_payments = _get_payments(order, side)
-    if _old_payments and not (order.get("payment_undo") or {}).get(side):
-        _mongo_ops["$set"][f"payment_undo.{side}"] = {
+    _pu = dict(order.get("payment_undo") or {})
+    if _old_payments and not _pu.get(side):
+        _pu[side] = {
             paid_field: order.get(paid_field), f"{side}_payments": _old_payments,
             f"{side}_pp_number": order.get(f"{side}_pp_number"),
             f"{side}_pp_date": order.get(f"{side}_pp_date"),
@@ -3948,6 +3951,7 @@ async def delete_payment(order_id: str, side: str, payment_id: str, background_t
             f"{side}_cash": order.get(f"{side}_cash"),
             "at": now_iso(), "by": (current_user or {}).get("name") or "",
         }
+        _mongo_ops["$set"]["payment_undo"] = _pu
     await db.orders.update_one({"id": order_id}, _mongo_ops)
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
 
