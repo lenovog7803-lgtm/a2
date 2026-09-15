@@ -5197,6 +5197,16 @@ def order_in_period(o: dict, period: str) -> bool:
     if not ud:
         # если нет даты выгрузки — пробуем дату загрузки, иначе created_at
         ud = o.get("load_date") or (o.get("created_at", "")[:10])
+    # Конкретный квартал ("2026-Q3") — с фронта из выпадающего списка периодов.
+    import re as _re_quarter
+    m = _re_quarter.match(r"^(\d{4})-Q([1-4])$", period)
+    if m:
+        year, q = m.group(1), int(m.group(2))
+        try:
+            month = int(ud[5:7])
+        except (ValueError, IndexError):
+            return False
+        return ud[:4] == year and (month - 1) // 3 + 1 == q
     return ud.startswith(period)
 
 
