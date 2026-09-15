@@ -3463,7 +3463,7 @@ async def _create_kudir_income_row(order: dict):
     total_margin = sum(max(0.0, float(o.get('client_rate') or 0) - _kudir_carrier_cost(o)) for o in group)
     total_paid = sum(float(o.get('client_rate') or 0) for o in group)
     client_names = sorted({o.get('client_name') or '' for o in group} - {''})
-    client_label = client_names[0] if len(client_names) <= 1 else ', '.join(client_names)
+    client_label = client_names[0] if len(client_names) == 1 else (', '.join(client_names) or '—')
     carrier_notes = sorted({_kudir_carrier_note(o) for o in group if o.get('carrier_name')})
 
     # Client-side act — this business's own act numbering is fixed 1:1 to
@@ -3511,7 +3511,7 @@ async def _create_kudir_transit_row(order: dict):
     order_numbers = sorted(o.get('order_number') or '' for o in group)
     orders_label = ', '.join(n for n in order_numbers if n)
     carrier_names = sorted({o.get('carrier_name') or '' for o in group} - {''})
-    carrier_label = carrier_names[0] if len(carrier_names) <= 1 else ', '.join(carrier_names)
+    carrier_label = carrier_names[0] if len(carrier_names) == 1 else (', '.join(carrier_names) or '—')
     total_transit = sum(float(o.get('carrier_rate') or 0) for o in group)
 
     def _act_part(o):
@@ -3698,7 +3698,7 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
         order_numbers = sorted(mo.get('order_number') or '' for mo, _ in members)
         orders_label = ', '.join(n for n in order_numbers if n)
         client_names = sorted({mo.get('client_name') or '' for mo, _ in members} - {''})
-        client_label = client_names[0] if len(client_names) <= 1 else ', '.join(client_names)
+        client_label = client_names[0] if len(client_names) == 1 else (', '.join(client_names) or '—')
         carrier_notes = sorted({
             _kudir_carrier_note(mo) for mo, _ in members if mo.get('carrier_name')
         })
