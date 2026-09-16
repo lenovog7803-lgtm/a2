@@ -2812,41 +2812,57 @@ def _close_carrier_google_tasks_sync(carrier_name: str, token_doc: dict) -> list
     from google_calendar import _build_service as _cal_build_svc
     from datetime import datetime, timedelta, timezone as _tz
     results = []
-    # 1. Close Google Tasks in "Оплаты перевозчиков"
+    # 1. Close Google Tasks in "Оплаты перевозчиков". Paginated — the API
+    # defaults to 20 items per page, and this list accumulates every pending
+    # carrier-payment task, so an unpaginated single call silently misses
+    # anything past the first page and leaves it hanging as unpaid forever.
     try:
         gt_service = _gt_build_svc(token_doc)
         list_id = get_or_create_tasklist(gt_service, PAYMENT_LIST_NAME)
-        tasks_resp = gt_service.tasks().list(tasklist=list_id, showCompleted=False).execute()
-        for task in tasks_resp.get("items", []):
-            title = task.get("title", "")
-            if carrier_name.lower() in title.lower():
-                updated = dict(task)
-                updated["status"] = "completed"
-                gt_service.tasks().update(tasklist=list_id, task=task["id"], body=updated).execute()
-                results.append(f"Google Task completed: {title}")
+        page_token = None
+        while True:
+            tasks_resp = gt_service.tasks().list(
+                tasklist=list_id, showCompleted=False, maxResults=100, pageToken=page_token,
+            ).execute()
+            for task in tasks_resp.get("items", []):
+                title = task.get("title", "")
+                if carrier_name.lower() in title.lower():
+                    updated = dict(task)
+                    updated["status"] = "completed"
+                    gt_service.tasks().update(tasklist=list_id, task=task["id"], body=updated).execute()
+                    results.append(f"Google Task completed: {title}")
+            page_token = tasks_resp.get("nextPageToken")
+            if not page_token:
+                break
     except Exception as e:
         results.append(f"Google Tasks error: {e}")
-    # 2. Mark Google Calendar events with ✅
+    # 2. Mark Google Calendar events with ✅. Same pagination concern as above.
     try:
         cal_service = _cal_build_svc(token_doc)
         now = datetime.now(_tz.utc)
-        events_resp = cal_service.events().list(
-            calendarId="primary",
-            q=carrier_name,
-            timeMin=(now - timedelta(days=90)).isoformat(),
-            timeMax=(now + timedelta(days=90)).isoformat(),
-        ).execute()
-        for event in events_resp.get("items", []):
-            summary = event.get("summary", "")
-            if (("оплатить" in summary.lower() or "оплата" in summary.lower())
-                    and carrier_name.lower() in summary.lower()
-                    and not summary.startswith("✅")):
-                updated_event = dict(event)
-                updated_event["summary"] = "✅ " + summary
-                cal_service.events().update(
-                    calendarId="primary", eventId=event["id"], body=updated_event
-                ).execute()
-                results.append(f"Calendar event updated: {summary}")
+        page_token = None
+        while True:
+            events_resp = cal_service.events().list(
+                calendarId="primary",
+                q=carrier_name,
+                timeMin=(now - timedelta(days=90)).isoformat(),
+                timeMax=(now + timedelta(days=90)).isoformat(),
+                pageToken=page_token,
+            ).execute()
+            for event in events_resp.get("items", []):
+                summary = event.get("summary", "")
+                if (("оплатить" in summary.lower() or "оплата" in summary.lower())
+                        and carrier_name.lower() in summary.lower()
+                        and not summary.startswith("✅")):
+                    updated_event = dict(event)
+                    updated_event["summary"] = "✅ " + summary
+                    cal_service.events().update(
+                        calendarId="primary", eventId=event["id"], body=updated_event
+                    ).execute()
+                    results.append(f"Calendar event updated: {summary}")
+            page_token = events_resp.get("nextPageToken")
+            if not page_token:
+                break
     except Exception as e:
         results.append(f"Calendar error: {e}")
     return results
