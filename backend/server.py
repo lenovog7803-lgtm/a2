@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument as _ReturnDocument
-import os, uuid, asyncio, hashlib, secrets, time, html as _html
+import os, re, uuid, asyncio, hashlib, secrets, time, html as _html
 import jwt as _jwt
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -2806,12 +2806,16 @@ async def _bg_carrier_payment_calendar(deadline_str: str, reminder_str: str, car
         logging.getLogger(__name__).error(f"_bg_carrier_payment_calendar failed: {e}", exc_info=True)
 
 
-def _close_carrier_google_tasks_sync(carrier_name: str, token_doc: dict) -> list:
-    """Sync: mark payment tasks done in Google Tasks and ✅ calendar events."""
+def _close_carrier_google_tasks_sync(carrier_name: str, order_number: str, token_doc: dict) -> list:
+    """Sync: mark payment tasks done in Google Tasks and ✅ calendar events.
+    Requires both carrier name AND order number to match — carrier name alone
+    would also close still-unpaid Google Tasks/events for that carrier's other
+    orders whenever they share a name substring."""
     from google_tasks import _build_service as _gt_build_svc, get_or_create_tasklist, PAYMENT_LIST_NAME
     from google_calendar import _build_service as _cal_build_svc
     from datetime import datetime, timedelta, timezone as _tz
     results = []
+    order_number = order_number or ""
     # 1. Close Google Tasks in "Оплаты перевозчиков". Paginated — the API
     # defaults to 20 items per page, and this list accumulates every pending
     # carrier-payment task, so an unpaginated single call silently misses
@@ -2826,7 +2830,8 @@ def _close_carrier_google_tasks_sync(carrier_name: str, token_doc: dict) -> list
             ).execute()
             for task in tasks_resp.get("items", []):
                 title = task.get("title", "")
-                if carrier_name.lower() in title.lower():
+                title_l = title.lower()
+                if carrier_name.lower() in title_l and (not order_number or order_number.lower() in title_l):
                     updated = dict(task)
                     updated["status"] = "completed"
                     gt_service.tasks().update(tasklist=list_id, task=task["id"], body=updated).execute()
@@ -2837,6 +2842,9 @@ def _close_carrier_google_tasks_sync(carrier_name: str, token_doc: dict) -> list
     except Exception as e:
         results.append(f"Google Tasks error: {e}")
     # 2. Mark Google Calendar events with ✅. Same pagination concern as above.
+    # The event summary only carries the carrier name (not the order number —
+    # see _bg_carrier_payment_calendar), so the order number is checked against
+    # the description instead, which does include it.
     try:
         cal_service = _cal_build_svc(token_doc)
         now = datetime.now(_tz.utc)
@@ -2851,8 +2859,10 @@ def _close_carrier_google_tasks_sync(carrier_name: str, token_doc: dict) -> list
             ).execute()
             for event in events_resp.get("items", []):
                 summary = event.get("summary", "")
+                description = event.get("description", "")
                 if (("оплатить" in summary.lower() or "оплата" in summary.lower())
                         and carrier_name.lower() in summary.lower()
+                        and (not order_number or order_number.lower() in description.lower())
                         and not summary.startswith("✅")):
                     updated_event = dict(event)
                     updated_event["summary"] = "✅ " + summary
@@ -2868,7 +2878,7 @@ def _close_carrier_google_tasks_sync(carrier_name: str, token_doc: dict) -> list
     return results
 
 
-async def _bg_close_carrier_payment_on_paid(carrier_name: str, order_id: str):
+async def _bg_close_carrier_payment_on_paid(carrier_name: str, order_number: str, order_id: str):
     if not carrier_name:
         return
     try:
@@ -2876,7 +2886,7 @@ async def _bg_close_carrier_payment_on_paid(carrier_name: str, order_id: str):
         if not token_doc:
             logging.getLogger(__name__).warning("_bg_close_carrier_payment_on_paid: no Google token")
             return
-        results = await asyncio.to_thread(_close_carrier_google_tasks_sync, carrier_name, token_doc)
+        results = await asyncio.to_thread(_close_carrier_google_tasks_sync, carrier_name, order_number, token_doc)
         for r in results:
             print(f"[carrier_paid] {r}")
     except Exception as e:
@@ -3263,6 +3273,23 @@ async def get_order(order_id: str):
     return Order(**doc)
 
 
+# Carrier payment/reminder tasks used to all land on a fixed time (10:00 or
+# 09:00), so several due on the same day piled up at the exact same minute in
+# Google Tasks/Calendar. Spread them across a 10:00-16:00 window in 15-minute
+# slots instead, one slot per task already scheduled that day.
+_PAYMENT_TASK_WINDOW_START_MIN = 10 * 60
+_PAYMENT_TASK_WINDOW_END_MIN = 16 * 60
+_PAYMENT_TASK_SLOT_MINUTES = 15
+
+
+async def _next_payment_task_due_time(task_type: str, due_date: str) -> str:
+    count = await db.tasks.count_documents({"task_type": task_type, "due_date": due_date})
+    total_slots = (_PAYMENT_TASK_WINDOW_END_MIN - _PAYMENT_TASK_WINDOW_START_MIN) // _PAYMENT_TASK_SLOT_MINUTES
+    offset_min = (count % total_slots) * _PAYMENT_TASK_SLOT_MINUTES
+    total_min = _PAYMENT_TASK_WINDOW_START_MIN + offset_min
+    return f"{total_min // 60:02d}:{total_min % 60:02d}"
+
+
 @api_router.put("/orders/{order_id}", response_model=Order)
 async def update_order(order_id: str, payload: OrderUpdate, background_tasks: BackgroundTasks,
                        current_user: Optional[dict] = Depends(_get_user_from_token)):
@@ -3280,15 +3307,22 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
     if update_data.get("carrier_paid") is True and not old_doc.get("carrier_paid"):
         _order_number = old_doc.get("order_number", "")
         _carrier_name = old_doc.get("carrier_name", "")
+        # Match on carrier name AND order number together (title carries both,
+        # e.g. "Оплатить перевозчика: X — заявка Y") — matching on carrier name
+        # alone would also close still-unpaid tasks for that carrier's other
+        # orders sharing the same name in their title.
         _or_clauses: list = [{"order_id": order_id}]
-        if _carrier_name:
-            _or_clauses.append({"title": {"$regex": _carrier_name, "$options": "i"}})
+        if _carrier_name and _order_number:
+            _or_clauses.append({"$and": [
+                {"title": {"$regex": re.escape(_carrier_name), "$options": "i"}},
+                {"title": {"$regex": re.escape(_order_number), "$options": "i"}},
+            ]})
         await db.tasks.update_many(
             {"status": {"$ne": "done"}, "$or": _or_clauses},
             {"$set": {"status": "done", "completed_at": now_iso()}}
         )
         logging.getLogger(__name__).info(f"Closed payment tasks for order {_order_number}")
-        background_tasks.add_task(_bg_close_carrier_payment_on_paid, _carrier_name, order_id)
+        background_tasks.add_task(_bg_close_carrier_payment_on_paid, _carrier_name, _order_number, order_id)
     carrier_already_paid = update_data.get("carrier_paid") or old_doc.get("carrier_paid")
     if update_data.get("docs_from_carrier_received") and not old_doc.get("docs_from_carrier_received") and not carrier_already_paid:
         days = update_data.get("carrier_payment_days") or old_doc.get("carrier_payment_days") or 20
@@ -3305,13 +3339,15 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
         order_number = old_doc.get("order_number") or ""
         carrier_rate = old_doc.get("carrier_rate") or 0
         _created_by = (current_user or {}).get("id", "")
+        payment_due_time = await _next_payment_task_due_time("payment", deadline_str)
+        reminder_due_time = await _next_payment_task_due_time("reminder", reminder_str)
         for task_fields in [
             {
                 "id": str(uuid.uuid4()),
                 "title": f"Оплатить перевозчика: {carrier_name} — заявка {order_number}",
                 "task_type": "payment",
                 "due_date": deadline_str,
-                "due_time": "10:00",
+                "due_time": payment_due_time,
                 "status": "pending",
                 "description": f"Заявка {order_number}, сумма: {carrier_rate} BYN. Срок: {deadline_display}",
                 "order_id": order_id,
@@ -3324,7 +3360,7 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
                 "title": f"⚠️ Через {reminder_days_before} дня оплатить перевозчика: {carrier_name}",
                 "task_type": "reminder",
                 "due_date": reminder_str,
-                "due_time": "09:00",
+                "due_time": reminder_due_time,
                 "status": "pending",
                 "description": f"Срок оплаты: {deadline_display}. Заявка {order_number}",
                 "order_id": order_id,
