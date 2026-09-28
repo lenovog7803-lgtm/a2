@@ -3466,6 +3466,12 @@ async def _kudir_payment_group(order: dict, pp_field: str, date_field: str) -> l
         date_field: {'$regex': f'^{_re.escape(date_str)}'},
         'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
     }, {'_id': 0}).to_list(500)
+    # A sibling that has moved to the `{side}_payments` array still carries
+    # the old single-PP fields, but its book row now comes from
+    # _sync_kudir_rows_for_payments — pulling it into this group row too
+    # would put the same payment in the book twice.
+    payments_field = pp_field.replace('_pp_number', '_payments')
+    group = [o for o in group if o['id'] == order['id'] or not o.get(payments_field)]
     return group or [order]
 
 
@@ -3551,7 +3557,7 @@ async def _create_kudir_income_row(order: dict):
     await db.kudir_entries.insert_one(entry)
 
 
-async def _create_kudir_transit_row(order: dict):
+async def _create_kudir_transit_row(order: dict, _regen_orphans: bool = True):
     """Строка транзита в КУДиР — создаётся/пересчитывается при отметке
     оплаты перевозчику с номером ПП. Заявки с одинаковым
     carrier_pp_number + датой схлопываются в одну строку."""
@@ -3595,8 +3601,27 @@ async def _create_kudir_transit_row(order: dict):
     # row must not get clobbered by the next auto-sync.
     if await db.kudir_entries.find_one({'row_type': 'transit', 'order_id': {'$in': group_ids}, 'manually_edited': True}):
         return
-    await db.kudir_entries.delete_many({'row_type': 'transit', 'order_id': {'$in': group_ids}})
+    # Match on membership (`order_ids`), not just the row's anchor
+    # `order_id`: a group row is anchored to whichever order triggered it,
+    # so once that anchor drops out of the group (cancelled, PP changed,
+    # moved to partial payments) an `order_id` match misses the old row and
+    # it survives next to the new one.
+    stale = await db.kudir_entries.find(
+        {'row_type': 'transit', 'order_ids': {'$in': group_ids},
+         'payment_id': {'$exists': False}, 'manually_edited': {'$ne': True}},
+        {'_id': 0, 'id': 1, 'order_ids': 1}).to_list(500)
+    orphan_ids = {oid for r in stale for oid in (r.get('order_ids') or [])} - set(group_ids)
+    await db.kudir_entries.delete_many({'id': {'$in': [r['id'] for r in stale]}})
+    await db.kudir_entries.delete_many({'row_type': 'transit', 'order_id': {'$in': group_ids},
+                                        'payment_id': {'$exists': False}})
     await db.kudir_entries.insert_one(entry)
+    # Orders that were only in the old row lost their line with it — give
+    # them back their own (one level deep; their group is disjoint from this one).
+    if _regen_orphans:
+        for oid in orphan_ids:
+            o = await db.orders.find_one({'id': oid, 'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}, {'_id': 0})
+            if o and not o.get('carrier_payments') and o.get('carrier_paid') and o.get('carrier_pp_number') and o.get('carrier_paid_date'):
+                await _create_kudir_transit_row(o, _regen_orphans=False)
 
 
 _LEGACY_PAYMENT_ID_PREFIX = 'legacy-'
@@ -3628,7 +3653,24 @@ def _get_payments(order: dict, side: str) -> list:
     return []
 
 
+# Every book write is delete-then-insert. Two syncs touching the same row at
+# once (mark_payment + the order-update background task, two orders of one
+# PP group saved back to back, the /kudir/resync sweep next to a live edit)
+# can both delete, both find nothing, and both insert — an exact duplicate
+# row. Serialize them. One process only (render.yaml runs a single uvicorn
+# worker); with more workers this would need a DB-side lock.
+_kudir_lock = asyncio.Lock()
+
+
 async def _sync_kudir_rows_for_payments(order: dict, side: str):
+    async with _kudir_lock:
+        # Re-read under the lock — the caller's copy may predate a write
+        # that finished while we were waiting.
+        fresh = await db.orders.find_one({'id': order['id']}, {'_id': 0})
+        await _sync_kudir_rows_for_payments_unlocked(fresh or order, side)
+
+
+async def _sync_kudir_rows_for_payments_unlocked(order: dict, side: str, _cascade: bool = True):
     """One KUDiR row per payment entry in `{side}_payments`. Carrier-side
     rows stay one-row-per-payment-per-order — zero-amount audit lines,
     matching the existing transit-row design (see _create_kudir_transit_row).
@@ -3653,6 +3695,20 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
         else:
             delete_filter['payment_id'] = {'$exists': True}
         await db.kudir_entries.delete_many(delete_filter)
+        # The order's row from before it moved to partial payments (single-PP
+        # format, no payment_id) is never matched by the filter above and
+        # would stay next to the new per-payment rows — same payment twice.
+        # If it was a group row, rebuild it for the orders still in it.
+        legacy = await db.kudir_entries.find(
+            {'row_type': row_type, 'order_ids': order['id'],
+             'payment_id': {'$exists': False}, 'manually_edited': {'$ne': True}},
+            {'_id': 0, 'id': 1, 'order_ids': 1}).to_list(50)
+        if legacy:
+            await db.kudir_entries.delete_many({'id': {'$in': [r['id'] for r in legacy]}})
+            for oid in {oid for r in legacy for oid in (r.get('order_ids') or [])} - {order['id']}:
+                o = await db.orders.find_one({'id': oid, 'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}, {'_id': 0})
+                if o and not o.get('carrier_payments') and o.get('carrier_paid') and o.get('carrier_pp_number') and o.get('carrier_paid_date'):
+                    await _create_kudir_transit_row(o, _regen_orphans=False)
         for p in payments:
             if p.get('id') in locked_payment_ids:
                 continue
@@ -3696,6 +3752,38 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
             {'row_type': 'income', 'order_ids': [order['id']]}
         )
         return
+
+    # The per-group delete below only matches rows for the order's CURRENT
+    # payments (exact date + «Плат. поручение № X от …»). A row left from a
+    # PP whose number/date was since corrected, a partial PP that was
+    # deleted while others remain, or the single-PP «Оплачено» row (its
+    # document_ref carries «; Акт № …») never matches and stays next to the
+    # new one — the same money in the book twice. Drop every row of this
+    # order that no current payment accounts for, and rebuild the other
+    # orders that shared it so they don't lose their line.
+    current_keys = set()
+    for p in payments:
+        d = (p.get('pp_date') or '')[:10]
+        n = (p.get('pp_number') or '').strip()
+        if d:
+            current_keys.add((d, f"Плат. поручение № {n} от {fmt_date_ru(d)}" if n else ''))
+    own_rows = await db.kudir_entries.find(
+        {'row_type': 'income', 'order_ids': order['id'], 'manually_edited': {'$ne': True}},
+        {'_id': 0, 'id': 1, 'entry_date': 1, 'document_ref': 1, 'order_ids': 1, 'payment_id': 1}).to_list(200)
+    stale = [r for r in own_rows
+             if 'payment_id' not in r
+             or (r.get('entry_date'), r.get('document_ref') or '') not in current_keys]
+    if stale:
+        await db.kudir_entries.delete_many({'id': {'$in': [r['id'] for r in stale]}})
+        if _cascade:
+            for oid in {oid for r in stale for oid in (r.get('order_ids') or [])} - {order['id']}:
+                sib = await db.orders.find_one({'id': oid, 'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}}, {'_id': 0})
+                if not sib:
+                    continue
+                if sib.get('client_payments'):
+                    await _sync_kudir_rows_for_payments_unlocked(sib, 'client', _cascade=False)
+                elif sib.get('client_paid') and sib.get('client_pp_number') and sib.get('client_paid_date'):
+                    await _create_kudir_income_row(sib)
 
     groups = []
     seen_keys = set()
@@ -3783,6 +3871,11 @@ async def _sync_kudir_rows_for_payments(order: dict, side: str):
 
 
 async def _sync_kudir_row(order_id: str, side: str):
+    async with _kudir_lock:
+        await _sync_kudir_row_unlocked(order_id, side)
+
+
+async def _sync_kudir_row_unlocked(order_id: str, side: str):
     """Keeps a KUDiR row in sync with an order's current payment state —
     creates/recomputes it when paid+PP+date are all present, and removes
     the order from any existing row when they're not (payment unmarked, or
@@ -3809,7 +3902,7 @@ async def _sync_kudir_row(order_id: str, side: str):
     # payment instead, kept in sync here so the generic order-update
     # endpoint's retroactive resync (below) doesn't clobber them.
     if order.get(f'{side}_payments') and not suppress:
-        await _sync_kudir_rows_for_payments(order, side)
+        await _sync_kudir_rows_for_payments_unlocked(order, side)
         return
 
     if not suppress and order.get(paid_field) and order.get(pp_field) and order.get(date_field):
