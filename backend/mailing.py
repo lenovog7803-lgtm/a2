@@ -77,6 +77,9 @@ DEFAULT_SETTINGS = {
                  "Monster Energy из Европы — поставки до Москвы",
                  "Поставки Monster Energy из Европы"],
     "body": DEFAULT_BODY, "followup_body": DEFAULT_FOLLOWUP,
+    # smtp — через почтовый сервер по паролю приложения;
+    # gmail_api — через подключённый в CRM Google-аккаунт (HTTPS, работает на бесплатном Render)
+    "transport": "smtp",
     "running": False,
 }
 INT_KEYS = ("smtp_port", "imap_port", "daily_limit", "min_delay", "max_delay", "hour_start", "hour_end", "followup_days")
@@ -190,6 +193,56 @@ def _smtp_connect(s: dict, timeout: int = 60):
     return srv
 
 
+class GmailAuthError(Exception):
+    """Нет доступа к отправке через Gmail API — нужно переподключить Google."""
+
+
+def _gmail_access_token(token_doc: dict) -> str:
+    from google.oauth2.credentials import Credentials as UserCredentials
+    from google.auth.transport.requests import Request
+    from oauth_google import GMAIL_SEND_SCOPE, TOKEN_URL, _client_id, _client_secret
+    if not token_doc or not token_doc.get("refresh_token"):
+        raise GmailAuthError("Google не подключён к CRM — нажмите «Подключить Google» в настройках рассылки")
+    creds = UserCredentials(token=None, refresh_token=token_doc["refresh_token"], token_uri=TOKEN_URL,
+                            client_id=_client_id(), client_secret=_client_secret(), scopes=[GMAIL_SEND_SCOPE])
+    try:
+        creds.refresh(Request())
+    except Exception as e:
+        raise GmailAuthError("Google не дал право отправлять письма — нажмите «Подключить Google» "
+                             f"и разрешите отправку почты ({e})")
+    return creds.token
+
+
+def gmail_api_send_sync(token_doc: dict, msg: EmailMessage):
+    import base64
+    import requests
+    token = _gmail_access_token(token_doc)
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    r = requests.post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                      headers={"Authorization": f"Bearer {token}"}, json={"raw": raw}, timeout=60)
+    if r.status_code in (401, 403):
+        raise GmailAuthError(f"Gmail API отказал в доступе ({r.status_code}): {r.text[:200]}")
+    if r.status_code == 400 and "invalid to header" in r.text.lower():
+        raise smtplib.SMTPRecipientsRefused({msg["To"]: (400, b"Invalid To")})
+    if r.status_code >= 400:
+        raise RuntimeError(f"Gmail API {r.status_code}: {r.text[:300]}")
+
+
+async def deliver(db, s: dict, msg: EmailMessage):
+    """Отправляет письмо выбранным способом (SMTP или Gmail API)."""
+    if s.get("transport") == "gmail_api":
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        await asyncio.to_thread(gmail_api_send_sync, token_doc, msg)
+    else:
+        await asyncio.to_thread(smtp_send_sync, s, msg)
+
+
+def is_configured(s: dict) -> bool:
+    if s.get("transport") == "gmail_api":
+        return bool(s.get("login"))
+    return bool(s.get("login") and password_of(s))
+
+
 def smtp_send_sync(s: dict, msg: EmailMessage):
     srv = _smtp_connect(s)
     try:
@@ -201,15 +254,25 @@ def smtp_send_sync(s: dict, msg: EmailMessage):
             pass
 
 
-def test_connection_sync(s: dict) -> dict:
+def test_connection_sync(s: dict, token_doc: Optional[dict] = None) -> dict:
     res = {}
-    try:
-        srv = _smtp_connect(s, timeout=20)
-        srv.quit()
-        res["smtp"] = "ok"
-    except Exception as e:
-        res["smtp"] = f"ошибка: {e}"
-    if s.get("imap_host"):
+    if s.get("transport") == "gmail_api":
+        try:
+            _gmail_access_token(token_doc or {})
+            res["smtp"] = "ok"
+        except Exception as e:
+            res["smtp"] = f"ошибка: {e}"
+    else:
+        try:
+            srv = _smtp_connect(s, timeout=20)
+            srv.quit()
+            res["smtp"] = "ok"
+        except OSError as e:
+            res["smtp"] = (f"ошибка: {e}. Похоже, сервер CRM не выпускает почту по SMTP "
+                           "(так бывает на бесплатном Render) — выберите способ отправки «Через Google»")
+        except Exception as e:
+            res["smtp"] = f"ошибка: {e}"
+    if s.get("imap_host") and password_of(s):
         try:
             im = imaplib.IMAP4_SSL(s["imap_host"].strip(), int(s.get("imap_port") or 993), timeout=20)
             im.login(s["login"].strip(), password_of(s))
@@ -273,6 +336,8 @@ async def save_settings(db, data: dict):
                 v = int(v)
             except (TypeError, ValueError):
                 raise HTTPException(400, f"Поле «{k}» должно быть числом")
+        if k == "transport" and v not in ("smtp", "gmail_api"):
+            raise HTTPException(400, "Неизвестный способ отправки")
         if k in BOOL_KEYS:
             v = bool(v) and v not in ("0", "false", "False")
         if k == "subjects" and isinstance(v, str):
@@ -359,7 +424,7 @@ async def on_reply(db, c: dict):
 
 async def check_inbox(db, s: dict) -> tuple:
     if not s.get("imap_host") or not password_of(s) or not s.get("login"):
-        return 0, 0
+        return 0, 0  # без пароля приложения ответы не проверяем (отправка через Gmail API работает и без него)
     waiting = await db.mail_contacts.find(
         {"status": {"$in": [ST_SENT, ST_FOLLOW]}, "email": {"$ne": ""}, "first_sent": {"$ne": None}}, {"_id": 0}).to_list(5000)
     if not waiting:
@@ -378,13 +443,16 @@ async def send_one(db, contact: dict, kind: str, s: dict) -> str:
     msg = make_letter(contact, s, kind)
     label = "письмо" if kind == "first" else "напоминание"
     try:
-        await asyncio.to_thread(smtp_send_sync, s, msg)
+        await deliver(db, s, msg)
     except smtplib.SMTPRecipientsRefused:
         await db.mail_contacts.update_one({"id": contact["id"]}, {"$set": {"status": ST_BOUNCE, "last_error": "Сервер отклонил адрес"}})
         await add_log(db, contact, label, False, "Сервер отклонил адрес")
         return "bounce"
     except smtplib.SMTPAuthenticationError:
         await add_log(db, contact, label, False, "Почта не приняла логин/пароль — проверьте настройки")
+        return "auth"
+    except GmailAuthError as e:
+        await add_log(db, contact, label, False, str(e)[:300])
         return "auth"
     except Exception as e:
         await db.mail_contacts.update_one({"id": contact["id"]}, {"$set": {"status": ST_ERROR, "last_error": str(e)[:300]}})
@@ -488,14 +556,14 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
             "counts": counts, "total": total, "with_email": with_email,
             "sent_today": await sent_today(db), "limit": int(s["daily_limit"]),
             "queue_new": new, "queue_follow": fol,
-            "configured": bool(s.get("login") and password_of(s)), "log": log,
+            "configured": is_configured(s), "log": log,
         }
 
     @r.post("/start")
     async def start(_: dict = Depends(require_director)):
         s = await get_settings(db)
-        if not (s.get("login") and password_of(s)):
-            raise HTTPException(400, "Сначала заполните почту и пароль приложения в настройках рассылки")
+        if not is_configured(s):
+            raise HTTPException(400, "Сначала заполните почту и способ отправки в настройках рассылки")
         await set_running(db, True)
         _runtime["state"] = "Запускаю…"
         _wake.set()
@@ -649,7 +717,8 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
 
     @r.post("/test-connection")
     async def test_conn(_: dict = Depends(require_director)):
-        return await asyncio.to_thread(test_connection_sync, await get_settings(db))
+        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
+        return await asyncio.to_thread(test_connection_sync, await get_settings(db), token_doc)
 
     @r.post("/preview")
     async def preview(payload: dict = None, _: dict = Depends(require_user)):
@@ -677,7 +746,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         s = await get_settings(db)
         msg = make_letter({"company": "Пример компании", "contact_name": "", "email": to}, s, "first")
         try:
-            await asyncio.to_thread(smtp_send_sync, s, msg)
+            await deliver(db, s, msg)
         except Exception as e:
             raise HTTPException(400, f"Не отправилось: {e}")
         await add_log(db, None, "тест", True, f"Пробное письмо на {to}")

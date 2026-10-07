@@ -484,6 +484,13 @@ function Settings({ notify, reloadState }: { notify: (t: string, b?: boolean) =>
   if (!s) return <View style={styles.loaderWrap}><ActivityIndicator color="#1366F0" size="large" /></View>;
 
   const set = (k: string, v: any) => setS((x: any) => ({ ...x, [k]: v }));
+  const connectGoogle = async () => {
+    try {
+      await api.mailing.saveSettings({ transport: 'gmail_api' });
+      const r = await api.auth.googleStart();
+      if (isWeb) (window as any).open(r.auth_url, '_blank'); else notify('Откройте CRM в браузере, чтобы подключить Google', true);
+    } catch (e) { notify(errText(e), true); }
+  };
   const payload = () => { const { body, followup_body, subjects, running, password_from_env, ...rest } = s; return rest; };
   const save = async () => {
     setBusy('save');
@@ -512,6 +519,26 @@ function Settings({ notify, reloadState }: { notify: (t: string, b?: boolean) =>
       <View style={[styles.glassCard, { flex: 1 }]}>
         <Text style={styles.cardTitle}>Почта для рассылки</Text>
         <Text style={[styles.cardSub, { marginBottom: 14 }]}>Лучше ящик на своём домене, например egor@a2group.by</Text>
+        <Text style={styles.formLabel}>СПОСОБ ОТПРАВКИ</Text>
+        <View style={[styles.chips, { marginBottom: 10, flexWrap: 'wrap' }]}>
+          {[['gmail_api', 'Через Google (Gmail)'], ['smtp', 'SMTP по паролю приложения']].map(([k, l]) => (
+            <TouchableOpacity key={k} style={[styles.chip, (s.transport || 'smtp') === k && styles.chipActive]} onPress={() => set('transport', k)}>
+              <Text style={[styles.chipText, (s.transport || 'smtp') === k && styles.chipTextActive]}>{l}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {s.transport === 'gmail_api' ? (
+          <View style={styles.gBox}>
+            <Text style={styles.helpText}>
+              Письма уходят через Google-аккаунт, подключённый к CRM (по HTTPS — работает на любом хостинге).
+              Один раз нажмите кнопку ниже, выберите тот же Gmail и разрешите «Отправку писем от вашего имени».
+              Календарь и Задачи продолжат работать как раньше.
+            </Text>
+            <TouchableOpacity style={[styles.ghostBtn, { alignSelf: 'flex-start', marginTop: 10 }]} onPress={connectGoogle}>
+              <Mail size={15} color="#0E1726" /><Text style={styles.ghostBtnText}>Подключить Google с правом отправки</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
         <View style={[styles.chips, { marginBottom: 12, flexWrap: 'wrap' }]}>
           {Object.entries(PRESETS).map(([k, p]) => (
             <TouchableOpacity key={k} style={[styles.chip, s.smtp_host === p.v[0] && styles.chipActive]}
@@ -522,10 +549,10 @@ function Settings({ notify, reloadState }: { notify: (t: string, b?: boolean) =>
         </View>
         <View style={styles.fieldRow}>{field('smtp_host', 'SMTP СЕРВЕР', { flex: 2 })}{field('smtp_port', 'ПОРТ', { num: true, min: 80 })}</View>
         <View style={styles.fieldRow}>{field('imap_host', 'IMAP (ПРОВЕРКА ОТВЕТОВ)', { flex: 2 })}{field('imap_port', 'ПОРТ', { num: true, min: 80 })}</View>
-        {field('login', 'EMAIL (ЛОГИН)', { ph: 'egor@a2group.by' })}
+        {field('login', s.transport === 'gmail_api' ? 'ВАШ GMAIL' : 'EMAIL (ЛОГИН)', { ph: s.transport === 'gmail_api' ? 'name@gmail.com' : 'egor@a2group.by' })}
         {s.password_from_env
           ? <Text style={styles.envNote}>Пароль задан на сервере (переменная MAIL_PASSWORD)</Text>
-          : field('password', 'ПАРОЛЬ ПРИЛОЖЕНИЯ', { secret: true, ph: 'не обычный пароль от почты' })}
+          : field('password', s.transport === 'gmail_api' ? 'ПАРОЛЬ ПРИЛОЖЕНИЯ (ДЛЯ ПРОВЕРКИ ОТВЕТОВ ПО IMAP)' : 'ПАРОЛЬ ПРИЛОЖЕНИЯ', { secret: true, ph: 'не обычный пароль от почты' })}
         {field('from_name', 'ИМЯ ОТПРАВИТЕЛЯ (ВИДИТ ПОЛУЧАТЕЛЬ)')}
         <Text style={styles.helpText}>
           Пароль приложения: Яндекс — id.yandex.ru → Безопасность → Пароли приложений → «Почта» (и включите IMAP в настройках почты).
@@ -670,6 +697,7 @@ const styles = StyleSheet.create({
   helpText: { fontFamily: 'Manrope_400Regular', fontSize: 12, lineHeight: 18, color: '#8A93A0' },
   envNote: { fontFamily: 'Manrope_600SemiBold', fontSize: 12.5, color: '#1E9E5A', marginBottom: 14 },
   connText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12.5, color: '#5A6573' },
+  gBox: { padding: 14, borderRadius: 14, backgroundColor: 'rgba(19,102,240,0.06)', borderWidth: 1, borderColor: 'rgba(19,102,240,0.14)', marginBottom: 14 },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 7 },
   switch: { width: 40, height: 24, borderRadius: 12, backgroundColor: 'rgba(14,23,38,0.14)', padding: 3 },
   switchOn: { backgroundColor: '#1E9E5A' },
