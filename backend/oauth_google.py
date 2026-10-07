@@ -27,10 +27,10 @@ SCOPES = [
 ]
 
 # Отправка писем рассылки через Gmail API (по HTTPS — работает даже там, где SMTP-порты закрыты).
-# Запрашивается только при авторизации; при обновлении токена для Docs/Calendar используется SCOPES,
-# поэтому существующие интеграции не ломаются, пока Google не переподключён.
+# Рассылка подключает СВОЙ Google-аккаунт отдельной авторизацией (может быть другой Gmail),
+# основной токен CRM для Docs/Calendar/Tasks она не трогает.
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
-AUTH_SCOPES = SCOPES + [GMAIL_SEND_SCOPE]
+MAIL_AUTH_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email", GMAIL_SEND_SCOPE]
 
 AUTHORIZATION_BASE_URL = "https://accounts.google.com/o/oauth2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -62,12 +62,12 @@ def get_redirect_uri() -> str:
     return PRODUCTION_REDIRECT_URI
 
 
-def build_auth_url(redirect_uri: Optional[str] = None) -> Tuple[str, str]:
+def build_auth_url(redirect_uri: Optional[str] = None, scopes: Optional[list] = None) -> Tuple[str, str]:
     """Возвращает (auth_url, state). PKCE не используется."""
     uri = redirect_uri or get_redirect_uri()
     oauth = OAuth2Session(
         client_id=_client_id(),
-        scope=AUTH_SCOPES,
+        scope=scopes or SCOPES,
         redirect_uri=uri,
     )
     auth_url, state = oauth.authorization_url(

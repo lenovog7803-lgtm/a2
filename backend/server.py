@@ -4617,6 +4617,12 @@ async def auth_google_callback(code: str = "", state: str = "", error: str = "")
 
     try:
         token = _oauth_fetch_token(code=code, state=state)
+        # Подключение Gmail для рассылки (может быть другой аккаунт) — сохраняется
+        # отдельно, основной токен CRM для Docs/Calendar не трогаем.
+        from mailing import is_mailing_oauth_state, save_mailing_oauth_token
+        if await is_mailing_oauth_state(db, state):
+            await save_mailing_oauth_token(db, token)
+            return RedirectResponse(url="/api/auth/google/callback/done?ok=1")
         # Google omits refresh_token on repeat consent (unless prompt=consent forced it);
         # keep the previously stored one instead of nulling it out on upsert.
         existing = await db.oauth_tokens.find_one({"_id": "google"})

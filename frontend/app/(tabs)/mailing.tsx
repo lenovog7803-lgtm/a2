@@ -487,11 +487,11 @@ function Settings({ notify, reloadState }: { notify: (t: string, b?: boolean) =>
   const connectGoogle = async () => {
     try {
       await api.mailing.saveSettings({ transport: 'gmail_api' });
-      const r = await api.auth.googleStart();
+      const r = await api.mailing.googleStart();
       if (isWeb) (window as any).open(r.auth_url, '_blank'); else notify('Откройте CRM в браузере, чтобы подключить Google', true);
     } catch (e) { notify(errText(e), true); }
   };
-  const payload = () => { const { body, followup_body, subjects, running, password_from_env, ...rest } = s; return rest; };
+  const payload = () => { const { body, followup_body, subjects, running, password_from_env, gmail_connected, ...rest } = s; return rest; };
   const save = async () => {
     setBusy('save');
     try { await api.mailing.saveSettings(payload()); notify('Настройки сохранены'); reloadState(); } catch (e) { notify(errText(e), true); } finally { setBusy(''); }
@@ -530,12 +530,12 @@ function Settings({ notify, reloadState }: { notify: (t: string, b?: boolean) =>
         {s.transport === 'gmail_api' ? (
           <View style={styles.gBox}>
             <Text style={styles.helpText}>
-              Письма уходят через Google-аккаунт, подключённый к CRM (по HTTPS — работает на любом хостинге).
-              Один раз нажмите кнопку ниже, выберите тот же Gmail и разрешите «Отправку писем от вашего имени».
-              Календарь и Задачи продолжат работать как раньше.
+              Письма уходят через Gmail по HTTPS — работает на любом хостинге. Можно выбрать любой Gmail,
+              не обязательно тот, что подключён к CRM: Документы, Календарь и Задачи остаются на прежнем аккаунте.
+              {s.gmail_connected ? `\nПодключён: ${s.gmail_connected}` : ''}
             </Text>
             <TouchableOpacity style={[styles.ghostBtn, { alignSelf: 'flex-start', marginTop: 10 }]} onPress={connectGoogle}>
-              <Mail size={15} color="#0E1726" /><Text style={styles.ghostBtnText}>Подключить Google с правом отправки</Text>
+              <Mail size={15} color="#0E1726" /><Text style={styles.ghostBtnText}>Подключить Gmail для рассылки</Text>
             </TouchableOpacity>
           </View>
         ) : null}

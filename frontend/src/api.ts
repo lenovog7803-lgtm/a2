@@ -214,6 +214,8 @@ export const api = {
     testConnection: () => req('/mailing/test-connection', { method: 'POST' }),
     preview: (data: any) => req('/mailing/preview', { method: 'POST', body: JSON.stringify(data) }),
     testEmail: (to: string) => req('/mailing/test-email', { method: 'POST', body: JSON.stringify({ to }) }),
+    googleStart: () => req('/mailing/google/start'),
+    googleDisconnect: () => req('/mailing/google', { method: 'DELETE' }),
   },
   seed: () => req('/seed', { method: 'POST' }),
   globalSearch: (q: string) => req(`/search?q=${encodeURIComponent(q)}`),

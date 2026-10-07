@@ -197,18 +197,58 @@ class GmailAuthError(Exception):
     """Нет доступа к отправке через Gmail API — нужно переподключить Google."""
 
 
+# Свой Google-аккаунт рассылки: токен лежит отдельно от основного ("google"),
+# которым CRM пользуется для Docs/Calendar/Tasks.
+MAIL_TOKEN_ID = "google_mail"
+MAIL_STATE_ID = "google_mail_pending"
+
+
+async def mail_token(db) -> Optional[dict]:
+    return await db.oauth_tokens.find_one({"_id": MAIL_TOKEN_ID}, {"_id": 0})
+
+
+async def is_mailing_oauth_state(db, state: str) -> bool:
+    if not state:
+        return False
+    return bool(await db.oauth_tokens.find_one({"_id": MAIL_STATE_ID, "state": state}))
+
+
+def _google_email_sync(access_token: str) -> str:
+    import requests
+    r = requests.get("https://openidconnect.googleapis.com/v1/userinfo",
+                     headers={"Authorization": f"Bearer {access_token}"}, timeout=20)
+    return (r.json().get("email") or "").lower() if r.ok else ""
+
+
+async def save_mailing_oauth_token(db, token: dict):
+    """Вызывается из /auth/google/callback, когда state принадлежит рассылке."""
+    existing = await mail_token(db) or {}
+    email_addr = await asyncio.to_thread(_google_email_sync, token.get("access_token") or "")
+    await db.oauth_tokens.replace_one({"_id": MAIL_TOKEN_ID}, {
+        "_id": MAIL_TOKEN_ID,
+        "refresh_token": token.get("refresh_token") or existing.get("refresh_token"),
+        "email": email_addr or existing.get("email", ""),
+        "saved_at": datetime.utcnow().isoformat(),
+    }, upsert=True)
+    await db.oauth_tokens.delete_one({"_id": MAIL_STATE_ID})
+    upd = {"transport": "gmail_api"}
+    if email_addr:
+        upd["login"] = email_addr  # письма всё равно уходят от этого ящика — показываем его же
+    await db.mail_settings.update_one({"_id": "main"}, {"$set": upd}, upsert=True)
+
+
 def _gmail_access_token(token_doc: dict) -> str:
     from google.oauth2.credentials import Credentials as UserCredentials
     from google.auth.transport.requests import Request
     from oauth_google import GMAIL_SEND_SCOPE, TOKEN_URL, _client_id, _client_secret
     if not token_doc or not token_doc.get("refresh_token"):
-        raise GmailAuthError("Google не подключён к CRM — нажмите «Подключить Google» в настройках рассылки")
+        raise GmailAuthError("Gmail для рассылки не подключён — нажмите «Подключить Gmail» в настройках рассылки")
     creds = UserCredentials(token=None, refresh_token=token_doc["refresh_token"], token_uri=TOKEN_URL,
                             client_id=_client_id(), client_secret=_client_secret(), scopes=[GMAIL_SEND_SCOPE])
     try:
         creds.refresh(Request())
     except Exception as e:
-        raise GmailAuthError("Google не дал право отправлять письма — нажмите «Подключить Google» "
+        raise GmailAuthError("Google не дал право отправлять письма — нажмите «Подключить Gmail» "
                              f"и разрешите отправку почты ({e})")
     return creds.token
 
@@ -231,15 +271,14 @@ def gmail_api_send_sync(token_doc: dict, msg: EmailMessage):
 async def deliver(db, s: dict, msg: EmailMessage):
     """Отправляет письмо выбранным способом (SMTP или Gmail API)."""
     if s.get("transport") == "gmail_api":
-        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
-        await asyncio.to_thread(gmail_api_send_sync, token_doc, msg)
+        await asyncio.to_thread(gmail_api_send_sync, await mail_token(db), msg)
     else:
         await asyncio.to_thread(smtp_send_sync, s, msg)
 
 
-def is_configured(s: dict) -> bool:
+async def is_configured(db, s: dict) -> bool:
     if s.get("transport") == "gmail_api":
-        return bool(s.get("login"))
+        return bool((await mail_token(db) or {}).get("refresh_token"))
     return bool(s.get("login") and password_of(s))
 
 
@@ -556,13 +595,13 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
             "counts": counts, "total": total, "with_email": with_email,
             "sent_today": await sent_today(db), "limit": int(s["daily_limit"]),
             "queue_new": new, "queue_follow": fol,
-            "configured": is_configured(s), "log": log,
+            "configured": await is_configured(db, s), "log": log,
         }
 
     @r.post("/start")
     async def start(_: dict = Depends(require_director)):
         s = await get_settings(db)
-        if not is_configured(s):
+        if not await is_configured(db, s):
             raise HTTPException(400, "Сначала заполните почту и способ отправки в настройках рассылки")
         await set_running(db, True)
         _runtime["state"] = "Запускаю…"
@@ -708,7 +747,27 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         s = await get_settings(db)
         s["password"] = PASSWORD_MASK if password_of(s) else ""
         s["password_from_env"] = bool(os.environ.get("MAIL_PASSWORD"))
+        tok = await mail_token(db) or {}
+        s["gmail_connected"] = tok.get("email") or ("подключён" if tok.get("refresh_token") else "")
         return s
+
+    # --- свой Gmail для рассылки (отдельно от Google-аккаунта CRM) ---
+    @r.get("/google/start")
+    async def google_start(_: dict = Depends(require_director)):
+        from oauth_google import build_auth_url, MAIL_AUTH_SCOPES
+        try:
+            auth_url, state = build_auth_url(scopes=MAIL_AUTH_SCOPES)
+        except Exception as e:
+            raise HTTPException(500, f"Не удалось начать подключение Google: {e}")
+        await db.oauth_tokens.replace_one({"_id": MAIL_STATE_ID},
+                                          {"_id": MAIL_STATE_ID, "state": state, "created_at": datetime.utcnow().isoformat()},
+                                          upsert=True)
+        return {"auth_url": auth_url}
+
+    @r.delete("/google")
+    async def google_disconnect(_: dict = Depends(require_director)):
+        await db.oauth_tokens.delete_one({"_id": MAIL_TOKEN_ID})
+        return {"ok": True}
 
     @r.put("/settings")
     async def write_settings(payload: dict, _: dict = Depends(require_director)):
@@ -717,8 +776,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
 
     @r.post("/test-connection")
     async def test_conn(_: dict = Depends(require_director)):
-        token_doc = await db.oauth_tokens.find_one({"_id": "google"}, {"_id": 0})
-        return await asyncio.to_thread(test_connection_sync, await get_settings(db), token_doc)
+        return await asyncio.to_thread(test_connection_sync, await get_settings(db), await mail_token(db))
 
     @r.post("/preview")
     async def preview(payload: dict = None, _: dict = Depends(require_user)):
