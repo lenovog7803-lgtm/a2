@@ -4,7 +4,7 @@ import { Slot, useRouter, usePathname } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   LayoutDashboard, Package, Users, Truck, Phone, CheckSquare, DollarSign,
-  ChevronLeft, ChevronRight, LogOut
+  ChevronLeft, ChevronRight, LogOut, Mail
 } from 'lucide-react-native';
 
 if (Platform.OS === 'web') {
@@ -18,6 +18,7 @@ const NAV = [
   { key: 'clients', label: 'Клиенты', path: '/(tabs)/clients' as const, Icon: Users },
   { key: 'carriers', label: 'Перевозчики', path: '/(tabs)/carriers' as const, Icon: Truck },
   { key: 'leads', label: 'Обзвон', path: '/(tabs)/leads' as const, Icon: Phone },
+  { key: 'mailing', label: 'Рассылка', path: '/(tabs)/mailing' as const, Icon: Mail },
   { key: 'tasks', label: 'Задачи', path: '/(tabs)/tasks' as const, Icon: CheckSquare },
   { key: 'finance', label: 'Финансы', path: '/(tabs)/finance' as const, Icon: DollarSign },
 ];

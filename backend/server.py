@@ -1284,6 +1284,7 @@ async def _deferred_init():
     asyncio.create_task(_report_scheduler())
     asyncio.create_task(_task_reminder_loop())
     asyncio.create_task(_keepalive_loop())
+    asyncio.create_task(mailing_loop(db))
 
     # Debug: print last 30 carriers to inspect field names
     try:
@@ -7766,6 +7767,10 @@ async def admin_restore():
     user = await db.users.find_one({"login": "admin"}, {"_id": 0, "password_hash": 0})
     return {"ok": True, "user": user}
 
+
+# ====== Рассылка (mailing.py) ======
+from mailing import build_mailing_router, mailing_loop
+api_router.include_router(build_mailing_router(db, _require_user, require_director))
 
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(api_router)

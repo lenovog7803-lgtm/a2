@@ -35,6 +35,19 @@ async function req(path: string, opts: RequestInit = {}) {
   return res.json();
 }
 
+// Загрузка файла (multipart) — без Content-Type, браузер сам выставит boundary
+async function upload(path: string, file: any) {
+  let token: string | null = null;
+  try { token = await AsyncStorage.getItem('jwt_token'); } catch {}
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(`${BASE}/api${path}`, {
+    method: 'POST', body: fd, headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 export const api = {
   dashboard: (period: string = 'all') => req(`/dashboard?period=${encodeURIComponent(period)}`),
   dayOrders: (date: string) => req(`/dashboard/day_orders?date=${encodeURIComponent(date)}`),
@@ -183,6 +196,24 @@ export const api = {
   settings: {
     get: () => req('/settings'),
     update: (data: any) => req('/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  },
+  mailing: {
+    state: () => req('/mailing/state'),
+    start: () => req('/mailing/start', { method: 'POST' }),
+    stop: () => req('/mailing/stop', { method: 'POST' }),
+    checkInbox: () => req('/mailing/check-inbox', { method: 'POST' }),
+    contacts: (q = '', status = '') =>
+      req(`/mailing/contacts?q=${encodeURIComponent(q)}&status=${encodeURIComponent(status)}`),
+    addContact: (data: any) => req('/mailing/contacts', { method: 'POST', body: JSON.stringify(data) }),
+    updateContact: (id: string, data: any) => req(`/mailing/contacts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    deleteContact: (id: string) => req(`/mailing/contacts/${id}`, { method: 'DELETE' }),
+    importXlsx: (file: any) => upload('/mailing/contacts/import', file),
+    fromLeads: (industry?: string) => req('/mailing/contacts/from-leads', { method: 'POST', body: JSON.stringify({ industry }) }),
+    settings: () => req('/mailing/settings'),
+    saveSettings: (data: any) => req('/mailing/settings', { method: 'PUT', body: JSON.stringify(data) }),
+    testConnection: () => req('/mailing/test-connection', { method: 'POST' }),
+    preview: (data: any) => req('/mailing/preview', { method: 'POST', body: JSON.stringify(data) }),
+    testEmail: (to: string) => req('/mailing/test-email', { method: 'POST', body: JSON.stringify({ to }) }),
   },
   seed: () => req('/seed', { method: 'POST' }),
   globalSearch: (q: string) => req(`/search?q=${encodeURIComponent(q)}`),
