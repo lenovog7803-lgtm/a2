@@ -73,6 +73,8 @@ DEFAULT_SETTINGS = {
     "daily_limit": 20, "min_delay": 90, "max_delay": 240,
     "hour_start": 9, "hour_end": 18, "weekdays_only": True,
     "followup_enabled": True, "followup_days": 4,
+    # Автоматический разгон ящика + защита по возвратам; daily_limit при этом — потолок
+    "auto_limit": True,
     "subjects": ["Поставки Monster Energy из Европы — интересно?",
                  "Monster Energy из Европы — поставки до Москвы",
                  "Поставки Monster Energy из Европы"],
@@ -83,7 +85,7 @@ DEFAULT_SETTINGS = {
     "running": False,
 }
 INT_KEYS = ("smtp_port", "imap_port", "daily_limit", "min_delay", "max_delay", "hour_start", "hour_end", "followup_days")
-BOOL_KEYS = ("weekdays_only", "followup_enabled")
+BOOL_KEYS = ("weekdays_only", "followup_enabled", "auto_limit")
 
 EMAIL_RE = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+", re.UNICODE)
 PASSWORD_MASK = "••••••••"
@@ -448,6 +450,71 @@ async def sent_today(db) -> int:
     return await db.mail_log.count_documents({"day": today_str(), "ok": True, "kind": {"$in": ["письмо", "напоминание"]}})
 
 
+# ---------------- разгон и защита от бана ----------------
+# Лимит растёт по числу дней, в которые реально шла отправка (выходные и паузы не считаются):
+# (до какого дня включительно, писем в день); дальше — 40. Сверху всегда ограничен daily_limit.
+RAMP = [(3, 5), (7, 10), (12, 15), (18, 20), (25, 30)]
+RAMP_MAX = 40
+BOUNCE_SLOW = 0.04   # > 4% возвратов за 7 дней — темп вдвое ниже
+BOUNCE_STOP = 0.08   # > 8% — рассылка останавливается сама
+SENT_KINDS = ["письмо", "напоминание"]
+BOUNCE_DETAILS = ["Адрес не существует", "Сервер отклонил адрес"]
+
+
+def ramp_limit(day_no: int) -> int:
+    for last_day, lim in RAMP:
+        if day_no <= last_day:
+            return lim
+    return RAMP_MAX
+
+
+async def health(db, s: dict) -> dict:
+    """Текущий лимит и «здоровье» ящика: день разгона, возвраты за 7 дней, решение."""
+    cap = int(s.get("daily_limit") or 20)
+    since = (now_msk() - timedelta(days=7)).isoformat(timespec="seconds")
+    if s.get("health_since") and s["health_since"] > since:
+        since = s["health_since"]  # после ручного перезапуска старые возвраты не учитываем
+    sent = await db.mail_log.count_documents({"ts": {"$gte": since}, "ok": True, "kind": {"$in": SENT_KINDS}})
+    bounced = await db.mail_log.count_documents({"ts": {"$gte": since}, "ok": False, "detail": {"$in": BOUNCE_DETAILS}})
+    rate = bounced / sent if sent else 0.0
+    days = set(await db.mail_log.distinct("day", {"ok": True, "kind": {"$in": SENT_KINDS}}))
+    day_no = len(days - {today_str()}) + 1
+    h = {"auto": bool(s.get("auto_limit")), "day": day_no, "cap": cap, "sent_7d": sent, "bounced_7d": bounced,
+         "bounce_rate": round(rate * 100, 1), "status": "ok", "reason": ""}
+    if not h["auto"]:
+        h["limit"] = cap
+        return h
+    lim = min(cap, ramp_limit(day_no))
+    if sent >= 20 and rate > BOUNCE_STOP:
+        h.update(status="stop", reason=f"возвратов {h['bounce_rate']}% за неделю — почистите базу от несуществующих адресов")
+    elif sent >= 10 and rate > BOUNCE_SLOW:
+        lim = max(3, lim // 2)
+        h.update(status="slow", reason=f"возвратов {h['bounce_rate']}% — темп снижен вдвое")
+    if s.get("paused_until") and s["paused_until"] > today_str():
+        h.update(status="paused", reason="Gmail ограничил отправку — пауза до завтра")
+    h["limit"] = lim
+    return h
+
+
+async def auto_stop(db, reason: str):
+    await db.mail_settings.update_one({"_id": "main"}, {"$set": {"running": False, "auto_stopped": True}}, upsert=True)
+    await add_log(db, None, "автостоп", False, reason)
+    try:
+        await db.tasks.insert_one({
+            "id": str(uuid.uuid4()), "title": "Рассылка остановлена автоматически",
+            "description": f"Причина: {reason}. Проверьте контакты со статусом «Возврат», удалите плохие адреса и запустите снова.",
+            "task_type": "kp", "due_date": today_str(), "due_time": "", "status": "pending",
+            "created_by": "mailing", "assigned_user_id": None, "created_at": datetime.utcnow().isoformat(),
+        })
+    except Exception as e:
+        logger.warning(f"[mailing] task create failed: {e}")
+    if _notifier:
+        try:
+            await _notifier(f"⛔️ <b>Рассылка остановлена автоматически</b>\nПричина: {reason}\n\nCRM → Рассылка → Контакты → «Не дошло»")
+        except Exception:
+            pass
+
+
 PRIORITY_ORDER = {"A": 0, "B": 1, "C": 2}
 
 
@@ -560,6 +627,11 @@ async def send_one(db, contact: dict, kind: str, s: dict) -> str:
         await add_log(db, contact, label, False, str(e)[:300])
         return "auth"
     except Exception as e:
+        txt = str(e).lower()
+        if any(k in txt for k in ("429", "ratelimit", "rate limit", "quota", "daily user sending limit", "550 5.4.5", "421 4.", "421-4.")):
+            # Почта ограничила отправку — контакт не виноват, остаётся в очереди
+            await add_log(db, contact, label, False, f"Почта ограничила отправку: {str(e)[:200]}")
+            return "quota"
         await db.mail_contacts.update_one({"id": contact["id"]}, {"$set": {"status": ST_ERROR, "last_error": str(e)[:300]}})
         await add_log(db, contact, label, False, f"Ошибка: {e}")
         return "error"
@@ -570,7 +642,7 @@ async def send_one(db, contact: dict, kind: str, s: dict) -> str:
         if contact.get("lead_id"):
             try:
                 await db.leads.update_one({"id": contact["lead_id"]}, {"$push": {"call_notes": {
-                    "text": f"📧 Отправлено письмо: {msg['Subject']}", "created_at": datetime.utcnow().isoformat()}}})
+                    "$each": [_lead_note(f"📧 Отправлено письмо: {msg['Subject']}")], "$position": 0}}})
             except Exception:
                 pass
     else:
@@ -620,8 +692,17 @@ async def mailing_loop(db):
             if not (int(s["hour_start"]) <= now.hour < int(s["hour_end"])):
                 await _wait(300, f"Нерабочее время — жду {s['hour_start']}:00 (Мск)")
                 continue
-            if await sent_today(db) >= int(s["daily_limit"]):
-                await _wait(600, "Дневной лимит выполнен — продолжу завтра")
+            h = await health(db, s)
+            if h["status"] == "stop":
+                await auto_stop(db, h["reason"])
+                _runtime["state"] = f"Остановлено автоматически: {h['reason']}"
+                continue
+            if h["status"] == "paused":
+                await _wait(1800, h["reason"])
+                continue
+            if await sent_today(db) >= h["limit"]:
+                await _wait(600, f"Дневной лимит {h['limit']} выполнен — продолжу завтра"
+                                 + (f" (разгон, день {h['day']})" if h["auto"] else ""))
                 continue
             contact, kind = await next_in_queue(db, s)
             if not contact:
@@ -635,6 +716,15 @@ async def mailing_loop(db):
                 continue
             if result == "error":
                 await _wait(900, "Ошибка отправки — повтор через 15 минут")
+                continue
+            if result == "quota":
+                tomorrow = (now_msk().date() + timedelta(days=1)).isoformat()
+                await db.mail_settings.update_one({"_id": "main"}, {"$set": {"paused_until": tomorrow}}, upsert=True)
+                if _notifier:
+                    try:
+                        await _notifier("⏸ <b>Рассылка на паузе до завтра</b>\nПочта ограничила отправку — так бывает, если писем много. Завтра продолжу сама.")
+                    except Exception:
+                        pass
                 continue
             await _wait(random.randint(int(s["min_delay"]), int(s["max_delay"])), "Пауза между письмами")
         except asyncio.CancelledError:
@@ -714,12 +804,13 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         log = await db.mail_log.find({}, {"_id": 0}).sort("ts", -1).to_list(100)
         new, fol = await queue_sizes(db, s)
         groups = {g: await db.mail_contacts.count_documents(group_filter(g, s)) for g in GROUPS}
+        hl = await health(db, s)
         return {
             "groups": groups, "replies_new": groups["new_replies"],
             "running": bool(s.get("running")), "state": _runtime["state"] if s.get("running") else "Остановлено",
             "next_at": _runtime["next_at"] if s.get("running") else None,
             "counts": counts, "total": total, "with_email": with_email,
-            "sent_today": await sent_today(db), "limit": int(s["daily_limit"]),
+            "sent_today": await sent_today(db), "limit": hl["limit"], "health": hl,
             "queue_new": new, "queue_follow": fol,
             "configured": await is_configured(db, s), "log": log,
         }
@@ -729,7 +820,10 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         s = await get_settings(db)
         if not await is_configured(db, s):
             raise HTTPException(400, "Сначала заполните почту и способ отправки в настройках рассылки")
-        await set_running(db, True)
+        upd = {"running": True, "paused_until": None}
+        if s.get("auto_stopped"):
+            upd.update(auto_stopped=False, health_since=now_msk().isoformat(timespec="seconds"))
+        await db.mail_settings.update_one({"_id": "main"}, {"$set": upd}, upsert=True)
         _runtime["state"] = "Запускаю…"
         _wake.set()
         return {"ok": True}
