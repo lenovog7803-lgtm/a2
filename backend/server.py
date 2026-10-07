@@ -7775,8 +7775,9 @@ async def admin_restore():
 
 
 # ====== Рассылка (mailing.py) ======
-from mailing import build_mailing_router, mailing_loop
+from mailing import build_mailing_router, mailing_loop, set_notifier as _set_mailing_notifier
 api_router.include_router(build_mailing_router(db, _require_user, require_director))
+_set_mailing_notifier(_broadcast_a2info)  # ответы на рассылку → Telegram (А2 Инфо)
 
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(api_router)

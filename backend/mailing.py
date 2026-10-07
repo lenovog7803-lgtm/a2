@@ -322,9 +322,42 @@ def test_connection_sync(s: dict, token_doc: Optional[dict] = None) -> dict:
     return res
 
 
+_QUOTE_HEAD = re.compile(
+    r"^(on .+ wrote:|.*(пишет|написал|написала|написал\(а\)):|-{2,}\s*(original message|исходное сообщение|пересылаемое сообщение)\s*-*"
+    r"|.*<[^<>@\s]+@[^<>\s]+>:)\s*$", re.IGNORECASE)
+
+
+def reply_text(raw: bytes) -> tuple:
+    """(тема, текст ответа без цитаты нашего письма)."""
+    from email import policy
+    from email.parser import BytesParser
+    try:
+        m = BytesParser(policy=policy.default).parsebytes(raw)
+        subject = str(m.get("Subject") or "")
+        part = m.get_body(preferencelist=("plain", "html"))
+        text = part.get_content() if part else ""
+        if part is not None and part.get_content_type() == "text/html":
+            import html as _html
+            text = re.sub(r"(?is)<blockquote.*?</blockquote>|<style.*?</style>", "", text)
+            text = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", text)
+            text = _html.unescape(re.sub(r"<[^>]+>", "", text))
+    except Exception:
+        return "", ""
+    lines = []
+    for ln in text.replace("\r", "").splitlines():
+        st = ln.strip()
+        if _QUOTE_HEAD.match(st):
+            break
+        if st.startswith(">"):
+            continue
+        lines.append(ln.rstrip())
+    snippet = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return subject, snippet[:1500]
+
+
 def scan_inbox_sync(s: dict, waiting: list) -> tuple:
-    """Возвращает (ids ответивших, ids с возвратом)."""
-    replied, bounced = set(), set()
+    """Возвращает ({id ответившего: {subject, snippet}}, ids с возвратом)."""
+    replied, bounced = {}, set()
     im = imaplib.IMAP4_SSL(s["imap_host"].strip(), int(s.get("imap_port") or 993), timeout=30)
     try:
         im.login(s["login"].strip(), password_of(s))
@@ -333,7 +366,14 @@ def scan_inbox_sync(s: dict, waiting: list) -> tuple:
         for c in waiting:
             typ, data = im.search(None, "FROM", f'"{ascii_addr(c["email"])}"', "SINCE", fmt(c["first_sent"]))
             if typ == "OK" and data and data[0].split():
-                replied.add(c["id"])
+                info = {"subject": "", "snippet": ""}
+                try:
+                    t2, msg = im.fetch(data[0].split()[-1], "(BODY.PEEK[])")
+                    if t2 == "OK" and msg and isinstance(msg[0], tuple):
+                        info["subject"], info["snippet"] = reply_text(msg[0][1])
+                except Exception:
+                    pass
+                replied[c["id"]] = info
         since = fmt(min(c["first_sent"] for c in waiting))
         ids = []
         for sender in ("mailer-daemon", "postmaster"):
@@ -440,9 +480,25 @@ async def queue_sizes(db, s: dict):
     return new, fol
 
 
-async def on_reply(db, c: dict):
-    """Ответ пришёл: статус, запись в журнал, задача в CRM, отметка в лиде."""
-    await db.mail_contacts.update_one({"id": c["id"]}, {"$set": {"status": ST_REPLY, "replied_at": now_msk().isoformat()}})
+# Отправка уведомления в Telegram (А2 Инфо) — server.py передаёт сюда _broadcast_a2info
+_notifier = None
+
+
+def set_notifier(fn):
+    global _notifier
+    _notifier = fn
+
+
+def _lead_note(text: str) -> dict:
+    return {"text": text, "date": datetime.utcnow().isoformat() + "+00:00", "author": "Рассылка"}
+
+
+async def on_reply(db, c: dict, info: Optional[dict] = None):
+    """Ответ пришёл: статус, текст ответа, журнал, задача в CRM, отметка в лиде, Telegram."""
+    info = info or {}
+    await db.mail_contacts.update_one({"id": c["id"]}, {"$set": {
+        "status": ST_REPLY, "replied_at": now_msk().isoformat(timespec="seconds"), "reply_seen": False,
+        "reply_subject": info.get("subject", ""), "reply_snippet": info.get("snippet", "")}})
     await add_log(db, c, "ответ", True, "Пришёл ответ — проверьте почту")
     try:
         await db.tasks.insert_one({
@@ -456,9 +512,19 @@ async def on_reply(db, c: dict):
     if c.get("lead_id"):
         try:
             await db.leads.update_one({"id": c["lead_id"]}, {"$push": {"call_notes": {
-                "text": "📧 Ответил на рассылку", "created_at": datetime.utcnow().isoformat()}}})
+                "$each": [_lead_note("📧 Ответил на рассылку")], "$position": 0}}})
         except Exception:
             pass
+    if _notifier:
+        import html
+        snippet = (info.get("snippet") or "").strip()
+        text = (f"📧 <b>Ответ на рассылку</b>\n{html.escape(c.get('company') or '')} ({html.escape(c['email'])})"
+                + (f"\n\n«{html.escape(snippet[:400])}{'…' if len(snippet) > 400 else ''}»" if snippet else "")
+                + "\n\nCRM → Рассылка → Ответы")
+        try:
+            await _notifier(text)
+        except Exception as e:
+            logger.warning(f"[mailing] telegram notify failed: {e}")
 
 
 async def check_inbox(db, s: dict) -> tuple:
@@ -470,8 +536,8 @@ async def check_inbox(db, s: dict) -> tuple:
         return 0, 0
     replied, bounced = await asyncio.to_thread(scan_inbox_sync, s, waiting)
     by_id = {c["id"]: c for c in waiting}
-    for cid in replied:
-        await on_reply(db, by_id[cid])
+    for cid, info in replied.items():
+        await on_reply(db, by_id[cid], info)
     for cid in bounced:
         await db.mail_contacts.update_one({"id": cid}, {"$set": {"status": ST_BOUNCE, "last_error": "Письмо вернулось: адрес не существует"}})
         await add_log(db, by_id[cid], "возврат", False, "Адрес не существует")
@@ -531,18 +597,23 @@ async def mailing_loop(db):
     while True:
         try:
             s = await get_settings(db)
-            if not s.get("running"):
-                await _wait(60, "Остановлено")
-                continue
             now = now_msk()
             last = _runtime.get("last_inbox")
+            # Ответы проверяем раз в 15 минут даже при остановленной рассылке — люди отвечают и потом
             if not last or (now - last).total_seconds() > 900:
-                _runtime["state"] = "Проверяю входящие…"
+                if s.get("running"):
+                    _runtime["state"] = "Проверяю входящие…"
                 try:
                     await check_inbox(db, s)
                 except Exception as e:
-                    await add_log(db, None, "проверка почты", False, str(e)[:300])
+                    if s.get("running"):
+                        await add_log(db, None, "проверка почты", False, str(e)[:300])
+                    else:
+                        logger.warning(f"[mailing] inbox check failed: {e}")
                 _runtime["last_inbox"] = now
+            if not s.get("running"):
+                await _wait(60, "Остановлено")
+                continue
             if s.get("weekdays_only") and now.weekday() >= 5:
                 await _wait(600, "Выходной — продолжу в понедельник")
                 continue
@@ -573,6 +644,59 @@ async def mailing_loop(db):
             await asyncio.sleep(60)
 
 
+# ---------------- группы для быстрых фильтров ----------------
+ANSWERED = [ST_REPLY, ST_INTEREST, ST_DEAL, ST_REFUSED]
+
+
+def group_filter(group: str, s: dict) -> dict:
+    border = (now_msk().date() - timedelta(days=int(s.get("followup_days") or 4))).isoformat()
+    return {
+        "answered": {"status": {"$in": ANSWERED}},
+        "new_replies": {"replied_at": {"$ne": None}, "reply_seen": False},
+        "waiting": {"$or": [{"status": ST_SENT}, {"status": ST_FOLLOW, "followup_sent": {"$gt": border}}]},
+        "silent": {"status": ST_FOLLOW, "followup_sent": {"$lte": border}},
+        "failed": {"status": {"$in": [ST_BOUNCE, ST_ERROR]}},
+    }.get(group, {})
+
+
+GROUPS = ("answered", "new_replies", "waiting", "silent", "failed")
+
+
+async def ensure_lead(db, c: dict, stage: str) -> tuple:
+    """Находит лид контакта в «Базе обзвона» (по lead_id или email) или создаёт новый.
+    Возвращает (lead_id, создан_ли). Этап лида только повышаем, не понижаем."""
+    lead = None
+    if c.get("lead_id"):
+        lead = await db.leads.find_one({"id": c["lead_id"], "deleted": {"$ne": True}}, {"_id": 0})
+    if not lead and c.get("email"):
+        lead = await db.leads.find_one({"email": {"$regex": f"^{re.escape(c['email'])}$", "$options": "i"},
+                                        "deleted": {"$ne": True}}, {"_id": 0})
+    snippet = (c.get("reply_snippet") or "").strip()
+    note = _lead_note("📧 Ответ на рассылку" + (f": «{snippet[:500]}»" if snippet else ""))
+    now = datetime.utcnow().isoformat() + "+00:00"
+    if lead:
+        upd = {"updated_at": now}
+        if lead.get("stage") in ("new", "reached", "no_contact", "lost", None, ""):
+            upd.update({"stage": stage, "stage_changed_at": now})
+        if not lead.get("email") and c.get("email"):
+            upd["email"] = c["email"]
+        await db.leads.update_one({"id": lead["id"]}, {"$set": upd, "$push": {"call_notes": {"$each": [note], "$position": 0}}})
+        return lead["id"], False
+    company = c.get("company") or c.get("email")
+    lead_id = str(uuid.uuid4())
+    await db.leads.insert_one({
+        "id": lead_id, "name": company, "company": company, "phone": "",
+        "contact_person": c.get("contact_name", ""), "contact_position": "", "email": c.get("email", ""),
+        "website": c.get("site", ""), "industry": "", "city": c.get("city", ""), "region": "",
+        "stage": stage, "last_contact": today_str(), "last_call": "", "next_call": today_str(),
+        "notes": "Источник: рассылка", "directions": "", "call_notes": [note],
+        "call_attempts": 0, "total_calls": 0, "cadence_step": 0, "first_call_at": None, "last_call_at": None,
+        "won_at": None, "lost_reason": None, "client_id": None, "assigned_to": "", "assigned_at": None,
+        "created_at": now, "updated_at": now, "stage_changed_at": now,
+    })
+    return lead_id, True
+
+
 # ---------------- API ----------------
 CONTACT_FIELDS = ("company", "email", "contact_name", "site", "city", "priority", "status", "notes")
 
@@ -589,7 +713,9 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         with_email = await db.mail_contacts.count_documents({"email": {"$ne": ""}})
         log = await db.mail_log.find({}, {"_id": 0}).sort("ts", -1).to_list(100)
         new, fol = await queue_sizes(db, s)
+        groups = {g: await db.mail_contacts.count_documents(group_filter(g, s)) for g in GROUPS}
         return {
+            "groups": groups, "replies_new": groups["new_replies"],
             "running": bool(s.get("running")), "state": _runtime["state"] if s.get("running") else "Остановлено",
             "next_at": _runtime["next_at"] if s.get("running") else None,
             "counts": counts, "total": total, "with_email": with_email,
@@ -625,10 +751,14 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
 
     # --- контакты ---
     @r.get("/contacts")
-    async def contacts(q: str = "", status: str = "", _: dict = Depends(require_user)):
+    async def contacts(q: str = "", status: str = "", group: str = "", _: dict = Depends(require_user)):
         flt: dict = {}
         if status:
             flt["status"] = status
+        if group in GROUPS:
+            flt = {**flt, **group_filter(group, await get_settings(db))}
+            if "$or" in flt and q.strip():
+                flt = {"$and": [{"$or": flt.pop("$or")}, flt]}
         if q.strip():
             rx = {"$regex": re.escape(q.strip()), "$options": "i"}
             flt["$or"] = [{"company": rx}, {"email": rx}, {"city": rx}, {"site": rx}]
@@ -664,6 +794,43 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
             raise HTTPException(400, "Неизвестный статус")
         if upd:
             await db.mail_contacts.update_one({"id": cid}, {"$set": upd})
+        return {"ok": True}
+
+    @r.get("/replies")
+    async def replies(only_new: bool = False, _: dict = Depends(require_user)):
+        flt = {"replied_at": {"$ne": None}}
+        if only_new:
+            flt["reply_seen"] = False
+        return await db.mail_contacts.find(flt, {"_id": 0}).sort("replied_at", -1).to_list(500)
+
+    @r.post("/contacts/{cid}/resolve")
+    async def resolve(cid: str, payload: dict, _: dict = Depends(require_user)):
+        """Разбор ответа одной кнопкой: интерес / сделка → лид в «Базе обзвона», отказ — просто статус."""
+        st = payload.get("status")
+        if st not in (ST_INTEREST, ST_DEAL, ST_REFUSED, ST_REPLY):
+            raise HTTPException(400, "Неизвестный статус")
+        c = await db.mail_contacts.find_one({"id": cid}, {"_id": 0})
+        if not c:
+            raise HTTPException(404, "Контакт не найден")
+        upd = {"status": st, "reply_seen": True}
+        res = {"ok": True, "lead_id": c.get("lead_id"), "lead_created": False}
+        if st in (ST_INTEREST, ST_DEAL):
+            lead_id, created = await ensure_lead(db, c, "interested" if st == ST_INTEREST else "negotiation")
+            upd["lead_id"] = lead_id
+            res.update(lead_id=lead_id, lead_created=created)
+        elif st == ST_REFUSED and c.get("lead_id"):
+            await db.leads.update_one({"id": c["lead_id"]}, {"$push": {"call_notes": {
+                "$each": [_lead_note("📧 Отказ в ответе на рассылку")], "$position": 0}}})
+        await db.mail_contacts.update_one({"id": cid}, {"$set": upd})
+        return res
+
+    @r.post("/replies/seen")
+    async def replies_seen(payload: dict = None, _: dict = Depends(require_user)):
+        ids = (payload or {}).get("ids")
+        flt = {"replied_at": {"$ne": None}, "reply_seen": False}
+        if ids:
+            flt["id"] = {"$in": ids}
+        await db.mail_contacts.update_many(flt, {"$set": {"reply_seen": True}})
         return {"ok": True}
 
     @r.delete("/contacts/{cid}")
