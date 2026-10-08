@@ -46,9 +46,10 @@ ST_ERROR = "error"
 ST_SKIP = "skip"
 STATUSES = [ST_NEW, ST_SENT, ST_FOLLOW, ST_REPLY, ST_INTEREST, ST_REFUSED, ST_DEAL, ST_BOUNCE, ST_ERROR, ST_SKIP]
 
-KIND_SALE = "sale"          # продажа — ответы уходят лидами в «Базу обзвона»
+KIND_SALE = "sale"          # продажа конкретного товара
+KIND_CLIENTS = "clients"    # поиск новых клиентов — общее предложение компании
 KIND_PURCHASE = "purchase"  # закупка — ответы уходят в «Поставщики»
-KINDS = (KIND_SALE, KIND_PURCHASE)
+KINDS = (KIND_SALE, KIND_CLIENTS, KIND_PURCHASE)
 
 # Между письмами одной компании из разных направлений — не меньше стольких дней
 CROSS_CAMPAIGN_GAP_DAYS = 7
@@ -105,6 +106,30 @@ P.S. Если тема неактуальна — просто ответьте 
 Подскажите, актуально ли для вас предложение по [товар]?
 
 Если сейчас не нужно — просто напишите «нет», чтобы я не беспокоил.
+
+{моё_имя}, {моя_компания}
+{телефон}""",
+    },
+    KIND_CLIENTS: {
+        "subjects": ["[Чем занимаетесь] — предложение о сотрудничестве", "Сотрудничество с {моя_компания}"],
+        "body": """{приветствие}
+
+Меня зовут {моё_имя}, компания {моя_компания}. [Коротко: чем занимается компания — например, перевозки грузов по Европе и СНГ, поставки товара из Европы под ключ.]
+
+[Чем вы полезны клиенту: сроки, цены, надёжность, примеры.]
+
+Подскажите, актуально ли это для вас сейчас или в ближайшее время? Если да — напишите, что нужно, и я подготовлю предложение.
+
+С уважением,
+{моё_имя}, {моя_компания}
+{телефон}
+
+P.S. Если тема неактуальна — просто ответьте «нет», и я больше не буду беспокоить.""",
+        "followup_body": """{приветствие}
+
+Напомню о себе: {моя_компания}, [чем занимаетесь одной фразой]. Подскажите, может быть актуально для вас?
+
+Если нет — просто напишите «нет», чтобы я не беспокоил.
 
 {моё_имя}, {моя_компания}
 {телефон}""",
@@ -244,6 +269,7 @@ def build_message(mb: dict, to: str, subject: str, body: str, reply_to_id: Optio
 def make_letter(contact: dict, mb: dict, camp: dict, kind: str) -> EmailMessage:
     if kind == "first":
         subject = random.choice([x for x in camp.get("subjects", []) if x.strip()] or ["Предложение о сотрудничестве"])
+        subject = render(subject, contact, mb)  # в теме тоже работают {компания}, {моя_компания}…
         return build_message(mb, contact["email"], subject, render(camp["body"], contact, mb))
     subject = contact.get("subject") or (camp.get("subjects") or [""])[0]
     return build_message(mb, contact["email"], "Re: " + subject,
@@ -579,7 +605,7 @@ def clean_campaign(data: dict) -> dict:
             if not v:
                 raise HTTPException(400, "Укажите название направления")
         if k == "kind" and v not in KINDS:
-            raise HTTPException(400, "Тип направления: продажа или закупка")
+            raise HTTPException(400, "Тип направления: продажа, поиск клиентов или закупка")
         if k == "followup_days":
             try:
                 v = max(1, int(v))
