@@ -172,7 +172,8 @@ MAILBOX_DEFAULTS = {
     "transport": "smtp",
 }
 # Направление: письмо, напоминание, ящик
-CAMPAIGN_FIELDS = ("name", "kind", "subjects", "body", "followup_body", "followup_enabled", "followup_days", "mailbox_id")
+CAMPAIGN_FIELDS = ("name", "kind", "subjects", "body", "followup_body", "followup_enabled", "followup_days", "mailbox_id",
+                   "mailbox_ids")
 INT_KEYS = ("smtp_port", "imap_port", "daily_limit", "min_delay", "max_delay", "hour_start", "hour_end", "followup_days")
 BOOL_KEYS = ("weekdays_only", "followup_enabled", "auto_limit")
 
@@ -621,9 +622,26 @@ async def ensure_migrated(db):
 
 async def list_campaigns(db) -> list:
     await ensure_migrated(db)
-    items = await db.mail_campaigns.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(500)
+    items = [with_boxes(c) for c in await db.mail_campaigns.find({"deleted": {"$ne": True}}, {"_id": 0}).to_list(500)]
     items.sort(key=lambda c: c.get("created_at", ""))
     return items
+
+
+def with_boxes(c: dict) -> dict:
+    """Направление шлёт с одного или нескольких ящиков: mailbox_ids. mailbox_id — первый
+    из них (старые записи и места, где нужен один ящик)."""
+    ids = [m for m in (c.get("mailbox_ids") or []) if m] or [c.get("mailbox_id") or "main"]
+    return {**c, "mailbox_ids": ids, "mailbox_id": ids[0]}
+
+
+def uses_box(c: dict, mid: str) -> bool:
+    return mid in with_boxes(c)["mailbox_ids"]
+
+
+def sent_from(c: dict, camp: dict, mid: str) -> bool:
+    """Контакт «принадлежит» ящику, с которого ушло первое письмо: оттуда напоминание
+    (та же переписка) и там ловим ответ. Отмеченные вручную — за первым ящиком направления."""
+    return (c.get("mailbox_id") or with_boxes(camp)["mailbox_id"]) == mid
 
 
 async def get_campaign(db, cid: str) -> dict:
@@ -631,7 +649,7 @@ async def get_campaign(db, cid: str) -> dict:
     c = await db.mail_campaigns.find_one({"id": cid, "deleted": {"$ne": True}}, {"_id": 0})
     if not c:
         raise HTTPException(404, "Направление не найдено")
-    return c
+    return with_boxes(c)
 
 
 def clean_campaign(data: dict) -> dict:
@@ -654,6 +672,8 @@ def clean_campaign(data: dict) -> dict:
             v = bool(v) and v not in ("0", "false", "False")
         if k == "subjects" and isinstance(v, str):
             v = [x.strip() for x in v.splitlines() if x.strip()]
+        if k == "mailbox_ids":
+            v = list(dict.fromkeys(str(x) for x in (v or []) if x)) or ["main"]
         upd[k] = v
     return upd
 
@@ -762,10 +782,9 @@ async def add_task(db, title: str, description: str):
 
 
 async def stop_mailbox_campaigns(db, mid: str) -> list:
-    names = [c["name"] for c in await db.mail_campaigns.find(
-        {"mailbox_id": mid, "running": True, "deleted": {"$ne": True}}, {"_id": 0, "name": 1}).to_list(100)]
-    await db.mail_campaigns.update_many({"mailbox_id": mid}, {"$set": {"running": False}})
-    return names
+    camps = [c for c in await list_campaigns(db) if uses_box(c, mid)]
+    await db.mail_campaigns.update_many({"id": {"$in": [c["id"] for c in camps]}}, {"$set": {"running": False}})
+    return [c["name"] for c in camps if c.get("running")]
 
 
 async def auto_stop(db, mb: dict, reason: str):
@@ -804,13 +823,13 @@ def _free(c: dict, blocked: set, recent: dict) -> bool:
     return c["email"] not in blocked and not (recent.get(c["email"], set()) - {c["id"]})
 
 
-async def next_in_campaign(db, camp: dict, blocked: set, recent: dict):
+async def next_in_campaign(db, camp: dict, blocked: set, recent: dict, mid: str = None):
     base = {"campaign_id": camp["id"], "email": {"$ne": ""}}
     if camp.get("followup_enabled"):
         border = (now_msk().date() - timedelta(days=int(camp.get("followup_days") or 4))).isoformat()
         async for c in db.mail_contacts.find({**base, "status": ST_SENT, "followup_sent": None, "first_sent": {"$lte": border}},
-                                             {"_id": 0}).sort("first_sent", 1).limit(200):
-            if _free(c, blocked, recent):
+                                             {"_id": 0}).sort("first_sent", 1).limit(500):
+            if (mid is None or sent_from(c, camp, mid)) and _free(c, blocked, recent):
                 return c, "follow"
     cands = [c for c in await db.mail_contacts.find({**base, "status": ST_NEW}, {"_id": 0}).to_list(5000)
              if _free(c, blocked, recent)]
@@ -820,12 +839,12 @@ async def next_in_campaign(db, camp: dict, blocked: set, recent: dict):
     return cands[0], "first"
 
 
-async def next_for_mailbox(db, campaigns: list):
+async def next_for_mailbox(db, campaigns: list, mid: str = None):
     """Направления ящика по очереди: первым — то, из которого сегодня ушло меньше писем."""
     blocked, recent = await blocked_emails(db), await recent_sends(db)
     sent_by = {c["id"]: await sent_today(db, campaign_id=c["id"]) for c in campaigns}
     for camp in sorted(campaigns, key=lambda c: (sent_by[c["id"]], random.random())):
-        c, kind = await next_in_campaign(db, camp, blocked, recent)
+        c, kind = await next_in_campaign(db, camp, blocked, recent, mid)
         if c:
             return camp, c, kind
     return None, None, None
@@ -871,12 +890,13 @@ async def on_reply(db, c: dict, info: Optional[dict] = None, camp: Optional[dict
 async def check_inbox(db, mb: dict) -> tuple:
     if not mb.get("imap_host") or not password_of(mb) or not mb.get("login"):
         return 0, 0  # без пароля приложения ответы не проверяем (отправка через Gmail API работает и без него)
-    camps = {c["id"]: c for c in await db.mail_campaigns.find({"mailbox_id": mb["id"]}, {"_id": 0}).to_list(500)}
+    camps = {c["id"]: c for c in await list_campaigns(db) if uses_box(c, mb["id"])}
     if not camps:
         return 0, 0
-    waiting = await db.mail_contacts.find(
+    waiting = [c for c in await db.mail_contacts.find(
         {"campaign_id": {"$in": list(camps)}, "status": {"$in": [ST_SENT, ST_FOLLOW]},
          "email": {"$ne": ""}, "first_sent": {"$ne": None}}, {"_id": 0}).to_list(5000)
+        if sent_from(c, camps[c["campaign_id"]], mb["id"])]
     # один и тот же адрес в двух направлениях — ответ относим к последнему письму
     latest: dict = {}
     for c in waiting:
@@ -927,7 +947,7 @@ async def send_one(db, contact: dict, kind: str, mb: dict, camp: dict) -> str:
     if kind == "first":
         await db.mail_contacts.update_one({"id": contact["id"]}, {"$set": {
             "status": ST_SENT, "first_sent": today_str(), "subject": str(msg["Subject"]),
-            "message_id": str(msg["Message-ID"]), "last_error": None}})
+            "message_id": str(msg["Message-ID"]), "mailbox_id": mb["id"], "last_error": None}})
     else:
         await db.mail_contacts.update_one({"id": contact["id"]}, {"$set": {"status": ST_FOLLOW, "followup_sent": today_str()}})
     await log(True, str(msg["Subject"]))
@@ -961,7 +981,7 @@ async def mailbox_step(db, mb: dict, campaigns: list) -> int:
     if await sent_today(db, mb["id"]) >= h["limit"]:
         return _hold(rt, 600, f"Дневной лимит {h['limit']} выполнен — продолжу завтра"
                               + (f" (разгон, день {h['day']})" if h["auto"] else ""))
-    camp, contact, kind = await next_for_mailbox(db, campaigns)
+    camp, contact, kind = await next_for_mailbox(db, campaigns, mb["id"])
     if not contact:
         return _hold(rt, 600, "Очередь пуста — добавьте контакты с email")
     rt["state"] = f"Отправляю: {contact.get('company') or contact['email']}"
@@ -992,7 +1012,7 @@ async def mailing_loop(db):
             campaigns = await list_campaigns(db)
             for mb in await list_mailboxes(db):
                 rt = rt_of(mb["id"])
-                running = [c for c in campaigns if c.get("running") and (c.get("mailbox_id") or "main") == mb["id"]]
+                running = [c for c in campaigns if c.get("running") and uses_box(c, mb["id"])]
                 now = now_msk()
                 # Ответы проверяем раз в 15 минут даже при остановленной рассылке — люди отвечают и потом
                 if not rt["last_inbox"] or (now - rt["last_inbox"]).total_seconds() > 900:
@@ -1104,7 +1124,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         fdays = camps[0].get("followup_days", 4) if len(camps) == 1 else 4
         groups = {g: await db.mail_contacts.count_documents(merge(cf, group_filter(g, fdays))) for g in GROUPS}
         # ящики, через которые идут выбранные направления
-        mids = sorted({c.get("mailbox_id") or "main" for c in camps}) or ["main"]
+        mids = sorted({m for c in camps for m in c["mailbox_ids"]}) or ["main"]
         boxes = [await get_mailbox(db, m) for m in mids]
         healths = {mb["id"]: await health(db, mb) for mb in boxes}
         order = {"stop": 0, "paused": 1, "slow": 2, "ok": 3}
@@ -1131,7 +1151,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         for c in camps:
             if unfilled(c):
                 raise HTTPException(400, f"«{c['name']}»: в тексте письма остались [заготовки в скобках] — замените их своим текстом")
-        for mid in {c.get("mailbox_id") or "main" for c in camps}:
+        for mid in {m for c in camps for m in c["mailbox_ids"]}:
             mb = await get_mailbox(db, mid)
             if not await is_configured(db, mb):
                 raise HTTPException(400, f"Почта «{mb['name']}» не подключена — настройте её в «Настройки → Почта»")
@@ -1181,12 +1201,13 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         data = clean_campaign({"kind": KIND_SALE, **payload})
         if "name" not in data:
             raise HTTPException(400, "Укажите название направления")
-        mid = data.get("mailbox_id") or "main"
-        await mailbox_or_404(mid)
+        ids = data.get("mailbox_ids") or [data.get("mailbox_id") or "main"]
+        for m in ids:
+            await mailbox_or_404(m)
         tpl = TEMPLATES[data["kind"]]
         doc = {"id": str(uuid.uuid4()), "subjects": list(tpl["subjects"]), "body": tpl["body"], "followup_body": tpl["followup_body"],
                "followup_enabled": True, "followup_days": 4, "running": False, "deleted": False,
-               "created_at": datetime.utcnow().isoformat(), **data, "mailbox_id": mid}
+               "created_at": datetime.utcnow().isoformat(), **data, "mailbox_ids": ids, "mailbox_id": ids[0]}
         await db.mail_campaigns.insert_one(doc)
         doc.pop("_id", None)
         return doc
@@ -1195,9 +1216,11 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
     async def update_campaign(cid: str, payload: dict, _: dict = Depends(require_director)):
         await get_campaign(db, cid)
         data = clean_campaign(payload)
-        if "mailbox_id" in data:
-            data["mailbox_id"] = data["mailbox_id"] or "main"
-            await mailbox_or_404(data["mailbox_id"])
+        if "mailbox_ids" in data or "mailbox_id" in data:
+            ids = data.get("mailbox_ids") or [data.get("mailbox_id") or "main"]
+            for m in ids:
+                await mailbox_or_404(m)
+            data.update(mailbox_ids=ids, mailbox_id=ids[0])
         if data:
             await db.mail_campaigns.update_one({"id": cid}, {"$set": data})
         return await get_campaign(db, cid)
@@ -1447,7 +1470,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
                         "gmail_connected": tok.get("email") or ("подключён" if tok.get("refresh_token") else ""),
                         "configured": await is_configured(db, mb), "health": await health(db, mb),
                         "sent_today": await sent_today(db, mb["id"]), "state": rt_of(mb["id"])["state"],
-                        "campaigns": [c["name"] for c in camps if (c.get("mailbox_id") or "main") == mb["id"]]})
+                        "campaigns": [c["name"] for c in camps if uses_box(c, mb["id"])]})
         return out
 
     @r.post("/mailboxes")
@@ -1474,7 +1497,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         if mid == "main":
             raise HTTPException(400, "Первый ящик удалить нельзя")
         await mailbox_or_404(mid)
-        used = [c["name"] for c in await list_campaigns(db) if c.get("mailbox_id") == mid]
+        used = [c["name"] for c in await list_campaigns(db) if uses_box(c, mid)]
         if used:
             raise HTTPException(400, f"Ящик используют направления: {', '.join(used)} — переключите их на другой ящик")
         await db.mail_settings.update_one({"_id": mid}, {"$set": {"deleted": True}})
@@ -1494,7 +1517,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
             raise HTTPException(400, "Укажите свой email для проверки")
         camps = await list_campaigns(db)
         camp = next((c for c in camps if c["id"] == payload.get("campaign_id")), None) \
-            or next((c for c in camps if (c.get("mailbox_id") or "main") == mid), None) or camps[0]
+            or next((c for c in camps if uses_box(c, mid)), None) or camps[0]
         msg = make_letter({"company": "Пример компании", "contact_name": "", "email": to}, mb, camp, "first")
         try:
             await deliver(db, mb, msg)
