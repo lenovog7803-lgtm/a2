@@ -212,7 +212,7 @@ def contact_mark(v) -> str:
         return "whatsapp"
     if re.search(r"\bтг\b|телег|telegram|tg\b", t):
         return "telegram"
-    if re.search(r"поч|email|e-mail|mail|письм", t):
+    if re.search(r"по[чс]|email|e-mail|mail|письм", t):
         return "email"
     return ""
 

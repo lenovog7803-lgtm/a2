@@ -91,3 +91,5 @@ credentials.json
 
 # Local dev launcher (macOS DNS workaround) — not for prod
 backend/run_local.py
+
+graphify-out/
