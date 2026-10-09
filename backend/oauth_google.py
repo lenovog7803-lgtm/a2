@@ -30,7 +30,9 @@ SCOPES = [
 # Рассылка подключает СВОЙ Google-аккаунт отдельной авторизацией (может быть другой Gmail),
 # основной токен CRM для Docs/Calendar/Tasks она не трогает.
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
-MAIL_AUTH_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email", GMAIL_SEND_SCOPE]
+# чтение — чтобы видеть переписку с контактами рассылки прямо в CRM и ловить ответы
+GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+MAIL_AUTH_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email", GMAIL_SEND_SCOPE, GMAIL_READ_SCOPE]
 
 AUTHORIZATION_BASE_URL = "https://accounts.google.com/o/oauth2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"

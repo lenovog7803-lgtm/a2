@@ -378,6 +378,7 @@ async def save_mailing_oauth_token(db, token: dict):
         "_id": token_id(mid),
         "refresh_token": token.get("refresh_token") or existing.get("refresh_token"),
         "email": email_addr or existing.get("email", ""),
+        "scope": " ".join(sc) if isinstance(sc := token.get("scope") or "", list) else str(sc),
         "saved_at": datetime.utcnow().isoformat(),
     }, upsert=True)
     await db.oauth_tokens.delete_one({"_id": MAIL_STATE_ID})
@@ -394,7 +395,7 @@ def _gmail_access_token(token_doc: dict) -> str:
     if not token_doc or not token_doc.get("refresh_token"):
         raise GmailAuthError("Gmail для рассылки не подключён — нажмите «Подключить Gmail» в настройках почты")
     creds = UserCredentials(token=None, refresh_token=token_doc["refresh_token"], token_uri=TOKEN_URL,
-                            client_id=_client_id(), client_secret=_client_secret(), scopes=[GMAIL_SEND_SCOPE])
+                            client_id=_client_id(), client_secret=_client_secret())
     try:
         creds.refresh(Request())
     except Exception as e:
@@ -403,13 +404,14 @@ def _gmail_access_token(token_doc: dict) -> str:
     return creds.token
 
 
-def gmail_api_send_sync(token_doc: dict, msg: EmailMessage):
+def gmail_api_send_sync(token_doc: dict, msg: EmailMessage, thread_id: Optional[str] = None):
     import base64
     import requests
     token = _gmail_access_token(token_doc)
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    body = {"raw": raw, **({"threadId": thread_id} if thread_id else {})}
     r = requests.post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-                      headers={"Authorization": f"Bearer {token}"}, json={"raw": raw}, timeout=60)
+                      headers={"Authorization": f"Bearer {token}"}, json=body, timeout=60)
     if r.status_code in (401, 403):
         raise GmailAuthError(f"Gmail API отказал в доступе ({r.status_code}): {r.text[:200]}")
     if r.status_code == 400 and "invalid to header" in r.text.lower():
@@ -429,10 +431,10 @@ def smtp_send_sync(mb: dict, msg: EmailMessage):
             pass
 
 
-async def deliver(db, mb: dict, msg: EmailMessage):
+async def deliver(db, mb: dict, msg: EmailMessage, thread_id: Optional[str] = None):
     """Отправляет письмо выбранным у ящика способом (SMTP или Gmail API)."""
     if mb.get("transport") == "gmail_api":
-        await asyncio.to_thread(gmail_api_send_sync, await mail_token(db, mb["id"]), msg)
+        await asyncio.to_thread(gmail_api_send_sync, await mail_token(db, mb["id"]), msg, thread_id)
     else:
         await asyncio.to_thread(smtp_send_sync, mb, msg)
 
@@ -477,7 +479,7 @@ _QUOTE_HEAD = re.compile(
     r"|.*<[^<>@\s]+@[^<>\s]+>:)\s*$", re.IGNORECASE)
 
 
-def reply_text(raw: bytes) -> tuple:
+def reply_text(raw: bytes, limit: int = 1500) -> tuple:
     """(тема, текст ответа без цитаты нашего письма)."""
     from email import policy
     from email.parser import BytesParser
@@ -502,7 +504,7 @@ def reply_text(raw: bytes) -> tuple:
             continue
         lines.append(ln.rstrip())
     snippet = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
-    return subject, snippet[:1500]
+    return subject, snippet[:limit]
 
 
 def scan_inbox_sync(mb: dict, waiting: list) -> tuple:
@@ -543,6 +545,112 @@ def scan_inbox_sync(mb: dict, waiting: list) -> tuple:
             im.logout()
         except Exception:
             pass
+    return replied, bounced
+
+
+# ---------------- переписка через Gmail API (нужно право «читать почту») ----------------
+GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+
+
+def can_read(token_doc: Optional[dict]) -> bool:
+    return READ_SCOPE in ((token_doc or {}).get("scope") or "")
+
+
+def _gmail_get(access: str, path: str, **params) -> dict:
+    import requests
+    r = requests.get(f"{GMAIL_API}/{path}", headers={"Authorization": f"Bearer {access}"}, params=params, timeout=40)
+    if r.status_code in (401, 403):
+        raise GmailAuthError("Нет права читать почту — переподключите почту в «Настройки → Почта» и разрешите чтение писем")
+    r.raise_for_status()
+    return r.json()
+
+
+def _gdate(d: str) -> str:
+    """Дата для поиска Gmail (after:) — на день раньше, чтобы не потерять письма из-за часового пояса."""
+    return (date.fromisoformat(d[:10]) - timedelta(days=1)).strftime("%Y/%m/%d")
+
+
+def _raw_of(access: str, mid: str) -> tuple:
+    import base64
+    m = _gmail_get(access, f"messages/{mid}", format="raw")
+    return base64.urlsafe_b64decode(m["raw"].encode()), m
+
+
+def parse_mail(raw: bytes) -> dict:
+    from email import policy
+    from email.parser import BytesParser
+    m = BytesParser(policy=policy.default).parsebytes(raw)
+    _, text = reply_text(raw, limit=20000)
+    atts = []
+    for i, part in enumerate(m.iter_attachments()):
+        payload = part.get_payload(decode=True) or b""
+        atts.append({"index": i, "name": part.get_filename() or f"файл-{i + 1}",
+                     "type": part.get_content_type(), "size": len(payload)})
+    return {"subject": str(m.get("Subject") or ""), "from": str(m.get("From") or ""), "to": str(m.get("To") or ""),
+            "message_id": str(m.get("Message-ID") or ""), "text": text, "attachments": atts}
+
+
+def gmail_thread_sync(token_doc: dict, addr: str, since: str) -> list:
+    """Все письма с этим адресом (от него и ему) начиная с даты первого письма."""
+    access = _gmail_access_token(token_doc)
+    q = f"(from:{addr} OR to:{addr}) after:{_gdate(since)}"
+    ids = [m["id"] for m in _gmail_get(access, "messages", q=q, maxResults=50, includeSpamTrash="true").get("messages", [])]
+    out = []
+    for mid in ids:
+        raw, meta = _raw_of(access, mid)
+        p = parse_mail(raw)
+        sender = email.utils.parseaddr(p["from"])[1].lower()
+        out.append({**p, "id": mid, "thread_id": meta.get("threadId"),
+                    "ts": int(meta.get("internalDate") or 0), "from_me": sender != addr.lower()})
+    out.sort(key=lambda x: x["ts"])
+    return out
+
+
+def gmail_attachment_sync(token_doc: dict, mid: str, index: int) -> tuple:
+    from email import policy
+    from email.parser import BytesParser
+    raw, _ = _raw_of(_gmail_access_token(token_doc), mid)
+    parts = list(BytesParser(policy=policy.default).parsebytes(raw).iter_attachments())
+    if not 0 <= index < len(parts):
+        raise HTTPException(404, "Вложение не найдено")
+    part = parts[index]
+    return part.get_filename() or "file", part.get_content_type(), part.get_payload(decode=True) or b""
+
+
+def gmail_scan_sync(token_doc: dict, waiting: list) -> tuple:
+    """То же, что scan_inbox_sync, но через Gmail API: ответы (письма от контакта позже
+    нашего последнего) и возвраты. waiting: контакты с полем _since (ISO)."""
+    access = _gmail_access_token(token_doc)
+    replied, bounced = {}, set()
+    by_email = {c["email"].lower(): c for c in waiting}
+    emails = list(by_email)
+    since = min(c["_since"] for c in waiting)
+    for i in range(0, len(emails), 25):
+        chunk = emails[i:i + 25]
+        q = "from:{" + " ".join(chunk) + "} after:" + _gdate(since)
+        for m in _gmail_get(access, "messages", q=q, maxResults=200).get("messages", []):
+            raw, meta = _raw_of(access, m["id"])
+            sender = email.utils.parseaddr(parse_mail(raw)["from"])[1].lower()
+            c = by_email.get(sender)
+            if not c:
+                continue
+            ts = int(meta.get("internalDate") or 0)
+            border = datetime.fromisoformat(c["_since"]) if "T" in c["_since"] else \
+                datetime.combine(date.fromisoformat(c["_since"]), datetime.min.time(), MSK)
+            if border.tzinfo is None:
+                border = border.replace(tzinfo=MSK)
+            if ts / 1000 <= border.timestamp() or ts <= replied.get(c["id"], {}).get("ts", 0):
+                continue
+            subj, snippet = reply_text(raw)
+            replied[c["id"]] = {"subject": subj, "snippet": snippet, "ts": ts}
+    q = "from:(mailer-daemon OR postmaster) after:" + _gdate(since)
+    for m in _gmail_get(access, "messages", q=q, maxResults=100).get("messages", []):
+        raw, _ = _raw_of(access, m["id"])
+        text = raw.decode("utf-8", "ignore").lower()
+        for addr, c in by_email.items():
+            if c["id"] not in replied and addr in text:
+                bounced.add(c["id"])
     return replied, bounced
 
 
@@ -884,17 +992,37 @@ async def on_reply(db, c: dict, info: Optional[dict] = None, camp: Optional[dict
     await notify(f"📧 <b>{who}</b>" + (f" · {html.escape(camp['name'])}" if camp.get("name") else "")
                  + f"\n{html.escape(c.get('company') or '')} ({html.escape(c['email'])})"
                  + (f"\n\n«{html.escape(snippet[:400])}{'…' if len(snippet) > 400 else ''}»" if snippet else "")
-                 + "\n\nCRM → Рассылка → Ответы")
+                 + "\n\nCRM → Рассылка → Почта")
+
+
+async def on_next_reply(db, c: dict, info: dict, camp: Optional[dict], mid: str):
+    """Продолжение переписки: статус (интерес/сделка) не трогаем, только «новое сообщение»."""
+    import html
+    camp = camp or {}
+    await db.mail_contacts.update_one({"id": c["id"]}, {"$set": {
+        "replied_at": now_msk().isoformat(timespec="seconds"), "reply_seen": False, "awaiting_reply": False,
+        "reply_subject": info.get("subject", ""), "reply_snippet": info.get("snippet", "")}})
+    await add_log(db, c, "ответ", True, "Новое письмо в переписке", mailbox_id=mid)
+    snippet = (info.get("snippet") or "").strip()
+    await notify(f"📧 <b>Новое письмо</b>" + (f" · {html.escape(camp['name'])}" if camp.get("name") else "")
+                 + f"\n{html.escape(c.get('company') or '')} ({html.escape(c['email'])})"
+                 + (f"\n\n«{html.escape(snippet[:400])}{'…' if len(snippet) > 400 else ''}»" if snippet else "")
+                 + "\n\nCRM → Рассылка → Почта")
 
 
 async def check_inbox(db, mb: dict) -> tuple:
-    if not mb.get("imap_host") or not password_of(mb) or not mb.get("login"):
-        return 0, 0  # без пароля приложения ответы не проверяем (отправка через Gmail API работает и без него)
+    tok = await mail_token(db, mb["id"]) if mb.get("transport") == "gmail_api" else None
+    use_api = can_read(tok)
+    if not use_api and (not mb.get("imap_host") or not password_of(mb) or not mb.get("login")):
+        return 0, 0  # ни права читать Gmail, ни пароля приложения — ответы не проверить
     camps = {c["id"]: c for c in await list_campaigns(db) if uses_box(c, mb["id"])}
     if not camps:
         return 0, 0
+    flt = {"status": {"$in": [ST_SENT, ST_FOLLOW]}}
+    if use_api:  # ответили на наш ответ из CRM — тоже ловим
+        flt = {"$or": [flt, {"awaiting_reply": True}]}
     waiting = [c for c in await db.mail_contacts.find(
-        {"campaign_id": {"$in": list(camps)}, "status": {"$in": [ST_SENT, ST_FOLLOW]},
+        {"campaign_id": {"$in": list(camps)}, **flt,
          "email": {"$ne": ""}, "first_sent": {"$ne": None}}, {"_id": 0}).to_list(5000)
         if sent_from(c, camps[c["campaign_id"]], mb["id"])]
     # один и тот же адрес в двух направлениях — ответ относим к последнему письму
@@ -906,11 +1034,19 @@ async def check_inbox(db, mb: dict) -> tuple:
     waiting = [v[1] for v in latest.values()]
     if not waiting:
         return 0, 0
-    replied, bounced = await asyncio.to_thread(scan_inbox_sync, mb, waiting)
+    if use_api:
+        for c in waiting:
+            c["_since"] = c.get("last_out_at") if c.get("awaiting_reply") else c["first_sent"]
+        replied, bounced = await asyncio.to_thread(gmail_scan_sync, tok, waiting)
+    else:
+        replied, bounced = await asyncio.to_thread(scan_inbox_sync, mb, waiting)
     by_id = {c["id"]: c for c in waiting}
     for cid, info in replied.items():
         c = by_id[cid]
-        await on_reply(db, c, info, camps.get(c.get("campaign_id")), mb["id"])
+        if c.get("awaiting_reply"):
+            await on_next_reply(db, c, info, camps.get(c.get("campaign_id")), mb["id"])
+        else:
+            await on_reply(db, c, info, camps.get(c.get("campaign_id")), mb["id"])
     for cid in bounced:
         await db.mail_contacts.update_one({"id": cid}, {"$set": {"status": ST_BOUNCE, "last_error": "Письмо вернулось: адрес не существует"}})
         await add_log(db, by_id[cid], "возврат", False, "Адрес не существует", mailbox_id=mb["id"])
@@ -1426,6 +1562,85 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         await db.mail_contacts.update_many(flt, {"$set": {"reply_seen": True}})
         return {"ok": True}
 
+    # --- переписка с контактом (вкладка «Почта») ---
+    async def contact_ctx(cid: str) -> tuple:
+        c = await db.mail_contacts.find_one({"id": cid}, {"_id": 0})
+        if not c:
+            raise HTTPException(404, "Контакт не найден")
+        camp = await db.mail_campaigns.find_one({"id": c.get("campaign_id")}, {"_id": 0}) or {}
+        mb = await get_mailbox(db, c.get("mailbox_id") or with_boxes(camp)["mailbox_id"])
+        tok = await mail_token(db, mb["id"]) if mb.get("transport") == "gmail_api" else None
+        return c, with_boxes(camp) if camp else {}, mb, tok
+
+    @r.get("/contacts/{cid}/thread")
+    async def thread(cid: str, _: dict = Depends(require_user)):
+        c, camp, mb, tok = await contact_ctx(cid)
+        await db.mail_contacts.update_one({"id": cid}, {"$set": {"reply_seen": True}})
+        base = {"contact": c, "campaign_name": camp.get("name", ""), "mailbox": mb.get("login") or mb["name"]}
+        if not c.get("first_sent"):
+            return {**base, "can_read": can_read(tok), "messages": []}
+        if not can_read(tok):
+            # права читать нет — показываем то, что знаем сами: наше письмо и цитату ответа
+            msgs = [{"id": "first", "from_me": True, "subject": c.get("subject") or "", "date": c["first_sent"],
+                     "text": render(camp.get("body", ""), c, mb), "attachments": []}]
+            if c.get("followup_sent"):
+                msgs.append({"id": "follow", "from_me": True, "date": c["followup_sent"],
+                             "subject": "Re: " + (c.get("subject") or ""), "text": render(camp.get("followup_body", ""), c, mb),
+                             "attachments": []})
+            if c.get("reply_snippet"):
+                msgs.append({"id": "reply", "from_me": False, "date": c.get("replied_at", ""),
+                             "subject": c.get("reply_subject", ""), "text": c["reply_snippet"], "attachments": []})
+            return {**base, "can_read": False, "messages": msgs,
+                    "hint": "Чтобы видеть всю переписку и вложения, переподключите почту в «Настройки → Почта»."}
+        try:
+            msgs = await asyncio.to_thread(gmail_thread_sync, tok, c["email"], c["first_sent"])
+        except GmailAuthError as e:
+            raise HTTPException(400, str(e))
+        for m in msgs:
+            m["date"] = datetime.fromtimestamp(m["ts"] / 1000, MSK).isoformat(timespec="minutes")
+        return {**base, "can_read": True, "messages": msgs}
+
+    @r.get("/contacts/{cid}/attachment")
+    async def attachment(cid: str, msg: str, index: int, _: dict = Depends(require_user)):
+        from fastapi.responses import Response
+        from urllib.parse import quote
+        c, camp, mb, tok = await contact_ctx(cid)
+        if not can_read(tok):
+            raise HTTPException(400, "Нет права читать почту — переподключите почту")
+        name, ctype, data = await asyncio.to_thread(gmail_attachment_sync, tok, msg, index)
+        return Response(data, media_type=ctype or "application/octet-stream",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+    @r.post("/contacts/{cid}/reply")
+    async def reply(cid: str, payload: dict, _: dict = Depends(require_director)):
+        text = str((payload or {}).get("text") or "").strip()
+        if not text:
+            raise HTTPException(400, "Напишите текст ответа")
+        c, camp, mb, tok = await contact_ctx(cid)
+        if not c.get("email"):
+            raise HTTPException(400, "У контакта нет email")
+        if not await is_configured(db, mb):
+            raise HTTPException(400, f"Почта «{mb['name']}» не подключена")
+        subject, ref, thread_id = c.get("subject") or "", c.get("message_id"), None
+        if can_read(tok) and c.get("first_sent"):
+            try:  # отвечаем на последнее письмо переписки — в ту же цепочку
+                msgs = await asyncio.to_thread(gmail_thread_sync, tok, c["email"], c["first_sent"])
+                if msgs:
+                    last = msgs[-1]
+                    subject, ref, thread_id = last["subject"] or subject, last["message_id"] or ref, last["thread_id"]
+            except GmailAuthError:
+                pass
+        subject = subject if subject.lower().startswith("re:") else "Re: " + (subject or "Наше предложение")
+        msg = build_message(mb, c["email"], subject, text, ref)
+        try:
+            await deliver(db, mb, msg, thread_id)
+        except Exception as e:
+            raise HTTPException(400, f"Не отправилось: {e}")
+        await db.mail_contacts.update_one({"id": cid}, {"$set": {
+            "awaiting_reply": True, "last_out_at": now_msk().isoformat(timespec="seconds"), "reply_seen": True}})
+        await add_log(db, c, "ответ из CRM", True, subject, mailbox_id=mb["id"], campaign_id=c.get("campaign_id"))
+        return {"ok": True}
+
     # --- поставщики (ответы направлений «закупка») ---
     @r.get("/suppliers")
     async def suppliers(campaign_id: str = "", stage: str = "", q: str = "", _: dict = Depends(require_user)):
@@ -1468,6 +1683,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
             tok = await mail_token(db, mb["id"]) or {}
             out.append({**mailbox_public(mb),
                         "gmail_connected": tok.get("email") or ("подключён" if tok.get("refresh_token") else ""),
+                        "can_read": can_read(tok),
                         "configured": await is_configured(db, mb), "health": await health(db, mb),
                         "sent_today": await sent_today(db, mb["id"]), "state": rt_of(mb["id"])["state"],
                         "campaigns": [c["name"] for c in camps if uses_box(c, mb["id"])]})
