@@ -621,6 +621,7 @@ async def _notify_pending_payment_reminders(force: bool = False) -> dict:
     now = datetime.now(_REPORT_TZ)
     if not force and not _in_reminder_notify_window(now):
         return {'skipped': 'outside_window', 'count': 0}
+    await _close_paid_order_tasks()
 
     pending = await db.tasks.find({
         'type': 'payment_reminder', 'status': 'pending',
@@ -955,6 +956,7 @@ async def build_morning_briefing() -> dict:
     loads = [_leg_dict(o) for o in active if (o.get('load_date') or '')[:10] == today_str]
     unloads = [_leg_dict(o) for o in active if (o.get('unload_date') or '')[:10] == today_str]
 
+    await _close_paid_order_tasks()
     task_docs = await db.tasks.find({
         'status': 'pending',
         'type': {'$ne': 'payment_reminder'},
@@ -1107,6 +1109,37 @@ async def _task_recipients(assigned_user_id: Optional[str]) -> list:
     return ids
 
 
+async def _close_paid_order_tasks() -> int:
+    """Закрывает висящие задачи об оплате перевозчику («Оплатить перевозчика…»,
+    «⚠️ Через N дня оплатить…», payment_reminder), если по заявке уже
+    оплачено (флаг или сумма ПП покрыла ставку), заявка удалена или отменена.
+    Зовётся перед каждой отправкой в Telegram — напоминание об оплаченном не уйдёт,
+    каким бы путём ни отметили оплату."""
+    tasks = await db.tasks.find({
+        'status': 'pending', 'order_id': {'$nin': [None, '']},
+        '$or': [{'type': 'payment_reminder'}, {'task_type': {'$in': ['payment', 'reminder']}}],
+    }, {'_id': 0, 'id': 1, 'order_id': 1, 'side': 1}).to_list(2000)
+    if not tasks:
+        return 0
+    orders = {o['id']: o for o in await db.orders.find(
+        {'id': {'$in': list({t['order_id'] for t in tasks})}},
+        {'_id': 0, 'id': 1, 'deleted': 1, 'status': 1, 'client_paid': 1, 'carrier_paid': 1,
+         'client_rate': 1, 'carrier_rate': 1, 'client_payments': 1, 'carrier_payments': 1}).to_list(2000)}
+
+    def settled(o, side):
+        if not o or o.get('deleted') or o.get('status') == 'cancelled' or o.get(f'{side}_paid'):
+            return True
+        rate = float(o.get(f'{side}_rate') or 0)
+        paid = sum(float(x.get('amount') or 0) for x in (o.get(f'{side}_payments') or []))
+        return rate > 0 and paid >= rate - 0.01
+
+    done = [t['id'] for t in tasks if settled(orders.get(t['order_id']), t.get('side') or 'carrier')]
+    if done:
+        await db.tasks.update_many({'id': {'$in': done}},
+                                   {'$set': {'status': 'done', 'completed_at': now_iso()}})
+    return len(done)
+
+
 async def _run_task_reminders() -> dict:
     """Один проход: по задачам (кроме напоминаний об оплате) со сроком
     <= сегодня, у которых наступило назначенное время (due_time, по
@@ -1117,6 +1150,7 @@ async def _run_task_reminders() -> dict:
     now_hm = now.strftime('%H:%M')
     sent = 0
     tried = 0
+    await _close_paid_order_tasks()
 
     due = await db.tasks.find({
         'status': 'pending',
@@ -2900,6 +2934,7 @@ async def list_tasks(status: Optional[str] = "pending", current_user: dict = Dep
     # Default to pending-only so the main task view (and the dashboard
     # overdue widget / counts) never shows completed rows. Pass status=all
     # for the dedicated "Завершённые" tab, or status=done explicitly.
+    await _close_paid_order_tasks()  # оплаченные заявки — их задачи об оплате уже не висят
     filter_q: dict = {}
     if status and status != "all":
         filter_q["status"] = status
@@ -4047,13 +4082,13 @@ async def add_payment(order_id: str, side: str, payload: PaymentEntry, backgroun
     await db.orders.update_one({"id": order_id}, _ops)
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
 
-    # Полностью оплачено частичными ПП — закрываем задачу-напоминание,
-    # как это делает mark_payment.
+    # Полностью оплачено частичными ПП — закрываем все задачи об оплате
+    # по заявке (и в Google Tasks), как это делает отметка оплаты.
     if fully_paid:
-        await db.tasks.update_many(
-            {"order_id": order_id, "type": "payment_reminder", "side": side, "status": "pending"},
-            {"$set": {"status": "done", "completed_at": now_iso()}},
-        )
+        await _close_paid_order_tasks()
+        if side == "carrier":
+            background_tasks.add_task(_bg_close_carrier_payment_on_paid, order.get("carrier_name", ""),
+                                      order.get("order_number", ""), order_id)
 
     await _sync_kudir_rows_for_payments(updated, side)
 
