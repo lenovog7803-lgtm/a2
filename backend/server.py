@@ -11,6 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument as _ReturnDocument
 import os, re, uuid, asyncio, hashlib, secrets, time, html as _html
+from fastapi.responses import JSONResponse
 import jwt as _jwt
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -291,10 +292,15 @@ async def _create_backup(reason: str = "scheduled"):
         "collections": snapshot,
     }
     await db.backups.insert_one(backup_doc)
-    # Keep only last 30 backups
-    all_bk = await db.backups.find({}, {"_id": 1, "created_at": 1}).sort("created_at", -1).to_list(100)
-    if len(all_bk) > 30:
-        await db.backups.delete_many({"_id": {"$in": [b["_id"] for b in all_bk[30:]]}})
+    # Последние 30 бэкапов + первый бэкап каждого месяца хранятся всегда (месячный архив:
+    # раньше всё старше 30 копий удалялось, и ошибку, замеченную позже месяца, было не откатить).
+    all_bk = await db.backups.find({}, {"_id": 1, "created_at": 1}).sort("created_at", -1).to_list(10000)
+    monthly = {}
+    for b in reversed(all_bk):
+        monthly.setdefault((b.get("created_at") or "")[:7], b["_id"])
+    old = [b["_id"] for b in all_bk[30:] if b["_id"] not in set(monthly.values())]
+    if old:
+        await db.backups.delete_many({"_id": {"$in": old}})
     logging.getLogger(__name__).info(f"Backup created: {backup_doc['id']} reason={reason} counts={backup_doc['counts']}")
     return backup_doc["id"]
 
@@ -1330,7 +1336,8 @@ async def _deferred_init():
     # asyncio.create_task(_auto_sync_loop())
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_startup_backup())
-    asyncio.create_task(_trash_purge_loop())
+    # Корзина больше не чистится сама через 30 дней — удалённое лежит, пока директор
+    # не очистит корзину вручную.
     asyncio.create_task(_token_refresh_loop())
     asyncio.create_task(_check_stale_managers())
     asyncio.create_task(_sync_payment_reminders())
@@ -1359,6 +1366,42 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
+
+
+# Без входа доступны только эти адреса. Всё остальное под /api требует токен —
+# раньше защита стояла на каждом адресе отдельно, и на десятках её забыли.
+_PUBLIC_API = {
+    ("POST", "/api/auth/login"),
+    ("GET", "/api/auth/google/callback"),       # сюда возвращается Google после входа
+    ("GET", "/api/auth/google/callback/done"),
+    ("GET", "/api/ping"),
+    ("GET", "/api/"),
+}
+# скачивание по ссылке (без заголовка) — токен в ?token=, проверяет сам адрес
+_QUERY_TOKEN_API = {"/api/kudir/export", "/api/fleet/export"}
+
+
+async def _token_user_ok(token: str) -> bool:
+    try:
+        payload = _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        uid = payload.get("sub")
+        return bool(uid) and await _check_session_active(payload.get("sid")) \
+            and bool(await db.users.find_one({"id": uid}, {"_id": 1}))
+    except Exception:
+        return False
+
+
+@app.middleware("http")
+async def require_login_for_api(request: Request, call_next):
+    path, method = request.url.path, request.method
+    if method != "OPTIONS" and path.startswith("/api") and (method, path) not in _PUBLIC_API:
+        auth = request.headers.get("authorization") or ""
+        token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        if not token and path in _QUERY_TOKEN_API:
+            token = request.query_params.get("token") or ""
+        if not token or not await _token_user_ok(token):
+            return JSONResponse({"detail": "Требуется авторизация"}, status_code=401)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -1400,6 +1443,10 @@ manager = ConnectionManager()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # живые обновления — только вошедшим (токен в ?token=, браузер не умеет заголовки у WebSocket)
+    if not await _token_user_ok(websocket.query_params.get("token") or ""):
+        await websocket.close(code=4401)
+        return
     await manager.connect(websocket)
     try:
         while True:
@@ -1412,7 +1459,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
 TAX_RATE = 0.20  # 20% — для расчёта прибыли (маржа − налог)
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "crm-secret-key-change-in-production-2024")
+# Без JWT_SECRET секрет выводится из MONGO_URL (он есть только на сервере): раньше тут
+# стоял запасной секрет прямо в публичном коде — по нему можно было подделать вход.
+JWT_SECRET = os.environ.get("JWT_SECRET") or hashlib.sha256(
+    ("crm-jwt:" + os.environ.get("MONGO_URL", "")).encode()).hexdigest()
+if not os.environ.get("JWT_SECRET"):
+    logging.getLogger(__name__).warning("JWT_SECRET не задан — задайте его в переменных окружения Render")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24 * 7
 
@@ -4729,7 +4781,7 @@ async def auth_google_status():
 
 
 @api_router.delete("/auth/google")
-async def auth_google_disconnect():
+async def auth_google_disconnect(current_user: dict = Depends(require_director)):
     await db.oauth_tokens.delete_one({"_id": "google"})
     if _docs_get_generator is not None:
         try:
@@ -5384,7 +5436,9 @@ async def import_from_sheets(
     if _sheets_run_import is None:
         raise HTTPException(500, "Импорт недоступен")
     targets = [c.strip() for c in collections.split(",") if c.strip()] or None
-    return await _sheets_run_import(db, targets=targets, mode=mode)
+    # skip_delete: заявки, которых нет в таблице, больше не помечаются удалёнными —
+    # сравнение по номеру ошибалось и дважды «удаляло» живые заявки
+    return await _sheets_run_import(db, targets=targets, mode=mode, skip_delete=True)
 
 
 @api_router.get("/sync/import_status")
@@ -5850,99 +5904,6 @@ async def global_search(q: str = "", current_user: Optional[dict] = Depends(_get
         [{"type": "task", "id": t["id"], "title": t.get("title", ""), "subtitle": "Задача"} for t in tasks]
     )
     return {"results": results}
-
-
-# ====== Seed ======
-@api_router.post("/seed")
-async def seed_data():
-    await db.orders.delete_many({})
-    await db.clients.delete_many({})
-    await db.carriers.delete_many({})
-    await db.leads.delete_many({})
-
-    clients = [
-        Client(name="ООО Логистик-Прайм", contact_person="Иванов И.И.", phone="+7 (495) 111-22-33", email="info@logistic-prime.ru",
-               inn="7701234567", kpp="770101001", legal_address="г. Москва, ул. Тверская, д. 10",
-               bank_name="ПАО Сбербанк", bank_account="40702810400000012345", bank_bik="044525225", bank_corr_account="30101810400000000225",
-               payment_terms="10 дней", cargo_types="Электроника, бытовая техника", directions="МСК-СПб, МСК-НСК"),
-        Client(name="ТД Северный Ветер", contact_person="Петрова О.С.", phone="+7 (812) 222-33-44", email="op@nordwind.ru",
-               inn="7802345678", kpp="780201001", legal_address="г. СПб, Невский пр., д. 22",
-               bank_name="АО Альфа-Банк", bank_account="40702810500000098765", bank_bik="044030786", bank_corr_account="30101810200000000593",
-               payment_terms="7 дней", cargo_types="Продукты питания (реф)", directions="СПб-Урал"),
-        Client(name="АО МеталлТорг", contact_person="Сидоров А.В.", phone="+7 (343) 333-44-55", email="logistics@metalltorg.ru",
-               inn="6603456789", kpp="660301001", legal_address="г. Екатеринбург, ул. Ленина, д. 50",
-               bank_name="ВТБ", bank_account="40702810700000054321", bank_bik="046577751", bank_corr_account="30101810700000000751",
-               payment_terms="14 дней", cargo_types="Металлопрокат, арматура", directions="Урал-юг РФ"),
-        Client(name="ИП Смирнов В.П.", contact_person="Смирнов В.П.", phone="+7 (903) 444-55-66", email="smirnov@mail.ru",
-               inn="770345678901", payment_terms="3 дня", cargo_types="Хим. продукция в IBC"),
-        Client(name="ООО Гранд Пром", contact_person="Кузнецова Е.Н.", phone="+7 (495) 555-66-77", email="grand@grandprom.ru",
-               inn="7704567890", kpp="770401001", bank_name="Тинькофф", bank_account="40702810900000067890", bank_bik="044525974",
-               payment_terms="5 дней", cargo_types="Запчасти", directions="ЦФО"),
-    ]
-    for c in clients: await db.clients.insert_one(c.dict())
-
-    carriers = [
-        Carrier(company_name="ИП Морозов А.Н.", driver_name="Морозов Андрей Николаевич", phone="+7 (905) 100-20-30",
-                inn="503012345678", legal_address="МО, г. Подольск, ул. Кирова, д. 5",
-                bank_name="Сбербанк", bank_account="40802810400001234567", bank_bik="044525225",
-                vehicle_type="Тент", plate="А123БВ77", capacity_tons=20, capacity_m3=86, rating=4.8,
-                cargo_types="Стандартные грузы", regions="ЦФО, СЗФО"),
-        Carrier(company_name="ООО ТрансЛайн", driver_name="Волков Сергей Иванович", phone="+7 (916) 200-30-40",
-                inn="7706123456", kpp="770601001", bank_name="ВТБ", bank_account="40702810800009876543", bank_bik="046577751",
-                vehicle_type="Реф", plate="М456КН99", capacity_tons=20, capacity_m3=82, rating=4.9,
-                cargo_types="Продукты, медикаменты", regions="Россия + Беларусь"),
-        Carrier(company_name="ИП Гусев Д.Л.", driver_name="Гусев Дмитрий", phone="+7 (921) 300-40-50",
-                inn="780234567890", vehicle_type="Изотерм", plate="К789ЕР78", capacity_tons=10, capacity_m3=45, rating=4.5,
-                regions="СЗФО"),
-        Carrier(company_name="АвтоПарк-Юг", driver_name="Романов Виктор", phone="+7 (988) 400-50-60",
-                inn="2308765432", bank_name="Сбербанк", bank_account="40702810400005554433", bank_bik="040349602",
-                vehicle_type="Тент", plate="Е321ОТ23", capacity_tons=20, capacity_m3=90, rating=4.7,
-                regions="ЮФО, СКФО"),
-        Carrier(company_name="ИП Беляев К.С.", driver_name="Беляев Константин", phone="+7 (962) 500-60-70",
-                inn="660345678123", vehicle_type="Тент", plate="У654АХ66", capacity_tons=5, capacity_m3=24, rating=4.3,
-                regions="УФО"),
-    ]
-    for c in carriers: await db.carriers.insert_one(c.dict())
-
-    # Несколько заявок старше 15 дней с неоплатами для подсветки
-    orders_data = [
-        # старая неоплаченная (должна подсветиться красным)
-        ("№2025-0120", clients[0], carriers[0], "Москва", "СПб", "г. Москва, Каширское ш., 23", "г. СПб, ул. Софийская, 14А", "2026-01-15", "2026-01-16", 95000, 75000, "delivered", False, False, True, False, False, False, "Электроника", 12),
-        ("№2025-0118", clients[2], carriers[3], "Екатеринбург", "Краснодар", "г. Екатеринбург, ул. Шефская, 2В", "г. Краснодар, ул. Дзержинского, 100", "2026-01-10", "2026-01-13", 220000, 175000, "delivered", False, True, True, True, True, False, "Металлопрокат", 20),
-        # свежие
-        ("№2025-0142", clients[0], carriers[0], "Москва", "Санкт-Петербург", "г. Москва, Каширское ш., 23, склад №4", "г. СПб, ул. Софийская, 14А", "2026-02-12", "2026-02-13", 95000, 75000, "in_progress", True, False, True, True, False, False, "Электроника", 12),
-        ("№2025-0141", clients[1], carriers[1], "Санкт-Петербург", "Екатеринбург", "г. СПб, пр. Обуховской Обороны, 271", "г. Екатеринбург, ул. Машинная, 31", "2026-02-10", "2026-02-12", 180000, 145000, "delivered", True, True, True, True, True, True, "Продукты питания (реф)", 18),
-        ("№2025-0139", clients[3], carriers[2], "Москва", "Казань", "МО, Дмитровский р-н, склад", "г. Казань, ул. Гаврилова, 5", "2026-02-14", "2026-02-15", 65000, 48000, "new", False, False, False, False, False, False, "Хим. продукция", 8),
-        ("№2025-0138", clients[4], carriers[4], "Нижний Новгород", "Москва", "г. Н.Новгород, ул. Кузбасская, 1", "г. Москва, МКАД 41 км", "2026-02-09", "2026-02-09", 38000, 28000, "delivered", True, True, True, True, True, True, "Запчасти", 4),
-        ("№2025-0137", clients[0], carriers[1], "Москва", "Новосибирск", "г. Москва, Каширское ш., 23", "г. Новосибирск, ул. Петухова, 17", "2026-02-15", "2026-02-19", 320000, 260000, "in_progress", False, False, True, False, False, False, "Бытовая техника", 19),
-        ("№2025-0136", clients[2], carriers[0], "Челябинск", "Москва", "г. Челябинск, ул. Производственная, 8Б", "г. Москва, склад МКАД 23", "2026-02-11", "2026-02-13", 145000, 115000, "in_progress", True, False, True, True, False, False, "Стройматериалы", 20),
-    ]
-    for od in orders_data:
-        (num, cl, cr, rf, rt, raf, rat, ld, ud, c_rate, cr_rate, status, cp, crp, dtcs, dfcr, dtcrs, dfcrr, cargo, w) = od
-        await db.orders.insert_one(Order(
-            order_number=num, client_id=cl.id, client_name=cl.name,
-            carrier_id=cr.id, carrier_name=cr.company_name,
-            route_from=rf, route_to=rt, route_from_address=raf, route_to_address=rat,
-            load_date=ld, unload_date=ud,
-            driver_name=cr.driver_name, driver_phone=cr.phone,
-            vehicle_type=cr.vehicle_type, vehicle_plate=cr.plate,
-            client_rate=c_rate, carrier_rate=cr_rate,
-            status=status, client_paid=cp, carrier_paid=crp,
-            docs_to_client_sent=dtcs, docs_from_client_received=dfcr,
-            docs_to_carrier_sent=dtcrs, docs_from_carrier_received=dfcrr,
-            cargo=cargo, weight_tons=w,
-        ).dict())
-
-    leads = [
-        Lead(name="Орлов Михаил", company="ООО Восток-Логистик", phone="+7 (495) 700-10-20", city="Москва", stage="new", next_call="2026-02-12", notes="Интерес — еженедельные перевозки МСК-СПб"),
-        Lead(name="Захарова Анна", company="ТД Полюс", phone="+7 (812) 700-20-30", city="СПб", stage="kp_sent", last_contact="2026-02-08", next_call="2026-02-13", notes="Просили КП на реф направление"),
-        Lead(name="Николаев Пётр", company="АО Стройка-Сервис", phone="+7 (343) 700-30-40", city="Екатеринбург", stage="thinking", last_contact="2026-02-09", next_call="2026-02-11", notes="Готовы к тестовому рейсу"),
-        Lead(name="Григорьев Олег", company="ИП Григорьев", phone="+7 (961) 700-40-50", city="Краснодар", stage="won", last_contact="2026-02-07", notes="Стал клиентом"),
-        Lead(name="Соколова Мария", company="ООО АгроТранс", phone="+7 (902) 700-50-60", city="Воронеж", stage="new", next_call="2026-02-14", notes="Сезон — март-октябрь"),
-    ]
-    for l in leads: await db.leads.insert_one(l.dict())
-
-    return {"ok": True, "clients": len(clients), "carriers": len(carriers), "orders": len(orders_data), "leads": len(leads)}
 
 
 # ====== Finance: Withdrawals ======
@@ -7807,25 +7768,6 @@ async def root():
 @api_router.get("/ping")
 async def ping():
     return {"ok": True}
-
-
-@api_router.post("/admin/restore")
-async def admin_restore():
-    all_perms = {
-        "can_view_finance": True,
-        "can_view_all_orders": True,
-        "can_view_all_clients": True,
-        "can_view_all_leads": True,
-        "can_create_orders": True,
-    }
-    result = await db.users.update_one(
-        {"login": "admin"},
-        {"$set": {"role": "admin", "permissions": all_perms}},
-    )
-    if result.matched_count == 0:
-        raise HTTPException(404, "Пользователь admin не найден")
-    user = await db.users.find_one({"login": "admin"}, {"_id": 0, "password_hash": 0})
-    return {"ok": True, "user": user}
 
 
 # ====== Рассылка (mailing.py) ======
