@@ -1276,7 +1276,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
             "sent_today": sum([await sent_today(db, mb["id"]) for mb in boxes]),
             "limit": sum(h["limit"] for h in healths.values()), "health": healths[worst["id"]],
             "mailboxes": [{"id": mb["id"], "login": mb.get("login"), "name": mb["name"], "state": rt_of(mb["id"])["state"],
-                           "health": healths[mb["id"]]} for mb in boxes],
+                           "health": healths[mb["id"]], "sent_today": await sent_today(db, mb["id"])} for mb in boxes],
             "queue_new": new, "queue_follow": fol,
             "configured": all([await is_configured(db, mb) for mb in boxes]), "log": log,
         }
