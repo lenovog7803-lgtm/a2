@@ -266,9 +266,19 @@ def greeting(company: str, contact_name: str) -> str:
     return random.choice(["Добрый день!", "Здравствуйте!"])
 
 
+SPIN_RE = re.compile(r"\{([^{}|\n]*(?:\|[^{}|\n]*)+)\}")
+
+
+def spin(text: str) -> str:
+    """{Добрый день|Здравствуйте} → один из вариантов наугад: письма не одинаковые
+    слово в слово, спам-фильтрам сложнее склеить их в массовую рассылку."""
+    return SPIN_RE.sub(lambda m: random.choice(m.group(1).split("|")).strip(), text or "")
+
+
 def render(template: str, contact: dict, mb: dict) -> str:
     company = clean_company(contact.get("company"))
     name = (contact.get("contact_name") or "").strip()
+    template = spin(template)
     for k, v in {
         "{приветствие}": greeting(company, name),
         "{компания}": company,
@@ -277,7 +287,7 @@ def render(template: str, contact: dict, mb: dict) -> str:
         "{моя_компания}": mb.get("my_company", ""),
         "{телефон}": mb.get("phone", ""),
     }.items():
-        template = template.replace(k, v)
+        template = template.replace(k, str(v or "").strip())
     return template
 
 
@@ -847,14 +857,13 @@ async def health(db, mb: dict) -> dict:
     day_no = len(days - {today_str()}) + 1
     h = {"auto": bool(mb.get("auto_limit")), "day": day_no, "cap": cap, "sent_7d": sent, "bounced_7d": bounced,
          "bounce_rate": round(rate * 100, 1), "status": "ok", "reason": ""}
-    lim = cap
-    if h["auto"]:
-        lim = min(cap, ramp_limit(day_no))
-        if sent >= 20 and rate > BOUNCE_STOP:
-            h.update(status="stop", reason=f"возвратов {h['bounce_rate']}% за неделю — почистите базу от несуществующих адресов")
-        elif sent >= 10 and rate > BOUNCE_SLOW:
-            lim = max(3, lim // 2)
-            h.update(status="slow", reason=f"возвратов {h['bounce_rate']}% — темп снижен вдвое")
+    lim = min(cap, ramp_limit(day_no)) if h["auto"] else cap
+    # защита от возвратов работает и при выключенном разгоне
+    if sent >= 20 and rate > BOUNCE_STOP:
+        h.update(status="stop", reason=f"возвратов {h['bounce_rate']}% за неделю — почистите базу от несуществующих адресов")
+    elif sent >= 10 and rate > BOUNCE_SLOW:
+        lim = max(3, lim // 2)
+        h.update(status="slow", reason=f"возвратов {h['bounce_rate']}% — темп снижен вдвое")
     if mb.get("paused_until") and mb["paused_until"] > today_str():
         h.update(status="paused", reason="Почта ограничила отправку — пауза до завтра")
     h["limit"] = lim
@@ -926,6 +935,37 @@ async def recent_sends(db) -> dict:
     return out
 
 
+FREE_MAIL = {"gmail.com", "googlemail.com", "mail.ru", "bk.ru", "list.ru", "inbox.ru", "internet.ru", "yandex.ru", "ya.ru",
+             "yandex.com", "rambler.ru", "icloud.com", "me.com", "outlook.com", "hotmail.com", "yahoo.com"}
+_mx_cache: dict = {}
+
+
+def domain_of(addr: str) -> str:
+    return (addr or "").rsplit("@", 1)[-1].lower()
+
+
+def has_mail_server(domain: str) -> bool:
+    """Есть ли у домена почтовый сервер (MX). Нет — письмо гарантированно вернётся,
+    а возвраты — главный повод для бана. Сеть недоступна — считаем, что есть."""
+    if domain in FREE_MAIL:
+        return True
+    if domain not in _mx_cache:
+        import requests
+        try:
+            j = requests.get("https://dns.google/resolve", params={"name": domain, "type": "MX"}, timeout=10).json()
+            _mx_cache[domain] = bool(j.get("Answer")) or j.get("Status") not in (0, 3)
+        except Exception:
+            return True
+    return _mx_cache[domain]
+
+
+async def domains_today(db) -> set:
+    """Корпоративные домены, которым сегодня уже ушло первое письмо: в одну компанию —
+    не больше одного письма в день (несколько писем на один домен подряд похожи на спам)."""
+    return {d for d in (domain_of(e) for e in await db.mail_contacts.distinct("email", {"first_sent": today_str()}))
+            if d not in FREE_MAIL}
+
+
 def _free(c: dict, blocked: set, recent: dict) -> bool:
     # другим контактом с тем же email (другое направление) недавно писали — ждём
     return c["email"] not in blocked and not (recent.get(c["email"], set()) - {c["id"]})
@@ -939,8 +979,9 @@ async def next_in_campaign(db, camp: dict, blocked: set, recent: dict, mid: str 
                                              {"_id": 0}).sort("first_sent", 1).limit(500):
             if (mid is None or sent_from(c, camp, mid)) and _free(c, blocked, recent):
                 return c, "follow"
+    busy = await domains_today(db)
     cands = [c for c in await db.mail_contacts.find({**base, "status": ST_NEW}, {"_id": 0}).to_list(5000)
-             if _free(c, blocked, recent)]
+             if _free(c, blocked, recent) and domain_of(c["email"]) not in busy]
     if not cands:
         return None, None
     cands.sort(key=lambda c: (PRIORITY_ORDER.get((c.get("priority") or "").strip(), 3), c.get("created_at", "")))
@@ -976,12 +1017,27 @@ def _note(text: str) -> dict:
     return {"text": text, "date": datetime.utcnow().isoformat() + "+00:00", "author": "Рассылка"}
 
 
+REFUSAL_RE = re.compile(r"^(нет|не\s*интересно|не\s*актуально|неактуально|не\s*нужно|не\s*надо|отпишите|удалите|"
+                        r"не\s*пишите|не\s*беспокойте|stop|unsubscribe|no)\b", re.I)
+
+
+def is_refusal(text: Optional[str]) -> bool:
+    """Короткий ответ «нет / не интересно / отпишите» — сразу «Отказ»: больше не пишем
+    ни из какого направления (повторные письма тем, кто отказался, приводят к жалобам на спам)."""
+    t = re.sub(r"[\s.!,]+$", "", (text or "").strip())
+    # «нет, но пришлите прайс» — это не отказ
+    if re.search(r"\bно\b|\bа\s|прайс|(?<!не )(?<!не)интерес|пришлите|скиньте|цен|позвон|какие|сколько|\?", t.lower()):
+        return False
+    return bool(t) and len(t) <= 80 and bool(REFUSAL_RE.match(t))
+
+
 async def on_reply(db, c: dict, info: Optional[dict] = None, camp: Optional[dict] = None, mid: Optional[str] = None):
     """Ответ пришёл: статус, текст ответа, журнал, задача в CRM, отметка в лиде, Telegram."""
     info = info or {}
     camp = camp or {}
     await db.mail_contacts.update_one({"id": c["id"]}, {"$set": {
-        "status": ST_REPLY, "replied_at": now_msk().isoformat(timespec="seconds"), "reply_seen": False,
+        "status": ST_REFUSED if is_refusal(info.get("snippet")) else ST_REPLY,
+        "replied_at": now_msk().isoformat(timespec="seconds"), "reply_seen": False,
         "reply_subject": info.get("subject", ""), "reply_snippet": info.get("snippet", "")}})
     await add_log(db, c, "ответ", True, "Пришёл ответ — проверьте почту", mailbox_id=mid)
     who = "Поставщик ответил" if camp.get("kind") == KIND_PURCHASE else "Ответ на рассылку"
@@ -1120,6 +1176,13 @@ async def mailbox_step(db, mb: dict, campaigns: list) -> int:
     camp, contact, kind = await next_for_mailbox(db, campaigns, mb["id"])
     if not contact:
         return _hold(rt, 600, "Очередь пуста — добавьте контакты с email")
+    if kind == "first" and not await asyncio.to_thread(has_mail_server, domain_of(contact["email"])):
+        # не шлём заведомо несуществующий адрес — возврат ударил бы по репутации ящика
+        await db.mail_contacts.update_one({"id": contact["id"]}, {"$set": {
+            "status": ST_BOUNCE, "last_error": "У домена нет почтового сервера — письмо не отправлялось"}})
+        await add_log(db, contact, "проверка адреса", False, "Нет почтового сервера — пропущен без отправки",
+                      mailbox_id=mb["id"], campaign_id=camp["id"])
+        return 5
     rt["state"] = f"Отправляю: {contact.get('company') or contact['email']}"
     result = await send_one(db, contact, kind, mb, camp)
     if result == "auth":
