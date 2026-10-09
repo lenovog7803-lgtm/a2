@@ -1052,10 +1052,14 @@ async def on_reply(db, c: dict, info: Optional[dict] = None, camp: Optional[dict
 
 
 async def on_next_reply(db, c: dict, info: dict, camp: Optional[dict], mid: str):
-    """Продолжение переписки: статус (интерес/сделка) не трогаем, только «новое сообщение»."""
+    """Продолжение переписки: интерес/сделку не трогаем, только «новое сообщение».
+    Если до этого контакт не отвечал (мы написали ему из CRM первыми) — теперь «Ответил»,
+    иначе ему ушло бы ещё и автоматическое напоминание."""
     import html
     camp = camp or {}
-    await db.mail_contacts.update_one({"id": c["id"]}, {"$set": {
+    upd = {"status": ST_REFUSED if is_refusal(info.get("snippet")) else ST_REPLY} \
+        if c.get("status") in (ST_SENT, ST_FOLLOW, ST_NEW) else {}
+    await db.mail_contacts.update_one({"id": c["id"]}, {"$set": {**upd,
         "replied_at": now_msk().isoformat(timespec="seconds"), "reply_seen": False, "awaiting_reply": False,
         "reply_subject": info.get("subject", ""), "reply_snippet": info.get("snippet", "")}})
     await add_log(db, c, "ответ", True, "Новое письмо в переписке", mailbox_id=mid)
@@ -1214,7 +1218,7 @@ async def mailing_loop(db):
                 running = [c for c in campaigns if c.get("running") and uses_box(c, mb["id"])]
                 now = now_msk()
                 # Ответы проверяем раз в 15 минут даже при остановленной рассылке — люди отвечают и потом
-                if not rt["last_inbox"] or (now - rt["last_inbox"]).total_seconds() > 900:
+                if not rt["last_inbox"] or (now - rt["last_inbox"]).total_seconds() > 300:
                     rt["last_inbox"] = now
                     try:
                         await check_inbox(db, mb)
