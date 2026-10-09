@@ -1116,15 +1116,25 @@ async def _close_paid_order_tasks() -> int:
     Зовётся перед каждой отправкой в Telegram — напоминание об оплаченном не уйдёт,
     каким бы путём ни отметили оплату."""
     tasks = await db.tasks.find({
-        'status': 'pending', 'order_id': {'$nin': [None, '']},
+        'status': 'pending',
         '$or': [{'type': 'payment_reminder'}, {'task_type': {'$in': ['payment', 'reminder']}}],
-    }, {'_id': 0, 'id': 1, 'order_id': 1, 'side': 1}).to_list(2000)
+    }, {'_id': 0, 'id': 1, 'order_id': 1, 'side': 1, 'title': 1, 'description': 1}).to_list(2000)
+    # Старые задачи «Оплатить перевозчика…» сохранены без order_id — берём номер
+    # заявки из текста («— заявка З-731/2026» / «Заявка З-731/2026»).
+    for t in tasks:
+        if not t.get('order_id'):
+            m = re.search(r'[Зз]аявк[аи]\s+(\S+)', f"{t.get('title') or ''} {t.get('description') or ''}")
+            t['order_number'] = m.group(1).rstrip('.,;') if m else None
+    tasks = [t for t in tasks if t.get('order_id') or t.get('order_number')]
     if not tasks:
         return 0
-    orders = {o['id']: o for o in await db.orders.find(
-        {'id': {'$in': list({t['order_id'] for t in tasks})}},
-        {'_id': 0, 'id': 1, 'deleted': 1, 'status': 1, 'client_paid': 1, 'carrier_paid': 1,
-         'client_rate': 1, 'carrier_rate': 1, 'client_payments': 1, 'carrier_payments': 1}).to_list(2000)}
+    found = await db.orders.find(
+        {'$or': [{'id': {'$in': [t['order_id'] for t in tasks if t.get('order_id')]}},
+                 {'order_number': {'$in': [t['order_number'] for t in tasks if t.get('order_number')]}}]},
+        {'_id': 0, 'id': 1, 'order_number': 1, 'deleted': 1, 'status': 1, 'client_paid': 1, 'carrier_paid': 1,
+         'client_rate': 1, 'carrier_rate': 1, 'client_payments': 1, 'carrier_payments': 1}).to_list(5000)
+    orders = {o['id']: o for o in found}
+    by_number = {o['order_number']: o for o in sorted(found, key=lambda o: not o.get('deleted')) if o.get('order_number')}
 
     def settled(o, side):
         if not o or o.get('deleted') or o.get('status') == 'cancelled' or o.get(f'{side}_paid'):
@@ -1133,7 +1143,16 @@ async def _close_paid_order_tasks() -> int:
         paid = sum(float(x.get('amount') or 0) for x in (o.get(f'{side}_payments') or []))
         return rate > 0 and paid >= rate - 0.01
 
-    done = [t['id'] for t in tasks if settled(orders.get(t['order_id']), t.get('side') or 'carrier')]
+    done = []
+    for t in tasks:
+        if t.get('order_id'):
+            o = orders.get(t['order_id'])
+        elif t['order_number'] in by_number:
+            o = by_number[t['order_number']]
+        else:
+            continue  # номер не нашёлся — не трогаем, вдруг разобран неверно
+        if settled(o, t.get('side') or 'carrier'):
+            done.append(t['id'])
     if done:
         await db.tasks.update_many({'id': {'$in': done}},
                                    {'$set': {'status': 'done', 'completed_at': now_iso()}})
@@ -3406,7 +3425,7 @@ async def update_order(order_id: str, payload: OrderUpdate, background_tasks: Ba
             },
         ]:
             obj = Task(**task_fields)
-            await db.tasks.insert_one(obj.dict())
+            await db.tasks.insert_one({**obj.dict(), "order_id": order_id})  # чтобы закрыть при оплате
             background_tasks.add_task(_bg_gt_create, obj.dict())
         background_tasks.add_task(
             _bg_carrier_payment_calendar,
