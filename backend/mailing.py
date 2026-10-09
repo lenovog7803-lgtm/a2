@@ -202,6 +202,45 @@ def clean_email(v) -> str:
     return m.group(0).strip().lower() if m else ""
 
 
+CHANNEL_LABEL = {"email": "почту", "whatsapp": "WhatsApp", "telegram": "Telegram"}
+
+
+def contact_mark(v) -> str:
+    """Отметка из таблицы «написал на почту / в тг / на вацап» → канал первого контакта."""
+    t = str(v or "").lower()
+    if re.search(r"вац|ватс|whats|wa\b", t):
+        return "whatsapp"
+    if re.search(r"\bтг\b|телег|telegram|tg\b", t):
+        return "telegram"
+    if re.search(r"поч|email|e-mail|mail|письм", t):
+        return "email"
+    return ""
+
+
+def contact_date(v) -> str:
+    """Дата контакта из таблицы (дата Excel или «дд.мм.гггг»); пусто — сегодня."""
+    if isinstance(v, datetime):
+        return v.date().isoformat()
+    if isinstance(v, date):
+        return v.isoformat()
+    m = re.search(r"(\d{1,2})\.(\d{1,2})\.(\d{2,4})", str(v or ""))
+    if m:
+        d, mo, y = map(int, m.groups())
+        try:
+            return date(y + 2000 if y < 100 else y, mo, d).isoformat()
+        except ValueError:
+            pass
+    return today_str()
+
+
+def mark_fields(channel: str, when: str) -> dict:
+    """Уже писали сами: на почту — считаем первое письмо отправленным (через followup_days
+    уйдёт напоминание и будем ловить ответ); в мессенджер — из авторассылки убираем."""
+    if channel == "email":
+        return {"status": ST_SENT, "first_sent": when, "notes": f"Писали вручную на почту {when}"}
+    return {"status": ST_SKIP, "notes": f"Писали в {CHANNEL_LABEL[channel]} {when}, напоминание — задачей в CRM"}
+
+
 def clean_company(name) -> str:
     name = re.sub(r"\s*\(.*?\)\s*", " ", str(name or ""))
     name = re.sub(r"[«»\"]", "", name)
@@ -1233,28 +1272,59 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         emails = set(await db.mail_contacts.distinct("email", {**cf, "email": {"$ne": ""}}))
         keys = {((c.get("company") or "").lower() + "|" + (c.get("site") or "").lower())
                 async for c in db.mail_contacts.find(cf, {"company": 1, "site": 1})}
-        added = skipped = 0
+        added = skipped = marked = 0
         docs = []
         for row in rows:
             company, em = (row.get("company") or "").strip(), clean_email(row.get("email"))
             if not company and not em:
                 continue
             key = company.lower() + "|" + (row.get("site") or "").lower()
+            channel, when = contact_mark(row.get("mark")), contact_date(row.get("date"))
             if (em and em in emails) or key in keys:
                 skipped += 1
+                # повторный импорт с отметкой «уже писал» — проставляем её у контакта, который ещё не трогали
+                if channel:
+                    flt = {**cf, "status": ST_NEW, "$or": [{"email": em}] if em else [{"company": company}]}
+                    if await db.mail_contacts.find_one(flt):
+                        await db.mail_contacts.update_one(flt, {"$set": mark_fields(channel, when)})
+                        await add_messenger_task(row, company, channel, when, campaign_id)
+                        marked += 1
                 continue
-            docs.append({"id": str(uuid.uuid4()), "campaign_id": campaign_id, "company": company, "email": em,
-                         "contact_name": row.get("contact_name", ""), "site": row.get("site", ""),
-                         "city": row.get("city", ""), "priority": row.get("priority", ""), "status": ST_NEW,
-                         "first_sent": None, "followup_sent": None,
-                         "created_at": datetime.utcnow().isoformat()})
+            doc = {"id": str(uuid.uuid4()), "campaign_id": campaign_id, "company": company, "email": em,
+                   "contact_name": row.get("contact_name", ""), "site": row.get("site", ""),
+                   "city": row.get("city", ""), "priority": row.get("priority", ""), "status": ST_NEW,
+                   "first_sent": None, "followup_sent": None,
+                   "created_at": datetime.utcnow().isoformat()}
+            if channel:
+                doc.update(mark_fields(channel, when))
+                await add_messenger_task(row, company, channel, when, campaign_id)
+                marked += 1
+            docs.append(doc)
             keys.add(key)
             if em:
                 emails.add(em)
             added += 1
         if docs:
             await db.mail_contacts.insert_many(docs)
-        return added, skipped
+        return added, skipped, marked
+
+    async def add_messenger_task(row, company, channel, when, campaign_id):
+        """Писали в мессенджер — письмо-напоминание тут не к месту, ставим задачу в CRM
+        (придёт в Telegram в день напоминания)."""
+        if channel == "email":
+            return
+        camp = await db.mail_campaigns.find_one({"id": campaign_id}, {"_id": 0}) or {}
+        due = (date.fromisoformat(when) + timedelta(days=int(camp.get("followup_days") or 4))).isoformat()
+        where = CHANNEL_LABEL[channel]
+        await db.tasks.insert_one({
+            "id": str(uuid.uuid4()), "title": f"Напомнить в {where}: {company}",
+            "description": "\n".join(x for x in (
+                f"Писали в {where} {date.fromisoformat(when).strftime('%d.%m.%Y')} ({camp.get('name') or 'рассылка'}).",
+                f"Телефон: {row['phone']}" if row.get("phone") else "",
+                f"Сайт: {row['site']}" if row.get("site") else "") if x),
+            "task_type": "call", "due_date": due, "due_time": "10:00", "status": "pending",
+            "google_task_id": None, "created_by": "Рассылка", "assigned_user_id": None,
+            "created_at": datetime.utcnow().isoformat(), "notified_at": None})
 
     @r.post("/contacts/import")
     async def import_xlsx(campaign_id: str = "", file: UploadFile = File(...), _: dict = Depends(require_user)):
@@ -1279,13 +1349,14 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
 
         ci = dict(company=col("компания", "название", "company"), email=col("email", "e-mail", "почта"),
                   contact_name=col("имя контакта", "контакт", "имя"), site=col("сайт", "site"),
-                  city=col("город / регионы", "город", "регион"), priority=col("приоритет"))
+                  city=col("город / регионы", "город", "регион"), priority=col("приоритет"),
+                  mark=col("отметка", "статус", "канал"), date=col("дата контакта"), phone=col("телефон"))
         rows = []
         for row in ws.iter_rows(min_row=2, values_only=True):
             rows.append({k: (str(row[i]).strip() if i is not None and i < len(row) and row[i] is not None else "")
                          for k, i in ci.items()})
-        added, skipped = await _insert_many(rows, camp["id"])
-        return {"added": added, "skipped": skipped}
+        added, skipped, marked = await _insert_many(rows, camp["id"])
+        return {"added": added, "skipped": skipped, "marked": marked}
 
     # --- ответы ---
     @r.get("/replies")
