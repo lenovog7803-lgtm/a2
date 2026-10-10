@@ -7628,6 +7628,41 @@ async def fleet_analytics(date_from: Optional[str] = None, date_to: Optional[str
     }
 
 
+# ====== Свой автопарк: цели по месяцам (вкладка «План» автопарка) ======
+class FleetGoalMonth(BaseModel):
+    month: str               # YYYY-MM
+    profit_goal: float = 0   # прибыль автопарка за месяц, Br
+    trips_goal: int = 0      # рейсов за месяц
+    revenue_goal: float = 0  # выручка за месяц, Br
+
+
+class FleetGoalsPayload(BaseModel):
+    months: List[FleetGoalMonth]
+
+
+@api_router.get("/fleet/goals")
+async def get_fleet_goals(year: int, user: dict = Depends(require_fleet_access)):
+    """Цели автопарка на год: 12 месяцев; не заданный месяц — нули."""
+    docs = await db.fleet_goals.find({"month": {"$regex": f"^{year:04d}-"}}, {"_id": 0}).to_list(24)
+    by_month = {d["month"]: d for d in docs}
+    return {"year": year, "months": [
+        by_month.get(f"{year:04d}-{m:02d}") or {"month": f"{year:04d}-{m:02d}", "profit_goal": 0, "trips_goal": 0, "revenue_goal": 0}
+        for m in range(1, 13)
+    ]}
+
+
+@api_router.post("/fleet/goals")
+async def save_fleet_goals(payload: FleetGoalsPayload, user: dict = Depends(require_fleet_access)):
+    saved = []
+    for g in payload.months:
+        if not re.fullmatch(r"\d{4}-\d{2}", g.month) or not 1 <= int(g.month[5:7]) <= 12:
+            raise HTTPException(400, f"Неверный месяц: {g.month}")
+        doc = g.dict()
+        await db.fleet_goals.replace_one({"month": g.month}, doc, upsert=True)
+        saved.append(doc)
+    return {"months": saved}
+
+
 # ---- Акт сверки с клиентом ----
 @api_router.get("/fleet/clients/{client_id}/reconciliation")
 async def fleet_client_reconciliation(client_id: str, date_from: Optional[str] = None,
