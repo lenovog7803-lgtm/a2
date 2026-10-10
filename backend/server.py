@@ -652,6 +652,122 @@ async def _notify_pending_payment_reminders(force: bool = False) -> dict:
             'sent': sum(1 for d in delivery if d.get('ok'))}
 
 
+# ====== Долги клиентов (раз в неделю) и «клиент уходит» (раз в день) ======
+def _order_day(o: dict) -> str:
+    """Дата заявки YYYY-MM-DD: выгрузка, иначе загрузка; понимает и «24.07.2025»."""
+    for k in ('unload_date', 'load_date'):
+        v = str(o.get(k) or '')
+        if re.match(r'^\d{4}-\d{2}-\d{2}', v):
+            return v[:10]
+        m = re.match(r'^(\d{2})\.(\d{2})\.?(\d{4})', v)
+        if m:
+            return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+    return ''
+
+
+async def _weekly_client_debts(force: bool = False) -> dict:
+    """По понедельникам в рабочее время — в «А2 Инфо СРМ»: кто из клиентов должен дольше 30 дней."""
+    now = datetime.now(_REPORT_TZ)
+    week_key = f"{now.isocalendar()[0]}-W{now.isocalendar()[1]:02d}"
+    if not force:
+        if now.weekday() != 0 or not _in_reminder_notify_window(now):
+            return {'skipped': 'not monday work hours'}
+        mark = await db.app_settings.find_one({'key': 'last_client_debts_digest'})
+        if mark and mark.get('value') == week_key:
+            return {'skipped': 'already sent'}
+    cutoff = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+    orders = await db.orders.find({
+        'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
+        'client_paid': {'$ne': True}, 'client_cash': {'$ne': True},
+    }, {'_id': 0, 'client_name': 1, 'client_rate': 1, 'client_payments': 1, 'unload_date': 1, 'load_date': 1}).to_list(20000)
+    debts: dict = {}
+    for o in orders:
+        day = _order_day(o)
+        if not day or day >= cutoff:
+            continue
+        rest = float(o.get('client_rate') or 0) - sum(float(p.get('amount') or 0) for p in (o.get('client_payments') or []))
+        if rest <= 0.5:
+            continue
+        d = debts.setdefault(o.get('client_name') or '—', {'sum': 0.0, 'n': 0, 'oldest': day})
+        d['sum'] += rest
+        d['n'] += 1
+        d['oldest'] = min(d['oldest'], day)
+    if not debts:
+        return {'count': 0}
+    rows = sorted(debts.items(), key=lambda x: -x[1]['sum'])
+    total = sum(d['sum'] for _, d in rows)
+    today = now.date()
+    lines = []
+    for name, d in rows[:25]:
+        days = (today - datetime.fromisoformat(d['oldest']).date()).days
+        lines.append(f"• {_esc(name)} — <b>{_byn(d['sum'])}</b> · {d['n']} заяв., самой старой {days} дн.")
+    if len(rows) > 25:
+        lines.append(f"…и ещё {len(rows) - 25}")
+    text = (f"💸 <b>Клиенты должны дольше 30 дней</b>\n"
+            f"{len(rows)} клиентов · всего <b>{_byn(total)}</b>\n\n" + "\n".join(lines))
+    delivery = await _broadcast_a2info(text)
+    if any(d.get('ok') for d in delivery):
+        await db.app_settings.update_one({'key': 'last_client_debts_digest'},
+                                         {'$set': {'key': 'last_client_debts_digest', 'value': week_key}}, upsert=True)
+    return {'count': len(rows), 'total': total, 'sent': sum(1 for d in delivery if d.get('ok'))}
+
+
+async def _churn_watch(force: bool = False) -> dict:
+    """Раз в день: постоянный клиент (от 5 заявок) не грузился вдвое дольше обычного — задача «позвонить».
+    Клиент снова загрузился — задача закрывается сама."""
+    now = datetime.now(_REPORT_TZ)
+    today = now.date()
+    day_key = today.isoformat()
+    if not force:
+        mark = await db.app_settings.find_one({'key': 'last_churn_watch'})
+        if mark and mark.get('value') == day_key:
+            return {'skipped': 'already today'}
+    orders = await db.orders.find({'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}},
+                                  {'_id': 0, 'client_id': 1, 'client_name': 1, 'unload_date': 1, 'load_date': 1,
+                                   'assigned_to': 1, 'created_by': 1}).to_list(50000)
+    by_client: dict = {}
+    for o in orders:
+        day = _order_day(o)
+        if day and o.get('client_id'):
+            by_client.setdefault(o['client_id'], []).append((day, o))
+    created, closed = 0, 0
+    for cid, rows in by_client.items():
+        rows.sort(key=lambda x: x[0])
+        last_day, last_o = rows[-1]
+        open_task = await db.tasks.find_one({'type': 'churn_watch', 'client_id': cid, 'status': 'pending'})
+        if open_task and last_day > (open_task.get('last_order_day') or ''):
+            await db.tasks.update_one({'id': open_task['id']},
+                                      {'$set': {'status': 'done', 'completed_at': now.isoformat()}})
+            closed += 1
+            continue
+        if open_task or len(rows) < 5:
+            continue
+        dates = sorted({datetime.fromisoformat(d).date() for d, _ in rows})
+        gaps = sorted((b - a).days for a, b in zip(dates, dates[1:]) if (b - a).days > 0)
+        if not gaps:
+            continue
+        typical = gaps[len(gaps) // 2]                        # медиана — обычный промежуток между заявками
+        since = (today - dates[-1]).days
+        # вдвое дольше обычного, но не меньше 3 недель; совсем давно ушедших (> полугода) не тревожим
+        if since < max(2 * typical, 21) or since > 180:
+            continue
+        name = last_o.get('client_name') or '—'
+        assigned = last_o.get('assigned_to') or last_o.get('created_by')
+        await db.tasks.insert_one({
+            'id': str(uuid.uuid4()), 'type': 'churn_watch', 'task_type': 'call',
+            'client_id': cid, 'last_order_day': last_day,
+            'title': f"Позвонить «{name}»: не грузился {since} дн. (обычно раз в {typical} дн.)",
+            'description': 'Постоянный клиент пропал дольше обычного — узнать, всё ли в порядке и есть ли грузы.',
+            'due_date': today.isoformat(), 'status': 'pending',
+            'assigned_user_id': assigned or None, 'created_by': assigned or '',
+            'created_at': now.isoformat(), 'completed_at': None, 'notified_at': None,
+        })
+        created += 1
+    await db.app_settings.update_one({'key': 'last_churn_watch'},
+                                     {'$set': {'key': 'last_churn_watch', 'value': day_key}}, upsert=True)
+    return {'created': created, 'closed': closed}
+
+
 async def _sync_payment_reminders():
     """Первый проход — почти сразу при старте, дальше раз в час. Задачи
     синхронизируются всегда, а рассылка в Telegram — только пн–пт 09–16."""
@@ -665,6 +781,13 @@ async def _sync_payment_reminders():
             await _notify_pending_payment_reminders()
         except Exception as e:
             logger.error(f'[payment reminders] {e}')
+        for job in (_weekly_client_debts, _churn_watch):
+            try:
+                res = await job()
+                if res and not res.get('skipped'):
+                    logger.info(f"[{job.__name__}] {res}")
+            except Exception as e:
+                logger.error(f'[{job.__name__}] {e}')
         await asyncio.sleep(3600)
 
 
