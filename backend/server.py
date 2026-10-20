@@ -2080,15 +2080,15 @@ class LeadUpdate(BaseModel):
 # ====== Lead call module: stages, cadence, scripts ======
 LEAD_STAGES = [
     {"id": "new",         "label": "Новый",         "order": 1, "color": "#8A93A0", "active": True},
-    {"id": "reached",     "label": "Дозвонился",    "order": 2, "color": "#1366F0", "active": True},
-    {"id": "interested",  "label": "Заинтересован", "order": 3, "color": "#1366F0", "active": True},
-    {"id": "thinking",    "label": "Думает",        "order": 4, "color": "#D97706", "active": True},
-    {"id": "kp_sent",     "label": "КП отправлено", "order": 5, "color": "#7C3AED", "active": True},
-    {"id": "negotiation", "label": "Переговоры",    "order": 6, "color": "#7C3AED", "active": True},
-    {"id": "won",         "label": "Клиент",        "order": 7, "color": "#1E9E5A", "active": False},
-    {"id": "no_contact",  "label": "Нет контакта",  "order": 8, "color": "#8A93A0", "active": False},
-    {"id": "lost",        "label": "Отказ",         "order": 9, "color": "#E0473B", "active": False},
+    {"id": "callback",    "label": "Перезвонить",   "order": 2, "color": "#1366F0", "active": True},
+    {"id": "thinking",    "label": "Думает",        "order": 3, "color": "#D97706", "active": True},
+    {"id": "kp_sent",     "label": "КП отправлено", "order": 4, "color": "#7C3AED", "active": True},
+    {"id": "won",         "label": "Клиент",        "order": 5, "color": "#1E9E5A", "active": False},
+    {"id": "lost",        "label": "Отказ",         "order": 6, "color": "#E0473B", "active": False},
 ]
+# итоги звонка → этап; старые итоги (из прежней воронки) переводим в новые
+CALL_OUTCOMES = {"no_answer", "callback", "thinking", "kp_sent", "won", "lost"}
+LEGACY_OUTCOME = {"reached": "callback", "interested": "thinking", "negotiation": "kp_sent"}
 LEAD_STAGE_BY_ID = {s["id"]: s for s in LEAD_STAGES}
 
 CADENCE = [
@@ -2119,10 +2119,12 @@ LOST_REASONS = [
     "Не наши направления",
     "Просят не звонить",
     "Компания не работает",
+    "Не дозвонились",
     "Другое",
 ]
 
 DEFAULT_SCRIPTS = {
+    "callback": "Добрый день! Мы с вами говорили [дата], вы просили перезвонить.\n\n— Удобно сейчас пару минут?\n— Актуальны ли перевозки Беларусь–Россия?\n— Какие направления и объёмы?",
     "new": "Добрый день! Меня зовут [имя], компания А2 Групп, занимаемся грузоперевозками Беларусь–Россия.\n\nПодскажите, с кем можно поговорить по вопросам логистики?\n\n— Вы отправляете грузы в Россию или из России?\n— Кто сейчас возит?\n— Какие направления чаще всего?",
     "reached": "Спасибо что уделили время.\n\n— Какие объёмы отправляете в месяц?\n— Какой тип груза?\n— Что не устраивает в текущем перевозчике?\n\nМы работаем по маршрутам Москва–Минск и обратно, свои проверенные перевозчики, документы в порядке, оплата по факту доставки.",
     "interested": "Давайте я подготовлю расчёт под ваши направления.\n\n— На какие маршруты посчитать?\n— Какой средний вес отправки?\n— Тент, реф или изотерм?\n\nПришлю КП сегодня-завтра на почту.",
@@ -2132,8 +2134,8 @@ DEFAULT_SCRIPTS = {
 }
 
 LEAD_STAGE_MIGRATION = {
-    "new": "new", "thinking": "thinking", "sent_kp": "kp_sent", "callback": "reached",
-    "won": "won", "lost": "lost", "no_contact": "no_contact",
+    "new": "new", "thinking": "thinking", "sent_kp": "kp_sent", "callback": "callback",
+    "won": "won", "lost": "lost", "no_contact": "lost",
 }
 
 
@@ -2445,7 +2447,7 @@ async def get_call_queue(industry: Optional[str] = None, limit: int = 50,
         {**base, "next_call": {"$gte": now, "$lte": today_end}}, {"_id": 0}
     ).sort("next_call", 1).to_list(limit)
 
-    hot_stages = ["interested", "thinking", "kp_sent", "negotiation"]
+    hot_stages = ["callback", "thinking", "kp_sent"]   # в работе, но дата звонка не назначена
     hot = await db.leads.find(
         {**base, "stage": {"$in": hot_stages}, "next_call": None}, {"_id": 0}
     ).sort("last_call_at", 1).to_list(limit)
@@ -2558,13 +2560,15 @@ async def log_call(item_id: str, payload: dict, background_tasks: BackgroundTask
     if not lead:
         raise HTTPException(404, "Лид не найден")
 
-    outcome = payload.get("outcome")
+    outcome = LEGACY_OUTCOME.get(payload.get("outcome"), payload.get("outcome"))
+    if outcome not in CALL_OUTCOMES:
+        raise HTTPException(400, "Неизвестный результат звонка")
     comment = (payload.get("comment") or "").strip()
     lost_reason = payload.get("lost_reason")
     manual_next = payload.get("next_call")
     now = datetime.now(timezone.utc)
 
-    if outcome != "no_answer" and not comment:
+    if outcome not in ("no_answer", "callback") and not comment:
         raise HTTPException(400, "Комментарий обязателен")
     if outcome == "lost" and not lost_reason:
         raise HTTPException(400, "Укажите причину отказа")
@@ -2585,13 +2589,16 @@ async def log_call(item_id: str, payload: dict, background_tasks: BackgroundTask
     if outcome == "no_answer":
         attempts += 1
         upd["call_attempts"] = attempts
-        if attempts >= 5:
-            upd["stage"] = "no_contact"
+        if attempts >= 5:   # 5 недозвонов подряд — отказ
+            upd["stage"] = "lost"
+            upd["lost_reason"] = "Не дозвонились"
             upd["next_call"] = None
         else:
             d = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
             next_call = d.isoformat()
             upd["next_call"] = next_call
+            if (lead.get("stage") or "new") == "new":   # новый не взял трубку — перезвонить; дальние этапы не откатываем
+                upd["stage"] = "callback"
     else:
         upd["call_attempts"] = 0
         upd["stage"] = outcome
