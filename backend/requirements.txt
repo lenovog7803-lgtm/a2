@@ -16,3 +16,4 @@ requests
 beautifulsoup4
 lxml
 openpyxl
+anthropic>=2.3

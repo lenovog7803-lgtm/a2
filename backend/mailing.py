@@ -15,6 +15,7 @@
 """
 import asyncio
 import email.utils
+import html
 import imaplib
 import io
 import logging
@@ -541,9 +542,19 @@ def reply_text(raw: bytes, limit: int = 1500) -> tuple:
     return subject, snippet[:limit]
 
 
+def bounce_reason(text: str) -> str:
+    """Почему письмо не дошло — по тексту уведомления почтового сервера (text в нижнем регистре)."""
+    if re.search(r"spam|спам|5\.7\.1|blocked|blacklist|policy|reputation|suspicio", text):
+        return "Отклонено как спам"
+    if re.search(r"5\.1\.1|does not exist|doesn't exist|user unknown|no such user|unknown user|"
+                 r"mailbox (?:not found|unavailable)|recipient not found|не существует|address rejected|invalid recipient", text):
+        return "Адрес не существует"
+    return "Сервер отклонил адрес"
+
+
 def scan_inbox_sync(mb: dict, waiting: list) -> tuple:
     """Возвращает ({id ответившего: {subject, snippet}}, ids с возвратом)."""
-    replied, bounced = {}, set()
+    replied, bounced = {}, {}
     im = imaplib.IMAP4_SSL(mb["imap_host"].strip(), int(mb.get("imap_port") or 993), timeout=30)
     try:
         im.login(mb["login"].strip(), password_of(mb))
@@ -573,7 +584,7 @@ def scan_inbox_sync(mb: dict, waiting: list) -> tuple:
             text = data[0][1].decode("utf-8", "ignore").lower()
             for c in waiting:
                 if c["id"] not in replied and ascii_addr(c["email"]) in text:
-                    bounced.add(c["id"])
+                    bounced[c["id"]] = bounce_reason(text)
     finally:
         try:
             im.logout()
@@ -656,7 +667,7 @@ def gmail_scan_sync(token_doc: dict, waiting: list) -> tuple:
     """То же, что scan_inbox_sync, но через Gmail API: ответы (письма от контакта позже
     нашего последнего) и возвраты. waiting: контакты с полем _since (ISO)."""
     access = _gmail_access_token(token_doc)
-    replied, bounced = {}, set()
+    replied, bounced = {}, {}
     by_email = {c["email"].lower(): c for c in waiting}
     emails = list(by_email)
     since = min(c["_since"] for c in waiting)
@@ -684,7 +695,7 @@ def gmail_scan_sync(token_doc: dict, waiting: list) -> tuple:
         text = raw.decode("utf-8", "ignore").lower()
         for addr, c in by_email.items():
             if c["id"] not in replied and addr in text:
-                bounced.add(c["id"])
+                bounced[c["id"]] = bounce_reason(text)
     return replied, bounced
 
 
@@ -759,6 +770,133 @@ def gmail_chat_sync(token_doc: dict, me: str, tid: str) -> dict:
     name, addr = chat_peer([{"from": m["from"], "to": m["to"]} for m in msgs], me)
     return {"id": tid, "peer_name": name, "peer_email": addr,
             "subject": msgs[0]["subject"] if msgs else "", "messages": msgs}
+
+
+# ---------------- черновики ответов (Claude) ----------------
+DRAFT_MODEL = "claude-opus-5-5"
+DRAFT_SYSTEM = (
+    "Ты пишешь черновик ответа на деловое письмо от имени сотрудника компании. "
+    "Черновик потом прочитает и отправит человек, поэтому:\n"
+    "- пиши на языке собеседника, коротко и по делу, вежливо, без канцелярита;\n"
+    "- не выдумывай цены, сроки, наличие, реквизиты и обещания — если без них не ответить, "
+    "оставь пометку в квадратных скобках, например [уточнить цену];\n"
+    "- если письмо — отказ, ответь одной-двумя фразами благодарности, не уговаривай;\n"
+    "- не повторяй цитату письма и не пиши тему; подпись — имя и компания отправителя.\n"
+    "Верни только текст письма."
+)
+
+
+def ai_draft_sync(thread: list, mb: dict, context: str = "") -> str:
+    """Черновик ответа на последнее письмо переписки. Пустая строка — нет ключа или модель отказалась."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return ""
+    import anthropic
+    lines = []
+    for m in thread[-12:]:  # длинные цепочки — последние письма, этого хватает для ответа
+        who = "МЫ" if m.get("from_me") else f"СОБЕСЕДНИК ({m.get('from', '')})"
+        lines.append(f"--- {who} · тема: {m.get('subject', '')}\n{(m.get('text') or '')[:4000]}")
+    me = f"Отправитель: {mb.get('my_name') or ''}, компания {mb.get('my_company') or ''}" + \
+         (f", телефон {mb['phone']}" if mb.get("phone") else "")
+    prompt = (f"{me}\n" + (f"\nО чём мы им писали (наше предложение):\n{context[:3000]}\n" if context else "") +
+              "\nПереписка, последнее письмо внизу:\n\n" + "\n\n".join(lines) +
+              "\n\nНапиши черновик ответа на последнее письмо собеседника.")
+    try:
+        r = anthropic.Anthropic().beta.messages.create(
+            model=DRAFT_MODEL, max_tokens=4000, system=DRAFT_SYSTEM,
+            output_config={"effort": "medium"},
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default",  # отказ модели — ответит запасная
+            messages=[{"role": "user", "content": prompt}])
+    except anthropic.APIError as e:
+        logger.warning(f"[mailing] AI draft failed: {e}")
+        return ""
+    if r.stop_reason == "refusal":
+        return ""
+    return "\n".join(b.text for b in r.content if b.type == "text").strip()
+
+
+async def save_draft(db, mid: str, tid: str, for_msg: str, text: str):
+    await db.mail_drafts.replace_one({"_id": f"{mid}:{tid}"}, {
+        "_id": f"{mid}:{tid}", "for_msg": for_msg, "text": text, "created_at": now_msk().isoformat(timespec="seconds")},
+        upsert=True)
+
+
+# ---------------- новые письма: уведомление + черновик ----------------
+DAEMONS = ("mailer-daemon", "postmaster")
+
+
+def gmail_new_sync(token_doc: dict, me: str, after_ms: int) -> list:
+    """Новые входящие (без промо и уведомлений сервисов) позже after_ms, старые сначала."""
+    access = _gmail_access_token(token_doc)
+    q = f"{CHATS_INBOX} after:{after_ms // 1000}"
+    out = []
+    for meta in _gmail_get(access, "messages", q=q, maxResults=30).get("messages", []):
+        raw, full = _raw_of(access, meta["id"])
+        ts = int(full.get("internalDate") or 0)
+        if ts <= after_ms:
+            continue
+        p = parse_mail(raw)
+        name, addr = _first_addr(p["from"])
+        if addr == me:
+            continue
+        out.append({**p, "id": meta["id"], "thread_id": full.get("threadId"), "ts": ts,
+                    "from_name": name or addr, "from_addr": addr, "text_lower": raw.decode("utf-8", "ignore").lower()})
+    out.sort(key=lambda m: m["ts"])
+    return out
+
+
+async def watch_new_mail(db, mb: dict, tok: dict):
+    """Каждое новое входящее: письмо — в Telegram (кроме ответов на рассылку: о них пишет on_reply)
+    и черновик ответа в «Чаты»; возврат письма не из рассылки — тоже в Telegram."""
+    me = ((tok or {}).get("email") or mb.get("login") or "").lower()
+    now_ms = int(time.time() * 1000)
+    cursor = mb.get("watch_ts")
+    if not cursor:  # первый запуск — только запоминаем момент, старые письма не шлём
+        await db.mail_settings.update_one({"_id": mb["id"]}, {"$set": {"watch_ts": now_ms}}, upsert=True)
+        return
+    new = await asyncio.to_thread(gmail_new_sync, tok, me, int(cursor))
+    if not new:
+        return
+    box = html.escape(mb.get("login") or mb["name"])
+    contacts = {d["email"]: d async for d in db.mail_contacts.find(
+        {"email": {"$in": [m["from_addr"] for m in new] + [""]}}, {"email": 1, "campaign_id": 1})}
+    camps = {c["id"]: c for c in await list_campaigns(db)}
+    for m in new:
+        if any(d in m["from_addr"] for d in DAEMONS):
+            # возвраты писем рассылки разбирает check_inbox; здесь — письма, отправленные вручную
+            failed = [a for a in EMAIL_RE.findall(m["text_lower"]) if a != me and not any(d in a for d in DAEMONS)]
+            if failed and not await db.mail_contacts.find_one({"email": failed[0]}, {"_id": 1}):
+                await notify(f"↩️ <b>Письмо не доставлено</b> · {bounce_reason(m['text_lower'])}\n"
+                             f"{html.escape(failed[0])}\nС почты {box}")
+            continue
+        contact = contacts.get(m["from_addr"])
+        camp = camps.get((contact or {}).get("campaign_id")) or {}
+        draft = ""
+        try:
+            thread = (await asyncio.to_thread(gmail_chat_sync, tok, me, m["thread_id"]))["messages"]
+            draft = await asyncio.to_thread(ai_draft_sync, thread, mb, camp.get("body", ""))
+            if draft:
+                await save_draft(db, mb["id"], m["thread_id"], m["id"], draft)
+        except Exception as e:
+            logger.warning(f"[mailing] draft for {m['id']} failed: {e}")
+        if contact:
+            continue  # ответ на рассылку — уведомление уже пришло от on_reply, черновик ждёт в «Чатах»
+        snippet = re.sub(r"\s+", " ", m["text"] or "")[:400]
+        await notify(f"📩 <b>{html.escape(m['from_name'])}</b> · {box}\n"
+                     f"{html.escape(m['from_addr'])}\n<b>{html.escape(m['subject'] or 'Без темы')}</b>\n{html.escape(snippet)}"
+                     + (f"\n\n✍️ <b>Черновик ответа</b> (отправить — CRM → «Чаты»):\n{html.escape(draft[:1500])}" if draft else ""))
+    await db.mail_settings.update_one({"_id": mb["id"]}, {"$set": {"watch_ts": max(m["ts"] for m in new)}})
+
+
+async def alert_login(db, mb: dict, tok: Optional[dict]):
+    """Google выкинул почту из аккаунта — один раз пишем в Telegram (на каждый слетевший вход)."""
+    if mb.get("transport") != "gmail_api" or not (tok or {}).get("refresh_token") or await gmail_login_ok(tok):
+        return
+    key = tok["refresh_token"][-24:]
+    if mb.get("login_alert") == key:
+        return
+    await db.mail_settings.update_one({"_id": mb["id"]}, {"$set": {"login_alert": key}}, upsert=True)
+    await notify(f"🔴 <b>Gmail {html.escape(mb.get('login') or mb['name'])} вышел из аккаунта</b>\n"
+                 "Письма с него не уходят, ответы не проверяются. Войдите заново: CRM → «Рассылка» → красная кнопка «Войти».")
 
 
 # ---------------- ящики ----------------
@@ -911,7 +1049,7 @@ def mailbox_log_filter(mid: str) -> dict:
 
 
 SENT_KINDS = ["письмо", "напоминание"]
-BOUNCE_DETAILS = ["Адрес не существует", "Сервер отклонил адрес"]
+BOUNCE_DETAILS = ["Адрес не существует", "Сервер отклонил адрес", "Отклонено как спам"]
 
 
 async def sent_today(db, mid: Optional[str] = None, campaign_id: Optional[str] = None) -> int:
@@ -1204,9 +1342,13 @@ async def check_inbox(db, mb: dict) -> tuple:
             await on_next_reply(db, c, info, camps.get(c.get("campaign_id")), mb["id"])
         else:
             await on_reply(db, c, info, camps.get(c.get("campaign_id")), mb["id"])
-    for cid in bounced:
-        await db.mail_contacts.update_one({"id": cid}, {"$set": {"status": ST_BOUNCE, "last_error": "Письмо вернулось: адрес не существует"}})
-        await add_log(db, by_id[cid], "возврат", False, "Адрес не существует", mailbox_id=mb["id"])
+    for cid, reason in bounced.items():
+        await db.mail_contacts.update_one({"id": cid}, {"$set": {"status": ST_BOUNCE, "last_error": f"Письмо вернулось: {reason.lower()}"}})
+        await add_log(db, by_id[cid], "возврат", False, reason, mailbox_id=mb["id"])
+        c = by_id[cid]
+        await notify(f"↩️ <b>Письмо не доставлено</b> · {html.escape(reason)}\n{html.escape(c.get('company') or '')} "
+                     f"{html.escape(c['email'])}\nС почты {html.escape(mb.get('login') or mb['name'])}"
+                     + ("\nПочта получателя считает наши письма спамом — больше этому адресу не пишем." if reason == "Отклонено как спам" else ""))
     return len(replied), len(bounced)
 
 
@@ -1324,6 +1466,23 @@ async def mailing_loop(db):
                             await add_log(db, None, "проверка почты", False, str(e)[:300], mailbox_id=mb["id"])
                         else:
                             logger.warning(f"[mailing] inbox check failed ({mb['id']}): {e}")
+                    tok = await mail_token(db, mb["id"]) if mb.get("transport") == "gmail_api" else None
+                    try:
+                        await alert_login(db, mb, tok)
+                    except Exception as e:
+                        logger.warning(f"[mailing] login alert failed ({mb['id']}): {e}")
+                    # новые письма + черновики — отдельной задачей: черновик пишется до минуты, рассылку не держим
+                    if can_read(tok) and not rt.get("watching") and await gmail_login_ok(tok):
+                        rt["watching"] = True
+
+                        async def _watch(mb=mb, tok=tok, rt=rt):
+                            try:
+                                await watch_new_mail(db, mb, tok)
+                            except Exception as e:
+                                logger.warning(f"[mailing] new-mail watch failed ({mb['id']}): {e}")
+                            finally:
+                                rt["watching"] = False
+                        asyncio.create_task(_watch())
                 if not running:
                     rt.update(state="Остановлено", next_at=None, next_send=None)
                     continue
@@ -1882,7 +2041,29 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
             m["date"] = to_msk(m["ts"])
         last_ts = max([m["ts"] for m in res["messages"]] or [0])
         await db.mail_chat_seen.update_one({"_id": f"{mb['id']}:{tid}"}, {"$set": {"ts": last_ts}}, upsert=True)
-        return {**res, "me": me, "mailbox": mb.get("login") or mb["name"]}
+        # черновик показываем, только если он к последнему письму (после него никто ничего не писал)
+        d = await db.mail_drafts.find_one({"_id": f"{mb['id']}:{tid}"})
+        last_id = res["messages"][-1]["id"] if res["messages"] else ""
+        draft = d["text"] if d and d.get("for_msg") == last_id else ""
+        return {**res, "me": me, "mailbox": mb.get("login") or mb["name"], "draft": draft,
+                "can_draft": bool(os.environ.get("ANTHROPIC_API_KEY"))}
+
+    @r.post("/chats/{tid}/draft")
+    async def chat_draft(tid: str, payload: dict = None, _: dict = Depends(require_director)):
+        """Написать черновик ответа сейчас (кнопка в «Чатах»)."""
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise HTTPException(400, "Черновики не настроены: на сервере нет ANTHROPIC_API_KEY")
+        mb, tok, me = await chat_ctx((payload or {}).get("mailbox_id") or "main")
+        th = await asyncio.to_thread(gmail_chat_sync, tok, me, tid)
+        if not th["messages"]:
+            raise HTTPException(400, "Переписка пустая")
+        contact = await db.mail_contacts.find_one({"email": th["peer_email"]}, {"campaign_id": 1}) or {}
+        camp = next((c for c in await list_campaigns(db) if c["id"] == contact.get("campaign_id")), {})
+        text = await asyncio.to_thread(ai_draft_sync, th["messages"], mb, camp.get("body", ""))
+        if not text:
+            raise HTTPException(400, "Не получилось написать черновик — попробуйте ещё раз")
+        await save_draft(db, mb["id"], tid, th["messages"][-1]["id"], text)
+        return {"draft": text}
 
     @r.post("/chats/{tid}/reply")
     async def chat_reply(tid: str, payload: dict, _: dict = Depends(require_director)):
@@ -1900,6 +2081,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         subject = last["subject"] or th["subject"] or ""
         subject = subject if subject.lower().startswith("re:") else "Re: " + (subject or "Без темы")
         await send_chat(mb, th["peer_email"], subject, text, last["message_id"] or None, tid)
+        await db.mail_drafts.delete_one({"_id": f"{mb['id']}:{tid}"})
         return {"ok": True}
 
     # --- поставщики (ответы направлений «закупка») ---

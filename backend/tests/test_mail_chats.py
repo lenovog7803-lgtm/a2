@@ -78,3 +78,34 @@ def test_login_expired_only_on_invalid_grant(monkeypatch):
     assert asyncio.run(mailing.gmail_login_ok(None)) is True  # не подключён — не «вышел»
     errors["b"] = None
     assert ok("b") is False  # результат держится 10 минут
+
+
+def test_bounce_reason():
+    assert mailing.bounce_reason("554 5.7.1 message rejected under suspicion of spam") == "Отклонено как спам"
+    assert mailing.bounce_reason("550 5.1.1 the email account that you tried to reach does not exist") == "Адрес не существует"
+    assert mailing.bounce_reason("connection refused by remote host") == "Сервер отклонил адрес"
+
+
+def test_ai_draft(monkeypatch):
+    import types
+    import anthropic
+    seen = {}
+
+    class FakeMessages:
+        def create(self, **kw):
+            seen.update(kw)
+            return types.SimpleNamespace(stop_reason="end_turn", content=[types.SimpleNamespace(type="text", text=" Добрый день! \n")])
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            self.beta = types.SimpleNamespace(messages=FakeMessages())
+
+    thread = [{"from_me": True, "subject": "КП", "text": "Предлагаем Monster"}, {"from_me": False, "from": "a@x.by", "subject": "Re: КП", "text": "Пришлите прайс"}]
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert mailing.ai_draft_sync(thread, {"my_name": "Егор"}) == ""  # без ключа — молча без черновика
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(anthropic, "Anthropic", FakeClient)
+    assert mailing.ai_draft_sync(thread, {"my_name": "Егор", "my_company": "A2Group"}, "наше КП") == "Добрый день!"
+    assert seen["model"] == "claude-opus-5-5" and seen["fallbacks"] == "default"
+    prompt = seen["messages"][0]["content"]
+    assert "Пришлите прайс" in prompt and "наше КП" in prompt and "A2Group" in prompt
