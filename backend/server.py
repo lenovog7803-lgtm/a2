@@ -1457,6 +1457,10 @@ async def _deferred_init():
     # once the Sheet itself is kept in sync with any manual CRM renames.
     # asyncio.create_task(_background_sheets_sync())
     # asyncio.create_task(_auto_sync_loop())
+    if os.environ.get("NO_BACKGROUND") == "1":
+        # локальный просмотр против рабочей базы: без рассылки, бэкапов и напоминаний, иначе всё уйдёт дважды
+        logging.getLogger(__name__).info("NO_BACKGROUND=1 — фоновые задачи не запущены")
+        return
     asyncio.create_task(_backup_loop())
     asyncio.create_task(_startup_backup())
     # Корзина больше не чистится сама через 30 дней — удалённое лежит, пока директор

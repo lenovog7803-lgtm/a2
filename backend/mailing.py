@@ -23,6 +23,7 @@ import random
 import re
 import smtplib
 import ssl
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from email.message import EmailMessage
@@ -414,6 +415,29 @@ def _gmail_access_token(token_doc: dict) -> str:
     return creds.token
 
 
+_login_checks: dict = {}  # хвост refresh-токена -> (когда проверяли, вход жив)
+
+
+async def gmail_login_ok(tok: Optional[dict]) -> bool:
+    """False — Google отозвал вход (приложение в тестовом режиме: раз в 7 дней), нужно войти заново.
+    Проверяем не чаще раза в 10 минут; новый вход = новый токен = новая проверка."""
+    if not tok or not tok.get("refresh_token"):
+        return True  # Gmail просто не подключён — это другое состояние
+    key = tok["refresh_token"][-24:]
+    hit = _login_checks.get(key)
+    if hit and time.monotonic() - hit[0] < 600:
+        return hit[1]
+    try:
+        await asyncio.to_thread(_gmail_access_token, tok)
+        ok = True
+    except GmailAuthError as e:
+        ok = "invalid_grant" not in str(e)  # сеть/прочие сбои не считаем выходом из аккаунта
+    except Exception:
+        ok = True
+    _login_checks[key] = (time.monotonic(), ok)
+    return ok
+
+
 def gmail_api_send_sync(token_doc: dict, msg: EmailMessage, thread_id: Optional[str] = None):
     import base64
     import requests
@@ -662,6 +686,79 @@ def gmail_scan_sync(token_doc: dict, waiting: list) -> tuple:
             if c["id"] not in replied and addr in text:
                 bounced.add(c["id"])
     return replied, bounced
+
+
+# ---------------- «Чаты»: весь ящик Gmail как мессенджер ----------------
+# Входящие — без промо и уведомлений сервисов; отправленные (в т.ч. письма рассылки) — все.
+CHATS_INBOX = "in:inbox -category:promotions -category:social -category:updates -category:forums"
+CHATS_QUERY = {"all": f"(in:sent OR ({CHATS_INBOX}))", "inbox": CHATS_INBOX, "sent": "in:sent"}
+
+
+def _headers(msg: dict) -> dict:
+    return {h["name"].lower(): h["value"] for h in (msg.get("payload") or {}).get("headers", [])}
+
+
+def _first_addr(value: str) -> tuple:
+    pairs = email.utils.getaddresses([value or ""])
+    name, addr = pairs[0] if pairs else ("", "")
+    return name, addr.lower()
+
+
+def chat_peer(msgs_headers: list, me: str) -> tuple:
+    """(имя, адрес) собеседника: автор первого чужого письма, а если все письма наши — кому писали."""
+    for h in msgs_headers:
+        name, addr = _first_addr(h.get("from", ""))
+        if addr and addr != me:
+            return name or addr, addr
+    name, addr = _first_addr((msgs_headers[-1] if msgs_headers else {}).get("to", ""))
+    return name or addr, addr
+
+
+def gmail_chats_sync(token_doc: dict, me: str, q: str = "", page: str = "", folder: str = "all") -> dict:
+    from concurrent.futures import ThreadPoolExecutor
+    access = _gmail_access_token(token_doc)
+    query = CHATS_QUERY.get(folder, CHATS_QUERY["all"]) + (f" {q.strip()}" if q.strip() else "")
+    params = {"q": query, "maxResults": 25, **({"pageToken": page} if page else {})}
+    res = _gmail_get(access, "threads", **params)
+
+    def one(tid: str) -> dict:
+        t = _gmail_get(access, f"threads/{tid}", format="metadata", metadataHeaders=["From", "To", "Subject"])
+        msgs = t.get("messages", [])
+        hs = [_headers(m) for m in msgs]
+        name, addr = chat_peer(hs, me)
+        last = msgs[-1] if msgs else {}
+        last_from = _first_addr(hs[-1].get("from", ""))[1] if hs else ""
+        return {"id": tid, "peer_name": name, "peer_email": addr, "subject": hs[0].get("subject", "") if hs else "",
+                "snippet": last.get("snippet", ""), "ts": int(last.get("internalDate") or 0), "count": len(msgs),
+                "last_from_me": last_from == me,
+                # непрочитано в Gmail: последнее чужое письмо ещё не открывали
+                "gmail_unread": any("UNREAD" in (m.get("labelIds") or []) for m in msgs)}
+
+    ids = [t["id"] for t in res.get("threads", [])]
+    with ThreadPoolExecutor(8) as pool:
+        chats = list(pool.map(one, ids))
+    chats.sort(key=lambda c: c["ts"], reverse=True)
+    return {"chats": chats, "next_page": res.get("nextPageToken", "")}
+
+
+def gmail_chat_sync(token_doc: dict, me: str, tid: str) -> dict:
+    from concurrent.futures import ThreadPoolExecutor
+    access = _gmail_access_token(token_doc)
+    t = _gmail_get(access, f"threads/{tid}", format="minimal")
+    metas = t.get("messages", [])[-50:]  # очень длинные цепочки — последние 50 писем
+
+    def one(meta: dict) -> dict:
+        raw, _ = _raw_of(access, meta["id"])
+        p = parse_mail(raw)
+        sender = _first_addr(p["from"])[1]
+        return {**p, "id": meta["id"], "ts": int(meta.get("internalDate") or 0), "from_me": sender == me}
+
+    with ThreadPoolExecutor(6) as pool:
+        msgs = list(pool.map(one, metas))
+    msgs.sort(key=lambda m: m["ts"])
+    name, addr = chat_peer([{"from": m["from"], "to": m["to"]} for m in msgs], me)
+    return {"id": tid, "peer_name": name, "peer_email": addr,
+            "subject": msgs[0]["subject"] if msgs else "", "messages": msgs}
 
 
 # ---------------- ящики ----------------
@@ -1708,6 +1805,103 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         await add_log(db, c, "ответ из CRM", True, subject, mailbox_id=mb["id"], campaign_id=c.get("campaign_id"))
         return {"ok": True}
 
+    # --- «Чаты»: вся переписка выбранного ящика Gmail ---
+    async def chat_ctx(mid: str) -> tuple:
+        mb = await get_mailbox(db, mid or "main")
+        tok = await mail_token(db, mb["id"])
+        if mb.get("transport") != "gmail_api" or not (tok or {}).get("refresh_token"):
+            raise HTTPException(400, f"Почта «{mb.get('login') or mb['name']}» подключена не через Gmail — "
+                                     "чаты работают только с Gmail. Подключите его в «Рассылка → Настройки → Почта».")
+        if not can_read(tok):
+            raise HTTPException(400, "Нет права читать письма этой почты — нажмите «Подключить другой Gmail» "
+                                     "в «Рассылка → Настройки → Почта» и разрешите чтение.")
+        me = ((tok or {}).get("email") or mb.get("login") or "").lower()
+        return mb, tok, me
+
+    def to_msk(ts: int) -> str:
+        return datetime.fromtimestamp(ts / 1000, MSK).isoformat(timespec="minutes") if ts else ""
+
+    async def send_chat(mb: dict, to: str, subject: str, text: str, ref: Optional[str] = None, thread_id: Optional[str] = None):
+        msg = build_message(mb, to, subject, text, ref)
+        del msg["List-Unsubscribe"]  # это личная переписка, не рассылка
+        try:
+            await deliver(db, mb, msg, thread_id)
+        except Exception as e:
+            raise HTTPException(400, f"Не отправилось: {e}")
+
+    @r.get("/chats")
+    async def chats(mailbox_id: str = "main", q: str = "", page: str = "", folder: str = "all",
+                    _: dict = Depends(require_director)):
+        mb, tok, me = await chat_ctx(mailbox_id)
+        try:
+            res = await asyncio.to_thread(gmail_chats_sync, tok, me, q, page, folder)
+        except GmailAuthError as e:
+            raise HTTPException(400, str(e))
+        # «прочитано» храним в CRM: у токена нет права менять письма в Gmail
+        seen = {d["_id"]: d["ts"] async for d in db.mail_chat_seen.find(
+            {"_id": {"$in": [f"{mb['id']}:{c['id']}" for c in res["chats"]]}})}
+        # переписки с контактами рассылки помечаем названием направления
+        names = {c["id"]: c["name"] for c in await list_campaigns(db)}
+        camp_of = {d["email"]: names.get(d.get("campaign_id"), "Рассылка") async for d in db.mail_contacts.find(
+            {"email": {"$in": [c["peer_email"] for c in res["chats"] if c["peer_email"]]}}, {"email": 1, "campaign_id": 1})}
+        for c in res["chats"]:
+            c["campaign"] = camp_of.get(c["peer_email"], "")
+            c["unread"] = c.pop("gmail_unread") and not c["last_from_me"] and seen.get(f"{mb['id']}:{c['id']}", 0) < c["ts"]
+            c["date"] = to_msk(c["ts"])
+        return {**res, "me": me}
+
+    @r.get("/chats/attachment")
+    async def chat_attachment(mailbox_id: str, msg: str, index: int, _: dict = Depends(require_director)):
+        from fastapi.responses import Response
+        from urllib.parse import quote
+        _mb, tok, _me = await chat_ctx(mailbox_id)
+        name, ctype, data = await asyncio.to_thread(gmail_attachment_sync, tok, msg, index)
+        return Response(data, media_type=ctype or "application/octet-stream",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+    @r.post("/chats/new")
+    async def chat_new(payload: dict, _: dict = Depends(require_director)):
+        p = payload or {}
+        to, text = clean_email(p.get("to")), str(p.get("text") or "").strip()
+        if not to:
+            raise HTTPException(400, "Укажите правильный email получателя")
+        if not text:
+            raise HTTPException(400, "Напишите текст письма")
+        mb, _tok, _me = await chat_ctx(p.get("mailbox_id") or "main")
+        await send_chat(mb, to, str(p.get("subject") or "").strip() or "Без темы", text)
+        return {"ok": True}
+
+    @r.get("/chats/{tid}")
+    async def chat(tid: str, mailbox_id: str = "main", _: dict = Depends(require_director)):
+        mb, tok, me = await chat_ctx(mailbox_id)
+        try:
+            res = await asyncio.to_thread(gmail_chat_sync, tok, me, tid)
+        except GmailAuthError as e:
+            raise HTTPException(400, str(e))
+        for m in res["messages"]:
+            m["date"] = to_msk(m["ts"])
+        last_ts = max([m["ts"] for m in res["messages"]] or [0])
+        await db.mail_chat_seen.update_one({"_id": f"{mb['id']}:{tid}"}, {"$set": {"ts": last_ts}}, upsert=True)
+        return {**res, "me": me, "mailbox": mb.get("login") or mb["name"]}
+
+    @r.post("/chats/{tid}/reply")
+    async def chat_reply(tid: str, payload: dict, _: dict = Depends(require_director)):
+        text = str((payload or {}).get("text") or "").strip()
+        if not text:
+            raise HTTPException(400, "Напишите текст ответа")
+        mb, tok, me = await chat_ctx((payload or {}).get("mailbox_id") or "main")
+        try:
+            th = await asyncio.to_thread(gmail_chat_sync, tok, me, tid)
+        except GmailAuthError as e:
+            raise HTTPException(400, str(e))
+        if not th["messages"] or not th["peer_email"]:
+            raise HTTPException(400, "Не нашёл, кому отвечать в этой переписке")
+        last = th["messages"][-1]
+        subject = last["subject"] or th["subject"] or ""
+        subject = subject if subject.lower().startswith("re:") else "Re: " + (subject or "Без темы")
+        await send_chat(mb, th["peer_email"], subject, text, last["message_id"] or None, tid)
+        return {"ok": True}
+
     # --- поставщики (ответы направлений «закупка») ---
     @r.get("/suppliers")
     async def suppliers(campaign_id: str = "", stage: str = "", q: str = "", _: dict = Depends(require_user)):
@@ -1751,6 +1945,7 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
             out.append({**mailbox_public(mb),
                         "gmail_connected": tok.get("email") or ("подключён" if tok.get("refresh_token") else ""),
                         "can_read": can_read(tok),
+                        "login_expired": mb.get("transport") == "gmail_api" and not await gmail_login_ok(tok),
                         "configured": await is_configured(db, mb), "health": await health(db, mb),
                         "sent_today": await sent_today(db, mb["id"]), "state": rt_of(mb["id"])["state"],
                         "campaigns": [c["name"] for c in camps if uses_box(c, mb["id"])]})
