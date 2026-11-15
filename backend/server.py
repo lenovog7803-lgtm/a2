@@ -403,7 +403,7 @@ async def _get_only_chat_ids() -> list:
     return ids
 
 
-async def send_telegram_a2info(chat_id: str, text: str) -> dict:
+async def send_telegram_a2info(chat_id: str, text: str, buttons: Optional[list] = None) -> dict:
     """Возвращает {'ok': bool, ...} — чтобы вызывающий (ручной запуск отчёта)
     мог показать, дошло ли сообщение и с какой ошибкой."""
     import httpx
@@ -420,7 +420,8 @@ async def send_telegram_a2info(chat_id: str, text: str) -> dict:
         try:
             r = await _client.post(
                 f'https://api.telegram.org/bot{token}/sendMessage',
-                json={'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'},
+                json={'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML', 'disable_web_page_preview': True,
+                      **({'reply_markup': _tg_buttons(buttons)} if buttons else {})},
                 timeout=10,
             )
             body = {}
@@ -615,8 +616,8 @@ async def _report_recipients() -> list:
     return out
 
 
-async def _broadcast_a2info(text: str) -> list:
-    return [await send_telegram_a2info(cid, text) for cid in await _report_recipients()]
+async def _broadcast_a2info(text: str, buttons: Optional[list] = None) -> list:
+    return [await send_telegram_a2info(cid, text, buttons) for cid in await _report_recipients()]
 
 
 async def _notify_pending_payment_reminders(force: bool = False) -> dict:
@@ -636,12 +637,9 @@ async def _notify_pending_payment_reminders(force: bool = False) -> dict:
     if not pending:
         return {'count': 0}
 
-    rows = [f"•  {_esc(t.get('title') or '')}" for t in pending[:40]]
-    if len(pending) > 40:
-        rows.append(f"…и ещё {len(pending) - 40}")
-    text = f"🔔 <b>Напоминания об оплате · {len(pending)}</b>\n" + "\n".join(rows)
+    text = _tg_head('🔔', 'Пора напомнить об оплате') + "\n\n" + _tg_list('Заявки', [_esc(t.get('title') or '') for t in pending], limit=40)
 
-    delivery = await _broadcast_a2info(text)
+    delivery = await _broadcast_a2info(text, ['tasks', 'finance'])
 
     if any(d.get('ok') for d in delivery) or not any(_DEFAULT_REPORT_CHAT_IDS):
         await db.tasks.update_many(
@@ -698,14 +696,13 @@ async def _weekly_client_debts(force: bool = False) -> dict:
     total = sum(d['sum'] for _, d in rows)
     today = now.date()
     lines = []
-    for name, d in rows[:25]:
+    for name, d in rows:
         days = (today - datetime.fromisoformat(d['oldest']).date()).days
-        lines.append(f"• {_esc(name)} — <b>{_byn(d['sum'])}</b> · {d['n']} заяв., самой старой {days} дн.")
-    if len(rows) > 25:
-        lines.append(f"…и ещё {len(rows) - 25}")
-    text = (f"💸 <b>Клиенты должны дольше 30 дней</b>\n"
-            f"{len(rows)} клиентов · всего <b>{_byn(total)}</b>\n\n" + "\n".join(lines))
-    delivery = await _broadcast_a2info(text)
+        lines.append(f"{_esc(name)} — <b>{_byn(d['sum'])}</b>\n<i>{d['n']} заяв. · самой старой {days} дн.</i>")
+    text = '\n'.join([_tg_head('💸', 'Клиенты должны дольше 30 дней'), "",
+                      _tg_table([('Клиентов', str(len(rows))), ('Всего', _byn(total))]),
+                      _tg_list('Кто должен', lines, limit=25)])
+    delivery = await _broadcast_a2info(text, ['finance'])
     if any(d.get('ok') for d in delivery):
         await db.app_settings.update_one({'key': 'last_client_debts_digest'},
                                          {'$set': {'key': 'last_client_debts_digest', 'value': week_key}}, upsert=True)
@@ -953,20 +950,42 @@ def _byn(x) -> str:
         return f"{x} BYN"
 
 
-_REPORT_HR = '━━━━━━━━━━━━━━'
+# ====== Единый вид сообщений бота: шапка → главные цифры блоком → разделы со списками → кнопки ======
+_CRM_URL = os.environ.get('CRM_URL', 'https://crm-v2-khaki.vercel.app').rstrip('/')
+_TG_PAGES = {'orders': 'Заявки', 'finance': 'Финансы', 'tasks': 'Задачи', 'leads': 'Обзвон', '': 'Открыть CRM'}
+
+
+def _tg_buttons(pages: list) -> dict:
+    """Ряд кнопок-ссылок под сообщением; '' — главная CRM, остальное — раздел (?p=…)."""
+    return {'inline_keyboard': [[{'text': _TG_PAGES[p], 'url': _CRM_URL + (f'/?p={p}' if p else '/')} for p in pages]]}
+
+
+def _tg_head(icon: str, title: str, sub: str = '') -> str:
+    return f"{icon}  <b>{title}</b>" + (f"\n<i>{sub}</i>" if sub else '')
+
+
+def _tg_table(rows: list) -> str:
+    """Главные цифры ровным столбиком: [(подпись, значение)]."""
+    w = max(len(a) for a, _ in rows)
+    v = max(len(b) for _, b in rows)
+    return "<pre>" + "\n".join(f"{a.ljust(w)}  {b.rjust(v)}" for a, b in rows) + "</pre>"
+
+
+def _tg_list(title: str, items: list, limit: int = 15, empty: str = 'нет') -> str:
+    """Раздел со списком. Длиннее четырёх строк — сворачивается, чтобы сообщение не превращалось в простыню."""
+    if not items:
+        return f"<b>{title}</b>  ·  <i>{empty}</i>"
+    head = f"<b>{title}</b>  ·  {len(items)}"
+    rows = list(items[:limit]) + ([f"<i>…и ещё {len(items) - limit}</i>"] if len(items) > limit else [])
+    tag = "blockquote expandable" if len(rows) > 4 else "blockquote"
+    return f"{head}\n<{tag}>" + "\n".join(rows) + "</blockquote>"
 
 
 def _fmt_leg(x: dict) -> str:
     route = ' → '.join(_esc(p) for p in (x.get('route_from'), x.get('route_to')) if p)
-    line = f"•  <b>{_esc(x.get('order_number') or '—')}</b>" + (f"   {route}" if route else '')
-    sub = []
-    if x.get('client_name'):
-        sub.append(f"клиент: {_esc(x['client_name'])}")
-    if x.get('carrier_name'):
-        sub.append(f"перевозчик: {_esc(x['carrier_name'])}")
-    if sub:
-        line += "\n     <i>" + '  ·  '.join(sub) + "</i>"
-    return line
+    line = f"<b>{_esc(x.get('order_number') or '—')}</b>" + (f"  {route}" if route else '')
+    who = ' · '.join(_esc(x[k]) for k in ('client_name', 'carrier_name') if x.get(k))
+    return line + (f"\n<i>{who}</i>" if who else '')
 
 
 _REPORT_LABELS = {
@@ -977,72 +996,51 @@ _REPORT_LABELS = {
 
 def format_report_text(report: dict) -> str:
     period = report.get('period')
-    delivered = report.get('delivered', 0)
+    label = _REPORT_LABELS.get(period, period)
     total_orders = report.get('orders_count', 0)
     by_unload = report.get('basis') == 'unload'
-    basis_note = 'по дате выгрузки' if by_unload else 'по дате создания заявок'
-    count_label = 'Заявок (по выгрузке)' if by_unload else 'Создано заявок'
 
     L = [
-        f"📊  <b>Отчёт {_REPORT_LABELS.get(period, period)}</b>",
-        f"<i>{_esc(fmt_date_ru(report.get('generated_at', '')))}  ·  {basis_note}</i>",
-        _REPORT_HR,
-        f"💰  Выручка:  <b>{_byn(report.get('revenue'))}</b>",
-        f"📈  Маржа:  <b>{_byn(report.get('margin'))}</b>",
-        f"🏦  Прибыль (−налог 20%):  <b>{_byn(report.get('net_profit'))}</b>",
-        f"🆕  {count_label}:  <b>{total_orders}</b>",
-        f"✅  Доставлено:  <b>{delivered}</b>",
+        _tg_head('📊', f"Отчёт {label}", f"{_esc(fmt_date_ru(report.get('generated_at', '')))}  ·  "
+                 + ('по дате выгрузки' if by_unload else 'по дате создания заявок')),
         "",
-        f"💵  Оплачено клиентами:  <b>{report.get('client_paid_count', 0)} из {total_orders}</b>  ·  {_byn(report.get('client_paid_sum'))}",
-        f"📤  Оплачено перевозчикам:  <b>{report.get('carrier_paid_count', 0)} из {total_orders}</b>  ·  {_byn(report.get('carrier_paid_sum'))}",
+        _tg_table([('Выручка', _byn(report.get('revenue'))), ('Маржа', _byn(report.get('margin'))),
+                   ('После налога 20%', _byn(report.get('net_profit')))]),
+        "<b>Работа</b>",
+        f"{'Заявок по выгрузке' if by_unload else 'Создано заявок'}: <b>{total_orders}</b>  ·  доставлено: <b>{report.get('delivered', 0)}</b>",
+        f"Звонков: <b>{report.get('calls_total', 0)}</b>  ·  стали клиентами: <b>{report.get('calls_won', 0)}</b>",
         "",
-        f"⚠️  Просрочка перевозчикам:  <b>{report.get('overdue_carrier_count', 0)}</b>  ·  {_byn(report.get('overdue_carrier_sum'))}",
-        f"🧾  Должники (клиенты):  <b>{report.get('debtors_count', 0)}</b>  ·  {_byn(report.get('debtors_sum'))}",
-        f"📞  Звонки:  <b>{report.get('calls_total', 0)}</b>  ·  клиентами стали {report.get('calls_won', 0)}",
+        "<b>Оплаты</b>",
+        f"От клиентов: <b>{report.get('client_paid_count', 0)} из {total_orders}</b>  ·  {_byn(report.get('client_paid_sum'))}",
+        f"Перевозчикам: <b>{report.get('carrier_paid_count', 0)} из {total_orders}</b>  ·  {_byn(report.get('carrier_paid_sum'))}",
+        "",
+        "<b>Долги</b>",
+        f"Клиенты должны: <b>{report.get('debtors_count', 0)}</b>  ·  {_byn(report.get('debtors_sum'))}",
+        f"Просрочено перевозчикам: <b>{report.get('overdue_carrier_count', 0)}</b>  ·  {_byn(report.get('overdue_carrier_sum'))}",
     ]
 
     if period in ('quarterly', 'yearly'):
         rate_pct = round(float(report.get('tax_rate', TAX_RATE)) * 100)
-        L.append(_REPORT_HR)
-        L.append(f"🧮  <b>Налог по КУДиР ({_REPORT_LABELS.get(period, period)})</b>")
-        L.append(f"<i>по фактическим датам оплат в книге</i>")
-        L.append(f"Строк дохода в книге за период:  <b>{report.get('kudir_rows_count', 0)}</b>")
-        L.append(f"Доход по книге (графа 4):  <b>{_byn(report.get('kudir_income'))}</b>")
-        L.append(f"<b>Налог к уплате ({rate_pct}%):  {_byn(report.get('kudir_tax'))}</b>")
+        L += ["", f"<b>Налог по книге учёта {label}</b>",
+              _tg_table([('Строк дохода', str(report.get('kudir_rows_count', 0))),
+                         ('Доход (графа 4)', _byn(report.get('kudir_income'))),
+                         (f'Налог {rate_pct}%', _byn(report.get('kudir_tax')))]),
+              "<i>по фактическим датам оплат в книге</i>"]
 
     top = report.get('top_clients') or []
     if top:
-        L.append("")
-        L.append("🏆  <b>Топ клиентов</b>")
-        L += [f"{i}.  {_esc(n)}  —  {_byn(s)}" for i, (n, s) in enumerate(top, 1)]
+        L += ["", _tg_list('Топ клиентов', [f"{i}. {_esc(n)} — {_byn(s)}" for i, (n, s) in enumerate(top, 1)])]
 
     if period in ('weekly', 'monthly', 'quarterly'):
-        income = report.get('income_breakdown') or []
-        expense = report.get('expense_breakdown') or []
-        if income:
-            L.append(_REPORT_HR)
-            L.append(f"📥  <b>Пришло от клиентов</b>  ·  {_byn(sum(s for _, s in income))}")
-            L += [f"•  {_esc(n)}  —  {_byn(s)}" for n, s in income[:15]]
-            if len(income) > 15:
-                L.append(f"<i>…и ещё {len(income) - 15}</i>")
-        if expense:
-            L.append(_REPORT_HR)
-            L.append(f"📤  <b>Ушло перевозчикам</b>  ·  {_byn(sum(s for _, s in expense))}")
-            L += [f"•  {_esc(n)}  —  {_byn(s)}" for n, s in expense[:15]]
-            if len(expense) > 15:
-                L.append(f"<i>…и ещё {len(expense) - 15}</i>")
+        for title, rows in (('Пришло от клиентов', report.get('income_breakdown') or []),
+                            ('Ушло перевозчикам', report.get('expense_breakdown') or [])):
+            if rows:
+                L += ["", _tg_list(f"{title}  ·  {_byn(sum(s for _, s in rows))}", [f"{_esc(n)} — {_byn(s)}" for n, s in rows])]
 
     if period == 'daily':
-        loads = report.get('tomorrow_loads') or []
-        unloads = report.get('tomorrow_unloads') or []
-        L.append(_REPORT_HR)
-        L.append(f"📅  <b>Завтра — {_esc(fmt_date_ru(report.get('tomorrow_date', '')))}</b>")
-        L.append("")
-        L.append(f"📦  <b>Загрузки · {len(loads)}</b>")
-        L += [_fmt_leg(x) for x in loads] or ["<i>нет</i>"]
-        L.append("")
-        L.append(f"🏁  <b>Выгрузки · {len(unloads)}</b>")
-        L += [_fmt_leg(x) for x in unloads] or ["<i>нет</i>"]
+        L += ["", f"📅  <b>Завтра, {_esc(fmt_date_ru(report.get('tomorrow_date', '')))}</b>",
+              _tg_list('Загрузки', [_fmt_leg(x) for x in report.get('tomorrow_loads') or []]),
+              _tg_list('Выгрузки', [_fmt_leg(x) for x in report.get('tomorrow_unloads') or []])]
 
     return '\n'.join(L)
 
@@ -1058,7 +1056,7 @@ async def send_scheduled_report(period: str) -> dict:
     report = await build_report(period)
     await db.reports.insert_one(dict(report))
     text = format_report_text(report)
-    delivery = await _broadcast_a2info(text)
+    delivery = await _broadcast_a2info(text, ['orders', 'finance'])
     ok = sum(1 for d in delivery if d.get('ok'))
     logger.info(f'[report {period}] delivered to {ok}/{len(delivery)} chats')
     return {'report': report, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
@@ -1103,34 +1101,20 @@ async def build_morning_briefing() -> dict:
 
 
 def format_morning_text(b: dict) -> str:
-    loads = b.get('loads') or []
-    unloads = b.get('unloads') or []
     tasks = b.get('tasks') or []
-    L = [
-        f"☀️  <b>Утро — {_esc(fmt_date_ru(b.get('date', '')))}</b>",
-        _REPORT_HR,
-        f"📦  <b>Загрузки сегодня · {len(loads)}</b>",
-    ]
-    L += [_fmt_leg(x) for x in loads] or ["<i>нет</i>"]
-    L.append("")
-    L.append(f"🏁  <b>Выгрузки сегодня · {len(unloads)}</b>")
-    L += [_fmt_leg(x) for x in unloads] or ["<i>нет</i>"]
-
-    L.append(_REPORT_HR)
-    L.append(f"✅  <b>Задачи · {len(tasks)}</b> <i>(на сегодня и просроченные)</i>")
-    if tasks:
-        for t in tasks:
-            mark = "🔴 " if t.get('overdue') else ""
-            tm = f"{t['due_time']} — " if t.get('due_time') else ""
-            L.append(f"•  {mark}{tm}{_esc(t['title'])}")
-    else:
-        L.append("<i>нет</i>")
-    return '\n'.join(L)
+    task_rows = [("🔴 " if t.get('overdue') else "") + (f"{t['due_time']}  " if t.get('due_time') else "") + _esc(t['title']) for t in tasks]
+    return '\n'.join([
+        _tg_head('☀️', f"Утро, {_esc(fmt_date_ru(b.get('date', '')))}"),
+        "",
+        _tg_list('Загрузки сегодня', [_fmt_leg(x) for x in b.get('loads') or []]),
+        _tg_list('Выгрузки сегодня', [_fmt_leg(x) for x in b.get('unloads') or []]),
+        _tg_list('Задачи', task_rows, limit=30),
+    ])
 
 
 async def send_morning_briefing() -> dict:
     b = await build_morning_briefing()
-    delivery = await _broadcast_a2info(format_morning_text(b))
+    delivery = await _broadcast_a2info(format_morning_text(b), ['orders', 'tasks'])
     ok = sum(1 for d in delivery if d.get('ok'))
     logger.info(f'[morning briefing] delivered to {ok}/{len(delivery)} chats')
     return {'briefing': b, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
@@ -1190,35 +1174,23 @@ async def build_fleet_briefing() -> dict:
 
 
 def format_fleet_briefing_text(b: dict) -> str:
-    def block(title, rows, render):
-        L = [f"{title} · {len(rows)}"]
-        L += [render(x) for x in rows] or ["<i>нет</i>"]
-        return L
-    lt = lambda x: f"•  <b>{_esc(x['order_number'])}</b> {_esc(x['route'])} — {_esc(x['client_name'])}" + (f" · {_esc(x['vehicle'])}" if x.get('vehicle') else '')
-    L = [f"🚚  <b>Автопарк — {_esc(fmt_date_ru(b.get('date', '')))}</b>", _REPORT_HR]
-    L += block("📦  <b>Загрузки сегодня</b>", b.get('loads_today') or [], lt)
-    L.append("")
-    L += block("🌅  <b>Загрузки завтра</b>", b.get('loads_tomorrow') or [], lt)
-    L.append("")
-    L += block("🏁  <b>Выгрузки сегодня</b>", b.get('unloads_today') or [], lt)
+    lt = lambda x: f"<b>{_esc(x['order_number'])}</b>  {_esc(x['route'])}\n<i>{_esc(x['client_name'])}" + (f" · {_esc(x['vehicle'])}" if x.get('vehicle') else '') + "</i>"
+    L = [_tg_head('🚚', f"Автопарк, {_esc(fmt_date_ru(b.get('date', '')))}"), "",
+         _tg_list('Загрузки сегодня', [lt(x) for x in b.get('loads_today') or []]),
+         _tg_list('Выгрузки сегодня', [lt(x) for x in b.get('unloads_today') or []]),
+         _tg_list('Загрузки завтра', [lt(x) for x in b.get('loads_tomorrow') or []])]
     ov = b.get('overdue') or []
     if ov:
-        L.append(_REPORT_HR)
-        L.append(f"🔴  <b>Просрочка оплаты · {len(ov)}</b>")
-        for x in ov[:15]:
-            L.append(f"•  {_esc(x['client_name'])} — {x['amount']:.0f} Br, +{x.get('days', 0)} дн ({_esc(x['order_number'])})")
+        L.append(_tg_list('🔴 Просрочка оплаты', [f"{_esc(x['client_name'])} — <b>{_byn(x['amount'])}</b> · {x.get('days', 0)} дн. · {_esc(x['order_number'])}" for x in ov]))
     inv = b.get('to_invoice') or []
     if inv:
-        L.append(_REPORT_HR)
-        L.append(f"🧾  <b>Пора выставить счёт · {len(inv)}</b>")
-        for x in inv[:15]:
-            L.append(f"•  {_esc(x['client_name'])} — {x['amount']:.0f} Br ({_esc(x['order_number'])})")
+        L.append(_tg_list('Пора выставить счёт', [f"{_esc(x['client_name'])} — <b>{_byn(x['amount'])}</b> · {_esc(x['order_number'])}" for x in inv]))
     return '\n'.join(L)
 
 
 async def send_fleet_briefing() -> dict:
     b = await build_fleet_briefing()
-    delivery = await _broadcast_a2info(format_fleet_briefing_text(b))
+    delivery = await _broadcast_a2info(format_fleet_briefing_text(b), [''])
     ok = sum(1 for d in delivery if d.get('ok'))
     logger.info(f'[fleet briefing] delivered to {ok}/{len(delivery)} chats')
     return {'briefing': b, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
@@ -1317,12 +1289,11 @@ async def _run_task_reminders() -> dict:
 
         tried += 1
         title = t.get('title') or t.get('description') or 'Задача'
-        when = f"{tdate} {ttime}".strip()
         overdue = tdate < today_str
-        head = "📌 <b>Задача" + (" (просрочена)" if overdue else " на сегодня") + "</b>"
-        text = f"{head}\n{_esc(when)} — {_esc(title)}"
+        text = _tg_head('🔴' if overdue else '📌', 'Задача просрочена' if overdue else 'Задача на сегодня',
+                        _esc(f"{fmt_date_ru(tdate)}, {ttime}" if overdue else ttime)) + f"\n\n{_esc(title)}"
 
-        delivery = [await send_telegram_a2info(cid, text)
+        delivery = [await send_telegram_a2info(cid, text, ['tasks'])
                     for cid in await _task_recipients(t.get('assigned_user_id'))]
         if any(d.get('ok') for d in delivery) or not any(_DEFAULT_REPORT_CHAT_IDS):
             await db.tasks.update_one(
@@ -2153,6 +2124,31 @@ async def _migrate_leads_stage():
         logging.getLogger(__name__).error(f"_migrate_leads_stage failed: {e}")
 
 
+# ===== Поиск дублей (лиды, перевозчики, клиенты) =====
+_DUP_SEP = r"""[\s"'«»“”„.,()\-]*"""   # явный набор знаков: \W в Mongo без юникода съедает кириллицу
+_DUP_FORMS = r"(?:сооо|иооо|чтуп|чпуп|ооо|оао|зао|одо|чуп|пао|тоо|уп|ип|ао)"
+
+
+def _dup_filters(phone: str = "", name: str = "", unp: str = "") -> list:
+    """Условия Mongo для поиска похожей записи: тот же номер (последние 9 цифр в любом формате),
+    то же название без формы собственности и кавычек, тот же УНП."""
+    ors = []
+    for part in re.split(r"[,;/]", phone or ""):
+        digits = re.sub(r"\D", "", part)[-9:]
+        if len(digits) >= 7:
+            ors.append({"phone": {"$regex": r"\D*".join(digits)}})
+    words = re.findall(r"[^\s\"'«»“”„.,()\-]+", (name or "").lower())
+    words = [w for w in words if not re.fullmatch(_DUP_FORMS, w)]
+    if len("".join(words)) >= 3:
+        form = f"(?:{_DUP_FORMS}{_DUP_SEP})?"
+        rx = "^" + _DUP_SEP + form + _DUP_SEP.join(re.escape(w) for w in words) + _DUP_SEP + form + "$"
+        ors += [{"name": {"$regex": rx, "$options": "i"}}, {"company_name": {"$regex": rx, "$options": "i"}}]
+    unp_digits = re.sub(r"\D", "", unp or "")
+    if len(unp_digits) >= 9:
+        ors += [{"unp": {"$regex": unp_digits}}, {"inn": {"$regex": unp_digits}}]
+    return ors
+
+
 # ===== CRUD helper =====
 def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets: bool = False, user_filter: bool = False, soft_delete: bool = False):
     @api_router.get(f"/{prefix}", response_model=List[ModelCls])
@@ -2179,6 +2175,19 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
             elif collection == "leads":
                 background_tasks.add_task(_bg_push_lead, obj.dict())
         return obj
+
+    # выше /{item_id}, иначе «duplicates» примут за id записи. Фильтра по менеджеру нет нарочно:
+    # дубль надо видеть и тогда, когда лид закреплён за другим
+    @api_router.get(f"/{prefix}/duplicates")
+    async def find_duplicates(phone: str = "", name: str = "", unp: str = ""):
+        ors = _dup_filters(phone, name, unp)
+        if not ors:
+            return []
+        q: dict = {"$or": ors}
+        if soft_delete:
+            q["deleted"] = {"$ne": True}
+        docs = await db[collection].find(q, {"_id": 0, "id": 1, "name": 1, "company_name": 1, "phone": 1, "stage": 1}).to_list(5)
+        return [{"id": d.get("id"), "name": d.get("name") or d.get("company_name") or "", "phone": d.get("phone") or "", "stage": d.get("stage") or ""} for d in docs]
 
     @api_router.get(f"/{prefix}/{{item_id}}", response_model=ModelCls)
     async def get_item(item_id: str):
