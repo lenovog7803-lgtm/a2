@@ -787,10 +787,12 @@ DRAFT_SYSTEM = (
 
 
 def ai_draft_sync(thread: list, mb: dict, context: str = "") -> str:
-    """Черновик ответа на последнее письмо переписки. Пустая строка — нет ключа или модель отказалась."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    """Черновик ответа на последнее письмо переписки через Gemini (или Claude)."""
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not gemini_key and not anthropic_key:
         return ""
-    import anthropic
+
     lines = []
     for m in thread[-12:]:  # длинные цепочки — последние письма, этого хватает для ответа
         who = "МЫ" if m.get("from_me") else f"СОБЕСЕДНИК ({m.get('from', '')})"
@@ -800,18 +802,39 @@ def ai_draft_sync(thread: list, mb: dict, context: str = "") -> str:
     prompt = (f"{me}\n" + (f"\nО чём мы им писали (наше предложение):\n{context[:3000]}\n" if context else "") +
               "\nПереписка, последнее письмо внизу:\n\n" + "\n\n".join(lines) +
               "\n\nНапиши черновик ответа на последнее письмо собеседника.")
-    try:
-        r = anthropic.Anthropic().beta.messages.create(
-            model=DRAFT_MODEL, max_tokens=4000, system=DRAFT_SYSTEM,
-            output_config={"effort": "medium"},
-            betas=["server-side-fallback-2026-07-01"], fallbacks="default",  # отказ модели — ответит запасная
-            messages=[{"role": "user", "content": prompt}])
-    except anthropic.APIError as e:
-        logger.warning(f"[mailing] AI draft failed: {e}")
-        return ""
-    if r.stop_reason == "refusal":
-        return ""
-    return "\n".join(b.text for b in r.content if b.type == "text").strip()
+
+    # 1. Сначала пробуем Gemini API (быстро, надежно и бесплатно)
+    if gemini_key:
+        try:
+            import requests
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}"
+            payload = {
+                "system_instruction": {"parts": [{"text": DRAFT_SYSTEM}]},
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"maxOutputTokens": 2048, "temperature": 0.7}
+            }
+            res = requests.post(url, json=payload, timeout=20)
+            if res.ok:
+                data = res.json()
+                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                if text:
+                    return text.strip()
+        except Exception as e:
+            logger.warning(f"[mailing] Gemini draft failed: {e}")
+
+    # 2. Запасной вариант (Anthropic) если есть ключ
+    if anthropic_key:
+        try:
+            import anthropic
+            r = anthropic.Anthropic().beta.messages.create(
+                model=DRAFT_MODEL, max_tokens=4000, system=DRAFT_SYSTEM,
+                messages=[{"role": "user", "content": prompt}])
+            if r.stop_reason != "refusal":
+                return "\n".join(b.text for b in r.content if b.type == "text").strip()
+        except Exception as e:
+            logger.warning(f"[mailing] Anthropic draft failed: {e}")
+
+    return ""
 
 
 async def save_draft(db, mid: str, tid: str, for_msg: str, text: str):
@@ -2046,13 +2069,13 @@ def build_mailing_router(db, require_user, require_director) -> APIRouter:
         last_id = res["messages"][-1]["id"] if res["messages"] else ""
         draft = d["text"] if d and d.get("for_msg") == last_id else ""
         return {**res, "me": me, "mailbox": mb.get("login") or mb["name"], "draft": draft,
-                "can_draft": bool(os.environ.get("ANTHROPIC_API_KEY"))}
+                "can_draft": bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"))}
 
     @r.post("/chats/{tid}/draft")
     async def chat_draft(tid: str, payload: dict = None, _: dict = Depends(require_director)):
         """Написать черновик ответа сейчас (кнопка в «Чатах»)."""
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise HTTPException(400, "Черновики не настроены: на сервере нет ANTHROPIC_API_KEY")
+        if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")):
+            raise HTTPException(400, "Черновики не настроены: на сервере нет GEMINI_API_KEY")
         mb, tok, me = await chat_ctx((payload or {}).get("mailbox_id") or "main")
         th = await asyncio.to_thread(gmail_chat_sync, tok, me, tid)
         if not th["messages"]:

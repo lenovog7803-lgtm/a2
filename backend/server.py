@@ -2250,7 +2250,8 @@ def make_crud(prefix: str, collection: str, ModelCls, PayloadCls, sync_to_sheets
         return ModelCls(**doc)
 
     @api_router.delete(f"/{prefix}/{{item_id}}")
-    async def delete_item(item_id: str, background_tasks: BackgroundTasks):
+    async def delete_item(item_id: str, background_tasks: BackgroundTasks,
+                          current_user: dict = Depends(require_director)):
         doc = await db[collection].find_one({"id": item_id}, {"_id": 0})
         if soft_delete:
             if doc:
@@ -5644,7 +5645,7 @@ _DASHBOARD_PROJECTION = {
 
 
 @api_router.get("/dashboard")
-async def dashboard(period: str = "all"):
+async def dashboard(period: str = "all", current_user: dict = Depends(require_director)):
     # Only the handful of fields this endpoint actually reads — the full
     # order document (route text, doc URLs, payment history, ...) was being
     # pulled over the wire for every one of up to 5000 orders on every load.
@@ -6063,20 +6064,20 @@ class FinanceWithdrawalPayload(BaseModel):
 
 
 @api_router.get("/finance/withdrawals", response_model=List[FinanceWithdrawal])
-async def list_withdrawals():
+async def list_withdrawals(current_user: dict = Depends(require_director)):
     docs = await db.finance_withdrawals.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
     return [FinanceWithdrawal(**d) for d in docs]
 
 
 @api_router.post("/finance/withdrawals", response_model=FinanceWithdrawal)
-async def create_withdrawal(payload: FinanceWithdrawalPayload):
+async def create_withdrawal(payload: FinanceWithdrawalPayload, current_user: dict = Depends(require_director)):
     obj = FinanceWithdrawal(**payload.dict())
     await db.finance_withdrawals.insert_one(obj.dict())
     return obj
 
 
 @api_router.delete("/finance/withdrawals/{wid}")
-async def delete_withdrawal(wid: str):
+async def delete_withdrawal(wid: str, current_user: dict = Depends(require_director)):
     await db.finance_withdrawals.delete_one({"id": wid})
     return {"ok": True}
 
@@ -6099,20 +6100,20 @@ class FinanceTransactionPayload(BaseModel):
 
 
 @api_router.get("/finance/transactions", response_model=List[FinanceTransaction])
-async def list_finance_transactions():
+async def list_finance_transactions(current_user: dict = Depends(require_director)):
     docs = await db.finance_transactions.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
     return [FinanceTransaction(**d) for d in docs]
 
 
 @api_router.post("/finance/transactions", response_model=FinanceTransaction)
-async def create_finance_transaction(payload: FinanceTransactionPayload):
+async def create_finance_transaction(payload: FinanceTransactionPayload, current_user: dict = Depends(require_director)):
     obj = FinanceTransaction(**payload.dict())
     await db.finance_transactions.insert_one(obj.dict())
     return obj
 
 
 @api_router.delete("/finance/transactions/{tid}")
-async def delete_finance_transaction(tid: str):
+async def delete_finance_transaction(tid: str, current_user: dict = Depends(require_director)):
     await db.finance_transactions.delete_one({"id": tid})
     return {"ok": True}
 
@@ -7951,7 +7952,24 @@ from mailing import build_mailing_router, mailing_loop, set_notifier as _set_mai
 api_router.include_router(build_mailing_router(db, _require_user, require_director))
 _set_mailing_notifier(_broadcast_a2info)  # ответы на рассылку → Telegram (А2 Инфо)
 
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_CORS_ORIGINS = [
+    "https://crm-v2-khaki.vercel.app",
+    "https://crm-v2.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:4173",
+    "http://localhost:3000",
+]
+if os.environ.get("FRONTEND_URL"):
+    _CORS_ORIGINS.append(os.environ["FRONTEND_URL"])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=_CORS_ORIGINS,
+    allow_origin_regex=r"^https://crm-v2.*\.vercel\.app$",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(api_router)
 
 @app.get("/health")
