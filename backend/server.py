@@ -2206,6 +2206,13 @@ class Lead(BaseModel):
     created_at: str = Field(default_factory=now_iso)
     updated_at: Optional[str] = None
     stage_changed_at: Optional[str] = None
+    heat_score: Optional[int] = 0
+    funnel: Optional[str] = ""
+    niche: Optional[str] = ""
+    pitch_script: Optional[str] = ""
+    source: Optional[str] = ""
+    source_url: Optional[str] = ""
+    unp: Optional[str] = ""
 
 
 class LeadPayload(BaseModel):
@@ -2226,6 +2233,13 @@ class LeadPayload(BaseModel):
     directions: Optional[str] = ""
     call_notes: Optional[List] = Field(default_factory=list)
     assigned_to: Optional[str] = ""
+    heat_score: Optional[int] = 0
+    funnel: Optional[str] = ""
+    niche: Optional[str] = ""
+    pitch_script: Optional[str] = ""
+    source: Optional[str] = ""
+    source_url: Optional[str] = ""
+    unp: Optional[str] = ""
 
 
 class LeadUpdate(BaseModel):
@@ -2247,6 +2261,13 @@ class LeadUpdate(BaseModel):
     call_notes: Optional[List] = None
     lost_reason: Optional[str] = None
     assigned_to: Optional[str] = None
+    heat_score: Optional[int] = None
+    funnel: Optional[str] = None
+    niche: Optional[str] = None
+    pitch_script: Optional[str] = None
+    source: Optional[str] = None
+    source_url: Optional[str] = None
+    unp: Optional[str] = None
 
 
 # ====== Lead call module: stages, cadence, scripts ======
@@ -2778,7 +2799,9 @@ async def claim_lead(lead_id: str, current_user: dict = Depends(_require_user)):
     if not lead:
         raise HTTPException(404, "Лид не найден")
     if lead.get("assigned_to") and lead["assigned_to"] != current_user["id"]:
-        raise HTTPException(400, "Лид уже закреплён за другим менеджером")
+        # Директору и админу разрешено забирать/переназначать любой лид
+        if current_user.get("role") not in ("admin", "director"):
+            raise HTTPException(400, "Лид уже закреплён за другим менеджером")
     await db.leads.update_one({"id": lead_id}, {"$set": {
         "assigned_to": current_user["id"], "assigned_at": datetime.now(timezone.utc).isoformat(),
     }})
@@ -6200,15 +6223,7 @@ async def save_goals(payload: GoalsPayload, current_user: dict = Depends(_requir
 
 
 # ====== App Settings ======
-_DEFAULT_RATE_MINIMUMS = [
-    {"route": "Москва↔Минск",       "cost": 720,  "current": 50,  "threshold": 865,  "status": "red"},
-    {"route": "СПб↔Минск",          "cost": 406,  "current": 75,  "threshold": 487,  "status": "red"},
-    {"route": "Минск↔Москва",       "cost": 492,  "current": 150, "threshold": 590,  "status": "red"},
-    {"route": "Жодино↔Москва",      "cost": 543,  "current": 250, "threshold": 651,  "status": "yellow"},
-    {"route": "Ульяновск–Минск",    "cost": 1328, "current": 900, "threshold": 1594, "status": "yellow"},
-    {"route": "Минск–Минск (лок.)", "cost": 130,  "current": 0,   "threshold": 200,  "status": "red"},
-    {"route": "Смоленск–Минск",     "cost": 335,  "current": 160, "threshold": 402,  "status": "yellow"},
-]
+_DEFAULT_RATE_MINIMUMS = []
 
 _DEFAULT_GOALS = {
     "margin_goal": 10000,
