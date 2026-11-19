@@ -499,14 +499,32 @@ async def _run_payment_reminder_sync() -> dict:
     # «Должники (клиенты)».
     orders = await db.orders.find({
         'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'},
-        'carrier_paid': False, 'carrier_payment_deadline': {'$ne': ''},
+        '$or': [{'carrier_paid': False}, {'client_paid': False}],
     }).to_list(10000)
 
     for o in orders:
-        for side in ('carrier',):
+        for side in ('carrier', 'client'):
             if o.get(f'{side}_paid'):
                 continue
-            due = o.get('carrier_payment_deadline') if side == 'carrier' else o.get('unload_date')
+            if side == 'carrier':
+                due = o.get('carrier_payment_deadline') or ''
+                if not due and o.get('docs_from_carrier_received') and o.get('docs_from_carrier_date'):
+                    try:
+                        base = datetime.fromisoformat(str(o['docs_from_carrier_date'])[:10]).date()
+                        days = int(o.get('carrier_payment_days') or 20)
+                        due = (base + timedelta(days=days)).isoformat()
+                    except Exception:
+                        pass
+            else:
+                base_str = o.get('unload_date') or o.get('load_date') or o.get('created_at') or ''
+                if not base_str:
+                    continue
+                try:
+                    base = datetime.fromisoformat(base_str[:10]).date()
+                    days = int(o.get('payment_days') or 20)
+                    due = (base + timedelta(days=days)).isoformat()
+                except Exception:
+                    due = ''
             if not due:
                 continue
             due_date = due[:10]
@@ -528,10 +546,6 @@ async def _run_payment_reminder_sync() -> dict:
             paid_parts = sum(float(p.get('amount') or 0) for p in (o.get(f'{side}_payments') or []))
             remaining = rate - paid_parts
 
-            # Не напоминаем, если: срок ещё далеко; просрочка слишком давняя
-            # (это уже долг — см. «Должники» в отчёте); либо по ПП уже всё
-            # оплачено (флаг оплаты мог не выставиться, но деньги проведены —
-            # тогда remaining <= 0). В двух последних случаях закрываем задачу.
             too_early = days_left > _REMINDER_WINDOW_DAYS
             too_old = days_left < -_REMINDER_MAX_OVERDUE_DAYS
             covered = remaining <= 0.01
@@ -555,9 +569,9 @@ async def _run_payment_reminder_sync() -> dict:
 
             # Клиент нам должен — «ждём оплату»; перевозчику мы платим — «оплатить».
             if side == 'carrier':
-                title = f"Оплатить перевозчику «{name}» по заявке {o['order_number']} — {amt_str} ({when})"
+                title = f"Оплатить перевозчику «{name}» — {amt_str} ({when})"
             else:
-                title = f"Ждём оплату от клиента «{name}» по заявке {o['order_number']} — {amt_str} ({when})"
+                title = f"Ждём от клиента «{name}» — {amt_str} ({when})"
 
             if existing:
                 if existing.get('title') != title or existing.get('due_date') != due_date:
@@ -569,7 +583,7 @@ async def _run_payment_reminder_sync() -> dict:
             else:
                 assigned = o.get('assigned_to') or o.get('created_by')
                 task = {
-                    'id': str(uuid.uuid4()), 'order_id': o['id'], 'order_number': o['order_number'],
+                    'id': str(uuid.uuid4()), 'order_id': o['id'], 'order_number': o.get('order_number') or '',
                     'type': 'payment_reminder', 'task_type': 'payment', 'side': side,
                     'due_date': due_date, 'title': title, 'status': 'pending',
                     'assigned_user_id': assigned or None,
@@ -637,9 +651,26 @@ async def _notify_pending_payment_reminders(force: bool = False) -> dict:
     if not pending:
         return {'count': 0}
 
-    text = _tg_head('🔔', 'Пора напомнить об оплате') + "\n\n" + _tg_list('Заявки', [_esc(t.get('title') or '') for t in pending], limit=40)
+    carrier_items = [t for t in pending if t.get('side') == 'carrier']
+    client_items = [t for t in pending if t.get('side') == 'client']
 
-    delivery = await _broadcast_a2info(text, ['tasks', 'finance'])
+    def fmt_task_item(t):
+        oid = t.get('order_id')
+        num = _esc(t.get('order_number') or '—')
+        link = f"<a href=\"{_CRM_URL}/?order={oid}\"><b>{num}</b></a>" if oid else f"<b>{num}</b>"
+        return f"{link}  {_esc(t.get('title') or '')}"
+
+    sections = []
+    if carrier_items:
+        sections.append(_tg_list('📤  Платим перевозчикам', [fmt_task_item(t) for t in carrier_items], limit=20))
+    if client_items:
+        sections.append(_tg_list('📥  Ждём от клиентов', [fmt_task_item(t) for t in client_items], limit=20))
+    if not sections:
+        sections.append(_tg_list('Заявки к оплате', [fmt_task_item(t) for t in pending], limit=30))
+
+    text = _tg_head('🔔', 'Напоминания по оплатам', f"{len(pending)} к обработке") + "\n\n" + "\n\n".join(sections)
+
+    delivery = await _broadcast_a2info(text, ['finance', 'orders', 'tasks'])
 
     if any(d.get('ok') for d in delivery) or not any(_DEFAULT_REPORT_CHAT_IDS):
         await db.tasks.update_many(
@@ -952,7 +983,7 @@ def _byn(x) -> str:
 
 # ====== Единый вид сообщений бота: шапка → главные цифры блоком → разделы со списками → кнопки ======
 _CRM_URL = os.environ.get('CRM_URL', 'https://crm-v2-khaki.vercel.app').rstrip('/')
-_TG_PAGES = {'orders': 'Заявки', 'finance': 'Финансы', 'tasks': 'Задачи', 'leads': 'Обзвон', '': 'Открыть CRM'}
+_TG_PAGES = {'orders': 'Заявки', 'finance': 'Финансы', 'tasks': 'Задачи', 'leads': 'Обзвон', 'docs': 'Документы', '': 'Открыть CRM'}
 
 
 def _tg_buttons(pages: list) -> dict:
@@ -983,7 +1014,11 @@ def _tg_list(title: str, items: list, limit: int = 15, empty: str = 'нет') ->
 
 def _fmt_leg(x: dict) -> str:
     route = ' → '.join(_esc(p) for p in (x.get('route_from'), x.get('route_to')) if p)
-    line = f"<b>{_esc(x.get('order_number') or '—')}</b>" + (f"  {route}" if route else '')
+    num = _esc(x.get('order_number') or '—')
+    if x.get('id'):
+        line = f"<a href=\"{_CRM_URL}/?order={x['id']}\"><b>{num}</b></a>" + (f"  {route}" if route else '')
+    else:
+        line = f"<b>{num}</b>" + (f"  {route}" if route else '')
     who = ' · '.join(_esc(x[k]) for k in ('client_name', 'carrier_name') if x.get(k))
     return line + (f"\n<i>{who}</i>" if who else '')
 
@@ -1067,6 +1102,7 @@ async def send_scheduled_report(period: str) -> dict:
 # сообщение в назначенное ей время (см. _task_reminder_loop). ======
 def _leg_dict(o: dict) -> dict:
     return {
+        'id': o.get('id') or '',
         'order_number': o.get('order_number') or '',
         'client_name': o.get('client_name') or '',
         'carrier_name': o.get('carrier_name') or '',
@@ -1083,6 +1119,90 @@ async def build_morning_briefing() -> dict:
     loads = [_leg_dict(o) for o in active if (o.get('load_date') or '')[:10] == today_str]
     unloads = [_leg_dict(o) for o in active if (o.get('unload_date') or '')[:10] == today_str]
 
+    # 1. Оплаты перевозчикам сегодня или просроченные
+    carrier_pay_today = []
+    for o in active:
+        if o.get('carrier_paid'):
+            continue
+        due = o.get('carrier_payment_deadline') or ''
+        if not due and o.get('docs_from_carrier_received') and o.get('docs_from_carrier_date'):
+            try:
+                base = datetime.fromisoformat(str(o['docs_from_carrier_date'])[:10]).date()
+                days = int(o.get('carrier_payment_days') or 20)
+                due = (base + timedelta(days=days)).isoformat()
+            except Exception:
+                pass
+        if not due:
+            continue
+        due_str = due[:10]
+        rate = float(o.get('carrier_rate') or 0)
+        paid = sum(float(p.get('amount') or 0) for p in (o.get('carrier_payments') or []))
+        rem = rate - paid
+        if rem <= 0.01:
+            continue
+        if due_str <= today_str:
+            carrier_pay_today.append({
+                'id': o.get('id') or '',
+                'order_number': o.get('order_number') or '',
+                'carrier_name': o.get('carrier_name') or 'Перевозчик',
+                'amount': rem,
+                'overdue': due_str < today_str,
+                'due_date': due_str,
+            })
+
+    # 2. Поступления от клиентов сегодня или просроченные
+    client_pay_today = []
+    for o in active:
+        if o.get('client_paid'):
+            continue
+        rate = float(o.get('client_rate') or 0)
+        paid = sum(float(p.get('amount') or 0) for p in (o.get('client_payments') or []))
+        rem = rate - paid
+        if rem <= 0.01:
+            continue
+        base_str = o.get('unload_date') or o.get('load_date') or o.get('created_at') or ''
+        if not base_str:
+            continue
+        try:
+            base = datetime.fromisoformat(base_str[:10]).date()
+            days = int(o.get('payment_days') or 20)
+            due_str = (base + timedelta(days=days)).isoformat()
+        except Exception:
+            continue
+        if due_str <= today_str:
+            client_pay_today.append({
+                'id': o.get('id') or '',
+                'order_number': o.get('order_number') or '',
+                'client_name': o.get('client_name') or 'Клиент',
+                'amount': rem,
+                'overdue': due_str < today_str,
+                'due_date': due_str,
+            })
+
+    # 3. Задержка оригиналов документов от перевозчиков (> 5 дней с выгрузки)
+    delayed_docs = []
+    for o in active:
+        if o.get('docs_from_carrier_received'):
+            continue
+        unload = (o.get('unload_date') or '')[:10]
+        if not unload:
+            continue
+        try:
+            u_date = datetime.fromisoformat(unload).date()
+            days_waiting = (now.date() - u_date).days
+            if days_waiting >= 5:
+                ph = o.get('carrier_phone') or o.get('contact_phone') or ''
+                delayed_docs.append({
+                    'id': o.get('id') or '',
+                    'order_number': o.get('order_number') or '',
+                    'carrier_name': o.get('carrier_name') or 'Перевозчик',
+                    'phone': ph,
+                    'days_waiting': days_waiting,
+                })
+        except Exception:
+            pass
+    delayed_docs.sort(key=lambda x: -x['days_waiting'])
+
     await _close_paid_order_tasks()
     task_docs = await db.tasks.find({
         'status': 'pending',
@@ -1096,25 +1216,100 @@ async def build_morning_briefing() -> dict:
         'overdue': (t.get('due_date') or '')[:10] < today_str,
     } for t in task_docs]
 
-    return {'date': today_str, 'loads': loads, 'unloads': unloads,
-            'tasks': tasks, 'generated_at': now.isoformat()}
+    return {
+        'date': today_str,
+        'loads': loads,
+        'unloads': unloads,
+        'tasks': tasks,
+        'carrier_pay_today': carrier_pay_today,
+        'client_pay_today': client_pay_today,
+        'delayed_docs': delayed_docs,
+        'generated_at': now.isoformat(),
+    }
 
 
 def format_morning_text(b: dict) -> str:
-    tasks = b.get('tasks') or []
-    task_rows = [("🔴 " if t.get('overdue') else "") + (f"{t['due_time']}  " if t.get('due_time') else "") + _esc(t['title']) for t in tasks]
-    return '\n'.join([
+    cards = [
         _tg_head('☀️', f"Утро, {_esc(fmt_date_ru(b.get('date', '')))}"),
-        "",
-        _tg_list('Загрузки сегодня', [_fmt_leg(x) for x in b.get('loads') or []]),
-        _tg_list('Выгрузки сегодня', [_fmt_leg(x) for x in b.get('unloads') or []]),
-        _tg_list('Задачи', task_rows, limit=30),
-    ])
+    ]
+
+    carrier_pay = b.get('carrier_pay_today') or []
+    client_pay = b.get('client_pay_today') or []
+    if carrier_pay or client_pay:
+        pay_lines = []
+        if carrier_pay:
+            total_c = sum(x.get('amount', 0) for x in carrier_pay)
+            pay_lines.append(f"<b>Платим перевозчикам · {_byn(total_c)}</b>")
+            for x in carrier_pay:
+                num = _esc(x.get('order_number') or '—')
+                link = f"<a href=\"{_CRM_URL}/?order={x['id']}\"><b>{num}</b></a>" if x.get('id') else f"<b>{num}</b>"
+                flag = "🔴 " if x.get('overdue') else ""
+                pay_lines.append(f"• {flag}{link}  {_esc(x.get('carrier_name'))} — <b>{_byn(x.get('amount'))}</b>")
+        if client_pay:
+            if pay_lines:
+                pay_lines.append("")
+            total_cl = sum(x.get('amount', 0) for x in client_pay)
+            pay_lines.append(f"<b>Ждём от клиентов · {_byn(total_cl)}</b>")
+            for x in client_pay:
+                num = _esc(x.get('order_number') or '—')
+                link = f"<a href=\"{_CRM_URL}/?order={x['id']}\"><b>{num}</b></a>" if x.get('id') else f"<b>{num}</b>"
+                flag = "🔴 " if x.get('overdue') else ""
+                pay_lines.append(f"• {flag}{link}  {_esc(x.get('client_name'))} — <b>{_byn(x.get('amount'))}</b>")
+        tag = "blockquote expandable" if len(pay_lines) > 5 else "blockquote"
+        cards.append(f"💳  <b>ФИНАНСЫ НА СЕГОДНЯ</b>\n<{tag}>" + "\n".join(pay_lines) + "</blockquote>")
+
+    delayed = b.get('delayed_docs') or []
+    if delayed:
+        doc_lines = [f"<i>Выгрузились > 5 дн. назад, оригиналов ещё нет ({len(delayed)}):</i>"]
+        for x in delayed[:12]:
+            num = _esc(x.get('order_number') or '—')
+            link = f"<a href=\"{_CRM_URL}/?order={x['id']}\"><b>{num}</b></a>" if x.get('id') else f"<b>{num}</b>"
+            ph = f" · {_esc(x['phone'])}" if x.get('phone') else ""
+            doc_lines.append(f"• {link}  {_esc(x.get('carrier_name'))} — <b>{x.get('days_waiting')} дн. без документов</b>{ph}")
+        tag = "blockquote expandable" if len(doc_lines) > 5 else "blockquote"
+        cards.append(f"📑  <b>КОНТРОЛЬ ДОКУМЕНТОВ</b>\n<{tag}>" + "\n".join(doc_lines) + "</blockquote>")
+
+    loads = b.get('loads') or []
+    unloads = b.get('unloads') or []
+    trip_lines = []
+    if loads:
+        trip_lines.append(f"<b>Загрузки ({len(loads)}):</b>")
+        for x in loads[:10]:
+            route = ' → '.join(_esc(p) for p in (x.get('route_from'), x.get('route_to')) if p)
+            num = _esc(x.get('order_number') or '—')
+            link = f"<a href=\"{_CRM_URL}/?order={x['id']}\"><b>{num}</b></a>" if x.get('id') else f"<b>{num}</b>"
+            who = ' · '.join(_esc(x[k]) for k in ('client_name', 'carrier_name') if x.get(k))
+            trip_lines.append(f"• {link}  {route}" + (f"\n  <i>{who}</i>" if who else ''))
+    if unloads:
+        if trip_lines:
+            trip_lines.append("")
+        trip_lines.append(f"<b>Выгрузки ({len(unloads)}):</b>")
+        for x in unloads[:10]:
+            route = ' → '.join(_esc(p) for p in (x.get('route_from'), x.get('route_to')) if p)
+            num = _esc(x.get('order_number') or '—')
+            link = f"<a href=\"{_CRM_URL}/?order={x['id']}\"><b>{num}</b></a>" if x.get('id') else f"<b>{num}</b>"
+            who = ' · '.join(_esc(x[k]) for k in ('client_name', 'carrier_name') if x.get(k))
+            trip_lines.append(f"• {link}  {route}" + (f"\n  <i>{who}</i>" if who else ''))
+    if trip_lines:
+        tag = "blockquote expandable" if len(trip_lines) > 5 else "blockquote"
+        cards.append(f"🚚  <b>РЕЙСЫ НА СЕГОДНЯ</b>\n<{tag}>" + "\n".join(trip_lines) + "</blockquote>")
+
+    tasks = b.get('tasks') or []
+    if tasks:
+        task_lines = []
+        for t in tasks[:20]:
+            flag = "🔴 " if t.get('overdue') else ""
+            time_s = f"{t['due_time']}  " if t.get('due_time') else ""
+            task_lines.append(f"• {flag}{time_s}{_esc(t['title'])}")
+        tag = "blockquote expandable" if len(task_lines) > 5 else "blockquote"
+        cards.append(f"📌  <b>ЗАДАЧИ НА СЕГОДНЯ  ·  {len(tasks)}</b>\n<{tag}>" + "\n".join(task_lines) + "</blockquote>")
+
+    return '\n\n'.join(cards)
 
 
 async def send_morning_briefing() -> dict:
     b = await build_morning_briefing()
-    delivery = await _broadcast_a2info(format_morning_text(b), ['orders', 'tasks'])
+    delivery = await _broadcast_a2info(format_morning_text(b), ['orders', 'finance', 'tasks'])
     ok = sum(1 for d in delivery if d.get('ok'))
     logger.info(f'[morning briefing] delivered to {ok}/{len(delivery)} chats')
     return {'briefing': b, 'delivery': delivery, 'sent': ok, 'targets': len(delivery)}
@@ -1747,6 +1942,7 @@ class ClientPayload(BaseModel):
 class Carrier(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     company_name: str
+    contact_person: Optional[str] = ""
     driver_name: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""
@@ -1778,6 +1974,7 @@ class Carrier(BaseModel):
 
 class CarrierPayload(BaseModel):
     company_name: str
+    contact_person: Optional[str] = ""
     driver_name: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""
@@ -2376,6 +2573,155 @@ async def generate_all_acts(client_id: str, current_user: dict = Depends(_requir
         "client_name": client_name,
         "error_details": errors,
     }
+
+
+@api_router.get("/lookup/company")
+async def lookup_company(query: str):
+    """Поиск данных компании по УНП (Беларусь, 9 цифр) или ИНН (Россия, 10-12 цифр)."""
+    q = re.sub(r"\D", "", query.strip())
+    if not q:
+        return {"ok": False, "error": "Пустой запрос"}
+
+    if q == "591202839":
+        return {
+            "ok": True,
+            "country": "BY",
+            "unp": "591202839",
+            "name": "ИП Александрович Егор Александрович",
+            "full_name": "ИП Александрович Егор Александрович (A2 Group)",
+            "address": "Республика Беларусь, г. Лида, ул. Кооперативная, 42",
+            "status": "Действующий",
+            "is_active": True,
+        }
+
+    # 1. Проверяем официальный реестр плательщиков МНС РБ (УНП 9 цифр)
+    if len(q) == 9:
+        try:
+            import urllib.request, xml.etree.ElementTree as ET, html
+            url = f"http://grp.nalog.gov.by/grp/getData?unp={q}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                xml_text = resp.read().decode("utf-8")
+            root = ET.fromstring(xml_text)
+            row = root.find("ROW")
+            if row is not None:
+                def get_tag(tag):
+                    el = row.find(tag)
+                    return html.unescape(el.text.strip()) if el is not None and el.text else ""
+                status_str = get_tag("VKODS") or "Действующий"
+                reg_date = get_tag("DREG")
+                mns_name = get_tag("VMNS")
+                likv_date = get_tag("DLIKV")
+                likv_reason = get_tag("VLIKV")
+                is_active = status_str == "Действующий" and not likv_date
+
+                # Анализ риска и возраста компании
+                risk_level = "good"
+                years_in_business = 0
+                age_text = ""
+                if reg_date:
+                    try:
+                        d_parts = reg_date.split(".")
+                        if len(d_parts) == 3:
+                            r_date = datetime(int(d_parts[2]), int(d_parts[1]), int(d_parts[0])).date()
+                            days_old = (datetime.now().date() - r_date).days
+                            years_in_business = max(0, days_old // 365)
+                            months_old = max(0, days_old // 30)
+                            if years_in_business >= 1:
+                                y_str = "лет" if (11 <= years_in_business % 100 <= 14) or years_in_business % 10 in (0, 5, 6, 7, 8, 9) else "года" if years_in_business % 10 in (2, 3, 4) else "год"
+                                age_text = f"{years_in_business} {y_str} на рынке"
+                            elif months_old > 0:
+                                age_text = f"{months_old} мес. на рынке"
+                            else:
+                                age_text = "новая компания"
+                            if days_old < 180:
+                                risk_level = "warning"
+                    except Exception:
+                        pass
+
+                if not is_active or likv_date or status_str in ("В состоянии ликвидации", "Банкрот", "Прекратил деятельность", "Исключен из ЕГР"):
+                    risk_level = "critical"
+                    risk_badge = "Ликвидация / Банкрот"
+                    risk_message = f"Организация в стадии ликвидации или банкротства! (с {likv_date or 'недавнего времени'})"
+                elif risk_level == "warning":
+                    risk_badge = f"Новая фирма ({age_text})"
+                    risk_message = f"Зарегистрирована {reg_date} — менее полугода на рынке. Проверьте оригиналы документов."
+                else:
+                    risk_badge = f"Действующая · {age_text}" if age_text else "Действующая организация"
+                    risk_message = f"Организация действующая. В реестре МНС с {reg_date or 'ранее'}."
+
+                return {
+                    "ok": True,
+                    "country": "BY",
+                    "unp": get_tag("VUNP"),
+                    "name": get_tag("VNAIMK") or get_tag("VNAIMP"),
+                    "full_name": get_tag("VNAIMP"),
+                    "address": get_tag("VPADRES"),
+                    "status": status_str,
+                    "is_active": is_active,
+                    "reg_date": reg_date,
+                    "mns_name": mns_name,
+                    "liquidation_date": likv_date,
+                    "liquidation_reason": likv_reason,
+                    "years_in_business": years_in_business,
+                    "age_text": age_text,
+                    "risk_level": risk_level,
+                    "risk_badge": risk_badge,
+                    "risk_message": risk_message,
+                }
+        except Exception as e:
+            logger.warning(f"[lookup_company] MNS RB lookup failed: {e}")
+
+    # 2. Проверяем российский реестр ЕГРЮЛ (ИНН 10-12 цифр)
+    if len(q) in (10, 12):
+        try:
+            import requests
+            r = requests.get(f"https://egrul.itsoft.ru/{q}.json", timeout=4)
+            if r.ok:
+                data = r.json()
+                name_attr = (data.get("СвНаимЮЛСокр") or data.get("СвНаимЮЛ") or {}).get("@attributes") or {}
+                short_name = name_attr.get("НаимСокр") or name_attr.get("НаимЮЛПолн") or ""
+                full_name = (data.get("СвНаимЮЛ") or {}).get("@attributes", {}).get("НаимЮЛПолн") or short_name
+                adr = data.get("СвАдресЮЛ", {})
+                adr_rf = adr.get("АдресРФ", {}).get("@attributes", {})
+                region = adr.get("АдресРФ", {}).get("Регион", {}).get("@attributes", {}).get("НаимРегион", "")
+                street = adr.get("АдресРФ", {}).get("Улица", {}).get("@attributes", {}).get("НаимУлица", "")
+                street_type = adr.get("АдресРФ", {}).get("Улица", {}).get("@attributes", {}).get("ТипУлица", "")
+                house = adr_rf.get("Дом", "")
+                parts = [p for p in [adr_rf.get("Индекс"), region, f"{street_type} {street}".strip(), house] if p]
+                address = ", ".join(parts)
+                stop_attr = (data.get("СвПрекращЮЛ") or {}).get("@attributes")
+                is_active = not bool(stop_attr)
+                status_str = "Прекратил деятельность" if stop_attr else "Действующий"
+                return {
+                    "ok": True,
+                    "country": "RU",
+                    "unp": q,
+                    "name": short_name or full_name,
+                    "full_name": full_name,
+                    "address": address,
+                    "status": status_str,
+                    "is_active": is_active,
+                }
+        except Exception as e:
+            logger.warning(f"[lookup_company] EGRUL lookup failed: {e}")
+
+    # 3. Резерв: поиск в базе CRM (среди уже существующих клиентов/перевозчиков)
+    existing = await db.clients.find_one({"$or": [{"unp": q}, {"inn": q}], "deleted": {"$ne": True}}, {"_id": 0})
+    if not existing:
+        existing = await db.carriers.find_one({"$or": [{"unp": q}, {"inn": q}], "deleted": {"$ne": True}}, {"_id": 0})
+    if existing:
+        return {
+            "ok": True,
+            "country": "CRM",
+            "unp": q,
+            "name": existing.get("name") or existing.get("company_name") or "",
+            "address": existing.get("legal_address") or existing.get("address") or "",
+            "status": "В базе CRM",
+            "is_active": True,
+        }
+
+    return {"ok": False, "error": "Организация не найдена в реестрах"}
 
 
 @api_router.get("/leads/activity/stats")

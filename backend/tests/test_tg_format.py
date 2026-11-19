@@ -18,6 +18,9 @@ REPORT = {"period": "daily", "generated_at": "2026-11-16T18:00:00", "basis": "un
           "overdue_carrier_count": 2, "overdue_carrier_sum": 3100, "debtors_count": 7, "debtors_sum": 34120, "calls_total": 25, "calls_won": 1,
           "top_clients": [("Ромашка", 5200), ("Лютик", 3100)], "tomorrow_date": "2026-11-17", "tomorrow_loads": [LEG] * 6, "tomorrow_unloads": []}
 MORNING = {"date": "2026-11-16", "loads": [LEG, LEG], "unloads": [],
+           "carrier_pay_today": [{"id": "ord-1", "order_number": "A2-512", "carrier_name": "ИП Петров", "amount": 800, "overdue": False}],
+           "client_pay_today": [{"id": "ord-2", "order_number": "A2-510", "client_name": "ООО «Ромашка»", "amount": 2100, "overdue": True}],
+           "delayed_docs": [{"id": "ord-3", "order_number": "A2-498", "carrier_name": "ИП Сидоров", "phone": "+375291234567", "days_waiting": 7}],
            "tasks": [{"title": "Позвонить <Ромашке>", "due_time": "10:00", "overdue": False}, {"title": "Счёт Лютику", "due_time": "", "overdue": True}]}
 FLEET = {"date": "2026-11-16", "loads_today": [{"order_number": "F-7", "route": "Минск → Брест", "client_name": "Лютик", "vehicle": "AB 1234-7"}],
          "loads_tomorrow": [], "unloads_today": [], "overdue": [{"client_name": "Лютик", "amount": 520.0, "days": 12, "order_number": "F-3"}], "to_invoice": []}
