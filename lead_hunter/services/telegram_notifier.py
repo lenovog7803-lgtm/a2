@@ -20,29 +20,37 @@ class TelegramNotifier:
         self.chat_id = (chat_id or TG_CHAT_ID).strip()
 
     def send_message(self, text: str) -> bool:
-        """Отправка сообщения в Telegram с HTML-разметкой."""
-        if not self.token or not self.chat_id:
-            logger.warning("Telegram Bot Token или Chat ID не заданы. Сообщение пропущено.")
-            return False
+        """Отправка сообщения в Telegram с HTML-разметкой (напрямую или через бэкенд A2)."""
+        # 1. Попытка прямой отправки через Telegram Bot API
+        if self.token and self.chat_id:
+            url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+            payload = {
+                "chat_id": self.chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            }
+            try:
+                resp = requests.post(url, json=payload, timeout=10)
+                if resp.status_code == 200:
+                    return True
+                else:
+                    logger.warning(f"Прямой Telegram API вернул {resp.status_code}: {resp.text}. Пробуем бэкенд A2...")
+            except Exception as e:
+                logger.warning(f"Исключение при прямой отправке в Telegram: {e}. Пробуем бэкенд A2...")
 
-        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        payload = {
-            "chat_id": self.chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True
-        }
-
+        # 2. Fallback через бэкенд А2 Group на Render (где токен A2_INFO_BOT_TOKEN настроен на сервере)
         try:
-            resp = requests.post(url, json=payload, timeout=10)
-            if resp.status_code == 200:
+            backend_url = "https://logistics-crm-backend.onrender.com/api/leads/morning-digest"
+            resp = requests.post(backend_url, json={"text": text}, timeout=10)
+            if resp.status_code == 200 and resp.json().get("ok"):
                 return True
             else:
-                logger.error(f"Ошибка Telegram API: {resp.status_code} - {resp.text}")
-                return False
+                logger.error(f"Ошибка отправки через бэкенд: {resp.status_code} - {resp.text}")
         except Exception as e:
-            logger.error(f"Исключение при отправке в Telegram: {e}")
-            return False
+            logger.error(f"Исключение при отправке через бэкенд: {e}")
+
+        return False
 
     def send_summary_report(self, title: str, stats: Dict[str, Any], top_leads: Optional[List[Dict[str, Any]]] = None) -> bool:
         """Отправка структурированного отчета после чистки базы или ежедневного сбора."""
@@ -58,6 +66,9 @@ class TelegramNotifier:
         if stats.get('duplicates_skipped'):
             lines.append(f"• Пропущено повторов (дедупликация): <b>{stats.get('duplicates_skipped', 0)}</b>")
 
+        if stats.get('follow_up_count'):
+            lines.append(f"\n📌 <b>Ждут дожима после КП: {stats.get('follow_up_count')} клиентов</b> (кнопка в 1 клик в CRM)")
+
         if top_leads:
             lines.append("\n🔥 <b>ТОП самых горячих лидов дня:</b>")
             for i, l in enumerate(top_leads[:3], 1):
@@ -67,11 +78,13 @@ class TelegramNotifier:
                 phone = html.escape(str(l.get('phone') or ''))
                 pitch = html.escape(str(l.get('pitch_script') or ''))
 
-                lines.append(f"\n<b>{i}. {c_name}</b> (Балл: {score} | {niche})")
+                lines.append(f"\n<b>{i}. {c_name}</b> (Скоринг: {score}/100 | {niche})")
                 if phone:
-                    lines.append(f"   📞 {phone}")
+                    lines.append(f"   📞 <code>+{phone}</code>")
                 if pitch:
                     lines.append(f"   💬 <i>«{pitch}»</i>")
+
+        lines.append('\n👉 <a href="https://crm-v2-khaki.vercel.app/?p=leads"><b>Открыть базу обзвона в CRM</b></a>')
 
         text = "\n".join(lines)
         return self.send_message(text)

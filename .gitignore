@@ -92,4 +92,10 @@ credentials.json
 # Local dev launcher (macOS DNS workaround) — not for prod
 backend/run_local.py
 
+*.log
+*.patch
+*.xlsx
+.claudeignore
+lead_hunter/*.log
+
 graphify-out/

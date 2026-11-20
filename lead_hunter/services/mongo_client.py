@@ -158,3 +158,15 @@ class HunterMongoClient:
     def sync_rate_thresholds(self, rates: Optional[List[Dict[str, Any]]] = None):
         """Пороговые ставки отключены пользователем."""
         self.remove_rate_thresholds()
+
+    def count_follow_ups_needed(self) -> int:
+        """Считает количество лидов, которым отправлено КП и требуется дожим."""
+        try:
+            return self.db.leads.count_documents({
+                "$or": [
+                    {"stage": "proposal_sent"},
+                    {"last_outcome": "quote"}
+                ]
+            })
+        except Exception:
+            return 0

@@ -3141,6 +3141,62 @@ async def convert_lead_to_client(item_id: str, current_user: Optional[dict] = De
     return {"client_id": client["id"], "client": client}
 
 
+class MorningDigestPayload(BaseModel):
+    title: Optional[str] = "☀️ Утренний сбор лидов A2 Group (08:35)"
+    text: Optional[str] = None
+    stats: Optional[dict] = None
+    top_leads: Optional[list] = None
+
+
+@api_router.post("/leads/morning-digest")
+async def post_morning_digest(payload: MorningDigestPayload):
+    """Отправка утренней сводки сбора лидов директорам через бот А2 Инфо."""
+    if payload.text:
+        text = payload.text
+    else:
+        title = payload.title or "☀️ Утренний сбор лидов A2 Group (08:35)"
+        stats = payload.stats or {}
+        top = payload.top_leads or []
+        lines = [
+            f"🎯 <b>{_html.escape(title)}</b>\n",
+            f"📊 <b>Результаты сбора (квота: 30–45):</b>",
+            f"• Добавлено в базу: <b>{stats.get('wb_ozon', 0) + stats.get('b2b_hot', 0)}</b> новых клиентов",
+            f"• WB / Ozon (Минск): <b>+{stats.get('wb_ozon', 0)}</b>",
+            f"• B2B Горячие (Минск): <b>+{stats.get('b2b_hot', 0)}</b>",
+            f"• Все номера проверены (+375), без дублей",
+        ]
+        if stats.get('archived'):
+            lines.append(f"• Отсеяно в архив (нет тел./мусор): <b>{stats.get('archived', 0)}</b>")
+
+        follow_up_count = await db.leads.count_documents({
+            "$or": [
+                {"stage": "proposal_sent"},
+                {"last_outcome": "quote"}
+            ]
+        })
+        if follow_up_count > 0:
+            lines.append(f"\n📌 <b>Ждут дожима после КП: {follow_up_count} клиентов</b> (кнопка дожима в 1 клик в CRM)")
+
+        if top:
+            lines.append("\n🔥 <b>Топ-3 для звонка прямо сейчас:</b>")
+            for i, l in enumerate(top[:3], 1):
+                c_name = _html.escape(str(l.get('company') or l.get('name') or 'Компания'))
+                score = l.get('heat_score', 0)
+                niche = _html.escape(str(l.get('niche') or 'B2B'))
+                phone = _html.escape(str(l.get('phone') or ''))
+                pitch = _html.escape(str(l.get('pitch_script') or ''))
+                lines.append(f"\n<b>{i}. {c_name}</b> (Скоринг: {score}/100 | {niche})")
+                if phone:
+                    lines.append(f"   📞 <code>+{phone}</code>")
+                if pitch:
+                    lines.append(f"   💬 <i>«{pitch}»</i>")
+        lines.append('\n👉 <a href="https://crm-v2-khaki.vercel.app/?p=leads"><b>Открыть базу обзвона в CRM</b></a>')
+        text = "\n".join(lines)
+
+    deliveries = await _broadcast_a2info(text)
+    return {"ok": True, "deliveries": deliveries}
+
+
 def _safe_float(v) -> float:
     # Some legacy imported orders have non-numeric junk in rate fields
     # (blank strings, stray text) — this must never 500 a whole report.

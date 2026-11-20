@@ -59,6 +59,18 @@ def normalize_phone(raw_phone: Any) -> Optional[str]:
     return digits if len(digits) >= 9 else None
 
 
+def is_valid_phone(raw_phone: Any) -> bool:
+    """Проверяет, является ли номер полноценным рабочим телефоном (РБ 12 цифр или РФ 11 цифр)."""
+    norm = normalize_phone(raw_phone)
+    if not norm:
+        return False
+    if norm.startswith("375") and len(norm) == 12:
+        return True
+    if norm.startswith("7") and len(norm) == 11:
+        return True
+    return len(norm) >= 9
+
+
 def clean_company_name(name: Any) -> str:
     """
     Очищает название компании для поиска дублей (без организационно-правовых форм, кавычек и лишних пробелов).
