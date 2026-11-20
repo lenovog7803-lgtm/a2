@@ -753,11 +753,19 @@ async def _churn_watch(force: bool = False) -> dict:
     orders = await db.orders.find({'deleted': {'$ne': True}, 'status': {'$ne': 'cancelled'}},
                                   {'_id': 0, 'client_id': 1, 'client_name': 1, 'unload_date': 1, 'load_date': 1,
                                    'assigned_to': 1, 'created_by': 1}).to_list(50000)
+    clients_list = await db.clients.find({'deleted': {'$ne': True}}, {'_id': 0, 'id': 1, 'name': 1}).to_list(10000)
+    # Нормализация для объединения заявок с рассинхронизированными client_id
+    name_to_cid = {re.sub(r'["\'«»“”„`\s]', '', (c.get('name') or '').lower()): c['id'] for c in clients_list if c.get('name')}
+
     by_client: dict = {}
     for o in orders:
         day = _order_day(o)
-        if day and o.get('client_id'):
-            by_client.setdefault(o['client_id'], []).append((day, o))
+        if not day:
+            continue
+        c_norm = re.sub(r'["\'«»“”„`\s]', '', (o.get('client_name') or '').lower())
+        cid = name_to_cid.get(c_norm) or o.get('client_id')
+        if cid:
+            by_client.setdefault(cid, []).append((day, o))
     created, closed = 0, 0
     for cid, rows in by_client.items():
         rows.sort(key=lambda x: x[0])
@@ -2210,6 +2218,7 @@ class Lead(BaseModel):
     funnel: Optional[str] = ""
     niche: Optional[str] = ""
     pitch_script: Optional[str] = ""
+    selection_reason: Optional[str] = ""
     source: Optional[str] = ""
     source_url: Optional[str] = ""
     unp: Optional[str] = ""
@@ -2237,6 +2246,7 @@ class LeadPayload(BaseModel):
     funnel: Optional[str] = ""
     niche: Optional[str] = ""
     pitch_script: Optional[str] = ""
+    selection_reason: Optional[str] = ""
     source: Optional[str] = ""
     source_url: Optional[str] = ""
     unp: Optional[str] = ""
@@ -2265,6 +2275,7 @@ class LeadUpdate(BaseModel):
     funnel: Optional[str] = None
     niche: Optional[str] = None
     pitch_script: Optional[str] = None
+    selection_reason: Optional[str] = None
     source: Optional[str] = None
     source_url: Optional[str] = None
     unp: Optional[str] = None
