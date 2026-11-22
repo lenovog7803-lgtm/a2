@@ -96,6 +96,8 @@ backend/run_local.py
 *.patch
 *.xlsx
 .claudeignore
+.agents/
+content_factory/
 lead_hunter/*.log
 
 graphify-out/

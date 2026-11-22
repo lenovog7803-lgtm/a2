@@ -1677,6 +1677,7 @@ _PUBLIC_API = {
     ("GET", "/api/auth/google/callback/done"),
     ("GET", "/api/ping"),
     ("GET", "/api/"),
+    ("POST", "/api/leads/morning-digest"),      # утренняя сводка от lead_hunter в бот А2 Инфо
 }
 # скачивание по ссылке (без заголовка) — токен в ?token=, проверяет сам адрес
 _QUERY_TOKEN_API = {"/api/kudir/export", "/api/fleet/export"}
