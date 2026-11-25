@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 import lead_growth
+from carrier_routes import carrier_route_history
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -2534,6 +2535,22 @@ async def list_clients(_: Optional[dict] = Depends(_get_user_from_token)):
     return [Client(**d) for d in docs]
 
 make_crud("clients", "clients", Client, ClientPayload, sync_to_sheets=True, soft_delete=True)
+
+
+@api_router.get("/carriers/route-activity")
+async def get_carrier_route_activity(_: dict = Depends(require_director)):
+    carriers = await db.carriers.find(
+        {"deleted": {"$ne": True}}, {"_id": 0, "id": 1, "company_name": 1, "name": 1, "vehicle_type": 1},
+    ).to_list(50000)
+    orders = await db.orders.find(
+        {"deleted": {"$ne": True}, "status": {"$in": list(lead_growth.COMPLETED)}},
+        {"_id": 0, "id": 1, "order_number": 1, "carrier_id": 1, "carrier_name": 1, "route_from": 1,
+         "route_to": 1, "unload_date": 1, "load_date": 1, "vehicle_type": 1, "vehicle_info": 1},
+    ).to_list(100000)
+    return {"today": datetime.now(lead_growth.MINSK).date().isoformat(),
+            "carriers": carrier_route_history(carriers, orders)}
+
+
 make_crud("carriers", "carriers", Carrier, CarrierPayload, sync_to_sheets=True, soft_delete=True)
 
 
