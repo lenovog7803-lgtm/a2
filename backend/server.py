@@ -17,6 +17,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
+import lead_growth
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -777,6 +778,13 @@ async def _churn_watch(force: bool = False) -> dict:
             closed += 1
             continue
         if open_task or len(rows) < 5:
+            continue
+        week_start = (today - timedelta(days=today.weekday())).isoformat()
+        contacted = await db.tasks.find_one({
+            'type': 'churn_watch', 'client_id': cid, 'status': 'done',
+            'completed_at': {'$gte': week_start}, 'last_order_day': last_day,
+        }, {'_id': 1})
+        if contacted:
             continue
         dates = sorted({datetime.fromisoformat(d).date() for d, _ in rows})
         gaps = sorted((b - a).days for a, b in zip(dates, dates[1:]) if (b - a).days > 0)
@@ -2223,6 +2231,12 @@ class Lead(BaseModel):
     source: Optional[str] = ""
     source_url: Optional[str] = ""
     unp: Optional[str] = ""
+    codex_track: Optional[str] = ""
+    signal_type: Optional[str] = ""
+    signal_text: Optional[str] = ""
+    signal_date: Optional[str] = ""
+    signal_url: Optional[str] = ""
+    qualification: Optional[lead_growth.LeadQualification] = None
 
 
 class LeadPayload(BaseModel):
@@ -2803,6 +2817,106 @@ def _leads_manager_filter(current_user: Optional[dict]) -> dict:
         if not perms.get("can_view_all_leads"):
             base["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}, {"assigned_to": ""}]
     return base
+
+
+@api_router.get("/leads/priorities")
+async def get_lead_priorities(industry: Optional[str] = None, current_user: dict = Depends(_require_user)):
+    now = datetime.now(lead_growth.MINSK)
+    today = now.date()
+    end = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1))
+    query = {
+        **_leads_manager_filter(current_user),
+        "codex_track": {"$in": list(lead_growth.TRACKS)},
+        "stage": {"$in": [stage["id"] for stage in LEAD_STAGES if stage["active"]]},
+        "$and": [{"$or": [
+            {"next_call": None, "stage": "new"},
+            {"next_call": {"$lt": end.astimezone(timezone.utc).isoformat()}},
+        ]}],
+    }
+    if industry:
+        query["industry"] = industry
+    leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"leads": lead_growth.priority_leads(leads, today)}
+
+
+@api_router.put("/leads/{item_id}/qualification")
+async def save_lead_qualification(
+    item_id: str, payload: lead_growth.LeadQualification, current_user: dict = Depends(_require_user)
+):
+    data = payload.model_dump(mode="json", exclude_unset=True)
+    data = {key: value.strip() if isinstance(value, str) else value for key, value in data.items()}
+    doc = await db.leads.find_one_and_update(
+        {"id": item_id, **_leads_manager_filter(current_user)},
+        [{"$set": {
+            "qualification": {"$mergeObjects": [{"$ifNull": ["$qualification", {}]}, {"$literal": data}]},
+            "updated_at": now_iso(),
+        }}],
+        projection={"_id": 0, "qualification": 1}, return_document=_ReturnDocument.AFTER,
+    )
+    if not doc:
+        raise HTTPException(404, "Лид не найден")
+    await manager.broadcast({"type": "lead_updated", "lead_id": item_id})
+    return doc
+
+
+@api_router.get("/leads/paid-conversion")
+async def get_lead_paid_conversion(period: str = "month", current_user: dict = Depends(require_director)):
+    today = datetime.now(lead_growth.MINSK).date()
+    begins = {
+        "week": today - timedelta(days=6),
+        "month": today.replace(day=1),
+        "quarter": today.replace(month=((today.month - 1) // 3) * 3 + 1, day=1),
+        "all": today.replace(year=2020, month=1, day=1),
+    }
+    if period not in begins:
+        raise HTTPException(400, "Unknown period")
+    start = begins[period]
+    leads = await db.leads.find(
+        {"deleted": {"$ne": True}, "codex_track": {"$in": list(lead_growth.TRACKS)}},
+        {"_id": 0, "codex_track": 1, "created_at": 1, "qualification": 1, "client_id": 1},
+    ).to_list(50000)
+    clients, orders = [], []
+    if any(lead.get("client_id") for lead in leads):
+        clients = await db.clients.find({"deleted": {"$ne": True}}, lead_growth.CLIENT_FIELDS).to_list(10000)
+        orders = await db.orders.find(
+            {"deleted": {"$ne": True}, "status": {"$in": list(lead_growth.COMPLETED)}, "client_paid": True},
+            lead_growth.ORDER_FIELDS,
+        ).to_list(100000)
+    return {
+        "start": start.isoformat(), "through": today.isoformat(),
+        "tracks": lead_growth.paid_conversion(leads, orders, clients, start=start, today=today),
+    }
+
+
+@api_router.get("/leads/reactivation")
+async def get_leads_reactivation(current_user: dict = Depends(require_director)):
+    today = datetime.now(lead_growth.MINSK).date()
+    tasks = await db.tasks.find(
+        {"type": "churn_watch", "status": "pending", "deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "client_id": 1, "last_order_day": 1},
+    ).to_list(10000)
+    clients, orders = [], []
+    if tasks:
+        clients = await db.clients.find({"deleted": {"$ne": True}}, lead_growth.CLIENT_FIELDS).to_list(10000)
+        orders = await db.orders.find(
+            {"deleted": {"$ne": True}, "status": {"$in": list(lead_growth.COMPLETED)}},
+            lead_growth.ORDER_FIELDS,
+        ).to_list(100000)
+    return {"week": (today - timedelta(days=today.weekday())).isoformat(),
+            "clients": lead_growth.reactivation_list(tasks, orders, clients, today)}
+
+
+@api_router.post("/leads/reactivation/{task_id}/complete")
+async def complete_lead_reactivation(task_id: str, current_user: dict = Depends(require_director)):
+    updated = await db.tasks.update_one(
+        {"id": task_id, "type": "churn_watch", "status": "pending", "deleted": {"$ne": True}},
+        {"$set": {"status": "done", "completed_at": now_iso(), "completed_by": current_user["id"]}},
+    )
+    if not updated.matched_count and not await db.tasks.find_one(
+        {"id": task_id, "type": "churn_watch", "status": "done", "deleted": {"$ne": True}}, {"_id": 1}
+    ):
+        raise HTTPException(404, "Задача не найдена")
+    return {"ok": True}
 
 
 @api_router.post("/leads/{lead_id}/claim")
