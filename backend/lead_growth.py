@@ -16,6 +16,7 @@ SIGNAL_WEIGHTS = {
     "quote_request": 5,
     "warehouse_supply": 4,
     "warehouse_opening": 3,
+    "regular_route": 3,
     "new_channel": 2,
     "hiring": 1,
 }
