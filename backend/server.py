@@ -2233,6 +2233,7 @@ class Lead(BaseModel):
     source_url: Optional[str] = ""
     unp: Optional[str] = ""
     codex_track: Optional[str] = ""
+    codex_batch: Optional[str] = ""
     signal_type: Optional[str] = ""
     signal_text: Optional[str] = ""
     signal_date: Optional[str] = ""
@@ -2813,16 +2814,24 @@ async def leads_industries():
 
 
 @api_router.get("/leads", response_model=List[Lead])
-async def list_leads_filtered(industry: Optional[str] = None, current_user: dict = Depends(_require_user)):
-    filter_q: dict = {"deleted": {"$ne": True}}
-    if current_user and current_user.get("role") == "manager":
-        perms = current_user.get("permissions") or {}
-        if not perms.get("can_view_all_leads"):
-            # Own leads plus the unclaimed pool — not just own, so a manager
-            # can still find and claim leads nobody has picked up yet.
-            filter_q["$or"] = [{"assigned_to": current_user["id"]}, {"assigned_to": None}, {"assigned_to": ""}]
+async def list_leads_filtered(
+    industry: Optional[str] = None,
+    current_user: dict = Depends(_require_user),
+    batch: Optional[str] = Query(None, pattern=r"^(?:latest|[0-9]{4}-[0-9]{2}-[0-9]{2})$"),
+):
+    filter_q = _leads_manager_filter(current_user)
     if industry:
         filter_q["industry"] = industry
+    if batch == "latest":
+        recent = await db.leads.find_one(
+            {**filter_q, "codex_batch": {"$regex": r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}},
+            {"_id": 0, "codex_batch": 1}, sort=[("codex_batch", -1)],
+        )
+        if not recent:
+            return []
+        batch = recent["codex_batch"]
+    if batch:
+        filter_q["codex_batch"] = batch
     docs = await db.leads.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(50000)
     return [Lead(**d) for d in docs]
 
