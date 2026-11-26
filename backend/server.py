@@ -2231,6 +2231,8 @@ class Lead(BaseModel):
     selection_reason: Optional[str] = ""
     source: Optional[str] = ""
     source_url: Optional[str] = ""
+    legal_name: Optional[str] = ""
+    legal_name_url: Optional[str] = ""
     unp: Optional[str] = ""
     codex_track: Optional[str] = ""
     codex_batch: Optional[str] = ""
@@ -2266,6 +2268,7 @@ class LeadPayload(BaseModel):
     selection_reason: Optional[str] = ""
     source: Optional[str] = ""
     source_url: Optional[str] = ""
+    legal_name: Optional[str] = ""
     unp: Optional[str] = ""
 
 
@@ -2295,6 +2298,8 @@ class LeadUpdate(BaseModel):
     selection_reason: Optional[str] = None
     source: Optional[str] = None
     source_url: Optional[str] = None
+    legal_name: Optional[str] = None
+    legal_name_url: Optional[str] = None
     unp: Optional[str] = None
 
 
